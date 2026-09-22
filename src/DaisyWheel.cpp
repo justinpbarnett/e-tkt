@@ -85,7 +85,17 @@ void DaisyWheel::home(int align) {
                                   (ASSEMBLY_CALIBRATION_ALIGN * stepsPerChar));
   this->stepper->run();
   this->stepper->setCurrentPosition(0);
-  this->currentChar = CHAR_HOME_POSITION;
+  // Where the wheel now is, asked of the same table every move consults.
+  const int homeChar = this->characters->getCharacterIndex(CHAR_HOME_CHARACTER);
+  if (homeChar < 0) {
+    // Only reachable if CHAR_HOME_CHARACTER names something the wheel does
+    // not carry, which is a build-configuration mistake rather than a
+    // runtime one. Say so: every move from here would be off by the
+    // difference.
+    this->logger->error(String("Home character '") + CHAR_HOME_CHARACTER +
+                        "' is not on the daisy wheel");
+  }
+  this->currentChar = homeChar;
 
   delay(100);
 }

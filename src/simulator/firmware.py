@@ -44,7 +44,8 @@ class Firmware:
     """Everything the simulator needs to answer the way the device would."""
 
     def __init__(self, commands, printable, aliases, calibration_min,
-                 calibration_max, default_align, default_force, progress_max):
+                 calibration_max, default_align, default_force, progress_max,
+                 min_label_characters):
         self.commands = commands
         self.printable = printable
         self.aliases = aliases
@@ -53,6 +54,7 @@ class Firmware:
         self.default_align = default_align
         self.default_force = default_force
         self.progress_max = progress_max
+        self.min_label_characters = min_label_characters
 
     def command(self, name):
         """The row with this name, or None. Mirrors commandSpecByName()."""
@@ -94,6 +96,7 @@ def load(src_dir=None):
     geometry = _read(os.path.join(src_dir, "PressGeometry.h"))
     settings = _read(os.path.join(src_dir, "Settings.h"))
     progress = _read(os.path.join(src_dir, "Progress.h"))
+    configuration = _read(os.path.join(src_dir, "Configuration.h"))
 
     return Firmware(
         commands=parse_commands(etkt),
@@ -104,6 +107,8 @@ def load(src_dir=None):
         default_align=_number(settings, "DEFAULT_ALIGN_FACTOR"),
         default_force=_number(settings, "DEFAULT_FORCE_FACTOR"),
         progress_max=_number(progress, "PROGRESS_MAX_WHILE_PRINTING"),
+        min_label_characters=_number(
+            configuration, "MIN_LABEL_CHARACTERS"),
     )
 
 
@@ -168,7 +173,12 @@ def parse_printable(source, header):
     if not keys:
         raise FirmwareParseError("CHARACTERS was found but it lists nothing")
 
-    cut = re.search(r'#define\s+CUT_CHARACTER\s+"([^"]*)"', header)
+    # Either spelling: the header says constexpr today, upstream says
+    # #define, and the simulator should keep working across a merge either
+    # way.
+    cut = re.search(
+        r'(?:#define\s+CUT_CHARACTER\s+|CUT_CHARACTER\s*=\s*)"([^"]*)"',
+        header)
     if cut is None:
         raise FirmwareParseError("No CUT_CHARACTER define in CharacterSet.h")
 
@@ -202,18 +212,53 @@ def _read(path):
 def _initializer(source, declaration, name):
     """The body of a brace initializer, with its comments taken out.
 
-    Comments are stripped from the body rather than the whole file so that
-    nothing outside the table can be damaged by it, and because the rows
-    themselves carry prose that would otherwise have to be matched around.
+    Walks the braces rather than matching to the first `};`. A comment
+    inside one of these tables is free to contain a brace or a `};` -- one
+    of them says "IDLE is a status, not a job;" today -- and stopping at the
+    text would cut the table short. The rows after the cut would go missing
+    together with the count that is supposed to notice, which is the exact
+    failure this module exists to prevent.
     """
-    # Up to the first `};`, which is the initializer's own: no row inside
-    # one of these ends that way. CHARACTERS closes on the same line as its
-    # last entry, so the newline cannot be part of the match.
-    match = re.search(declaration + r"\s*=\s*\{(.*?)\};", source, re.S)
-    if match is None:
+    opening = re.search(declaration + r"\s*=\s*\{", source)
+    if opening is None:
         raise FirmwareParseError("No %s initializer found" % name)
-    body = re.sub(r"/\*.*?\*/", "", match.group(1), flags=re.S)
-    return re.sub(r"//[^\n]*", "", body)
+
+    body = []
+    depth = 1
+    index = opening.end()
+    while index < len(source) and depth > 0:
+        rest = source[index:]
+        if rest.startswith("//"):
+            index = source.find("\n", index)
+            if index < 0:
+                break
+            continue
+        if rest.startswith("/*"):
+            end = source.find("*/", index + 2)
+            if end < 0:
+                break
+            index = end + 2
+            continue
+        if rest[0] in "\"'":
+            quote = rest[0]
+            end = index + 1
+            while end < len(source) and source[end] != quote:
+                end += 2 if source[end] == "\\" else 1
+            body.append(source[index:end + 1])
+            index = end + 1
+            continue
+        if rest[0] == "{":
+            depth += 1
+        elif rest[0] == "}":
+            depth -= 1
+            if depth == 0:
+                return "".join(body)
+        body.append(rest[0])
+        index += 1
+
+    raise FirmwareParseError(
+        "%s is not closed: ran off the end of the file looking for its "
+        "last brace" % name)
 
 
 def _number(source, name):

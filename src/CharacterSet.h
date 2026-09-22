@@ -18,7 +18,7 @@ extern const std::map<String, int> CHARACTERS;
 // The wheel drives here to cut. It is a position on the wheel rather than
 // anything a label says, so it is the one CHARACTERS entry a label may not
 // contain.
-#define CUT_CHARACTER "*"
+constexpr const char* CUT_CHARACTER = "*";
 
 // What a typed character actually comes out as, for the characters the wheel
 // does not carry. Served to the webapp so it can warn before the tape is

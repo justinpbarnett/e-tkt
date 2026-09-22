@@ -57,11 +57,15 @@ void Logger::record(const char* level, const char* serialPrefix,
   }
 }
 
-void Logger::log(String message) { this->record("INFO ", "", message); }
+void Logger::log(const String& message) { this->record("INFO ", "", message); }
 
-void Logger::warn(String message) { this->record("WARN ", "WARN  ", message); }
+void Logger::warn(const String& message) {
+  this->record("WARN ", "WARN  ", message);
+}
 
-void Logger::error(String message) { this->record("ERROR", "ERROR ", message); }
+void Logger::error(const String& message) {
+  this->record("ERROR", "ERROR ", message);
+}
 
 String Logger::recent() {
   std::lock_guard<std::mutex> held(this->lock);

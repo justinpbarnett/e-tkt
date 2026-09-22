@@ -31,18 +31,21 @@ let alignTemp;
 let forceTemp;
 let scrollbarHeight = 0;
 
-// One row per command the device can run, keyed by the name it answers to.
-// That name is also the path this panel posts to, api/<name>, and the string
-// /api/status reports back while the command runs.
+// What the button says while each command runs, keyed by the name the device
+// answers to. That name is also the path this panel posts to, api/<name>,
+// and the string /api/status reports back while the command runs.
 //
-// Keep it in step with COMMANDS in src/ETKT.cpp. This list used to be spread
-// across the senders below and the status switch in handleData(), and home
-// and move had already fallen out of both: a home or a move started from
-// outside the panel left the button showing whatever it said last.
+// Wording only. Which commands exist is the device's to say, and it says so
+// in api/capabilities; this table is checked against that list at startup
+// and a disagreement is reported rather than guessed at.
 //
-// No button posts home or move today. They are listed because the device can
-// still be running one, and the panel has to be able to say so.
-const COMMANDS = {
+// The wording used to be spread across the senders below and the status
+// switch in handleData(), and home and move had already fallen out of both:
+// a home or a move started from outside the panel left the button showing
+// whatever it said last. No button posts either one today. They are here
+// because the device can still be running one, and the panel has to be able
+// to say so.
+const COMMAND_LABELS = {
   cut: { busyLabel: " cutting... " },
   feed: { busyLabel: " feeding... " },
   reel: { busyLabel: " reeling... " },
@@ -72,6 +75,7 @@ const UNKNOWN_BUSY_LABEL = " working... ";
 let printableCharacters = null;
 let characterAliases = null;
 let calibrationRange = null;
+let minLabelCharacters = null;
 
 window.onload = startupRoutine;
 
@@ -122,9 +126,33 @@ async function retrieveCapabilities() {
     if (!range || !Number.isInteger(range.min) || !Number.isInteger(range.max)) {
       throw new Error("api/capabilities served no calibration range");
     }
+    const label = response.label;
+    if (!label || !Number.isInteger(label.minimum)) {
+      throw new Error("api/capabilities served no minimum label length");
+    }
     printableCharacters = response.printable;
     characterAliases = response.aliases || {};
     calibrationRange = range;
+    minLabelCharacters = label.minimum;
+
+    // Not fatal: an unknown command already falls back to UNKNOWN_BUSY_LABEL
+    // and the panel keeps working. Worth saying out loud, though, because
+    // the usual cause is a cached script.js talking to newer firmware, and
+    // that is invisible from the bench.
+    const offered = response.commands;
+    if (Array.isArray(offered)) {
+      const missing = offered.filter((name) => !(name in COMMAND_LABELS));
+      const extra = Object.keys(COMMAND_LABELS).filter(
+        (name) => !offered.includes(name),
+      );
+      if (missing.length > 0 || extra.length > 0) {
+        console.warn(
+          "This panel and the firmware disagree about the command list." +
+            (missing.length ? " No wording here for: " + missing.join(", ") + "." : "") +
+            (extra.length ? " Device does not offer: " + extra.join(", ") + "." : ""),
+        );
+      }
+    }
   } catch (error) {
     console.error("Unable to fetch what the device accepts, retrying");
     console.error(error);
@@ -268,9 +296,23 @@ function buildTreatedLabel() {
       break;
   }
 
-  const printLength = fieldValue.length + multiplier * 2;
-  if (printLength < 7) {
-    multiplier = Math.ceil((7 - printLength) / 2);
+  // Pad to one past the device's minimum. Spaces go on both sides so the
+  // text stays centred; stopping exactly at the minimum would leave the
+  // device topping the tape up with trailing feeds instead, which does not.
+  //
+  // The number comes from api/capabilities. It used to be written here as a
+  // bare 7 while the device called it 6, and no fallback is written here
+  // now: a guessed minimum is the same drift in a different place. Until
+  // the device has said, only the mode's own padding is applied. That
+  // shows for as long as the first api/capabilities call takes: the two
+  // callers that draw the preview run again when it lands, and the one
+  // that sends is behind isValidLabelText(), which refuses until then.
+  if (minLabelCharacters !== null) {
+    const target = minLabelCharacters + 1;
+    const printLength = fieldValue.length + multiplier * 2;
+    if (printLength < target) {
+      multiplier = Math.ceil((target - printLength) / 2);
+    }
   }
   return " ".repeat(multiplier) + fieldValue + " ".repeat(multiplier);
 }
@@ -576,7 +618,7 @@ async function reelCommand() {
   if (prompt) {
     toggleSettings(false);
     setUiBusy(true);
-    document.getElementById("submit-button").value = COMMANDS.reel.busyLabel;
+    document.getElementById("submit-button").value = COMMAND_LABELS.reel.busyLabel;
     await sendCommand("reel");
   }
 }
@@ -584,14 +626,14 @@ async function reelCommand() {
 async function feedCommand() {
   // sends feed command to the device
   setUiBusy(true);
-  document.getElementById("submit-button").value = COMMANDS.feed.busyLabel;
+  document.getElementById("submit-button").value = COMMAND_LABELS.feed.busyLabel;
   await sendCommand("feed");
 }
 
 async function cutCommand() {
   // sends cut command to the device
   setUiBusy(true);
-  document.getElementById("submit-button").value = COMMANDS.cut.busyLabel;
+  document.getElementById("submit-button").value = COMMAND_LABELS.cut.busyLabel;
   await sendCommand("cut");
 }
 
@@ -640,7 +682,7 @@ async function settingsCommand() {
 
   if (confirm("Confirm saving align [" + align + "] and force [" + force + "] settings?")) {
     setUiBusy(true);
-    document.getElementById("submit-button").value = COMMANDS.save.busyLabel;
+    document.getElementById("submit-button").value = COMMAND_LABELS.save.busyLabel;
     if (!(await sendCommand("save", { align: align, force: force }))) {
       return;
     }
@@ -680,7 +722,7 @@ async function fetchWithTimeout(resource, options = {}) {
 }
 
 // Sends one command to the device and reports a refusal to the console. The
-// name is a key in COMMANDS, which is also the path it posts to. Returns
+// name is a key in COMMAND_LABELS, which is also the path it posts to. Returns
 // whether the device accepted it.
 async function sendCommand(name, data = {}) {
   const response = await postJson("api/" + name, data);
@@ -756,7 +798,7 @@ function handleData(data_json) {
   let percentage = parseInt(data_json.progress);
 
   const submitButton = document.getElementById("submit-button");
-  const spec = COMMANDS[data_json.command];
+  const spec = COMMAND_LABELS[data_json.command];
   submitButton.value = spec ? spec.busyLabel : UNKNOWN_BUSY_LABEL;
 
   // tag is the only command with more to show than its own name: it scrolls

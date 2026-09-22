@@ -48,10 +48,21 @@ void Light::fadeOut(float from, int overMs) {
   // by the writes rather than by the levels is what makes the last step land
   // inside overMs instead of one step past it.
   const int steps = start + 1;
-  const int stepMs = overMs / steps;
+
+  // Each step is timed against the whole fade rather than given a share of
+  // it. A per-step `overMs / steps` throws away the remainder once per step,
+  // and for anything under about a second of full fade that quotient is zero
+  // -- the loop runs with no delay at all and the LED just switches off. The
+  // running total loses nothing: the last step lands on overMs exactly, and
+  // where the division is clean (3225ms over 129 levels) every step is the
+  // same 25ms it always was.
+  int elapsed = 0;
   for (int value = start; value >= 0; value--) {
     analogWrite(this->pin, (uint16_t)value);
-    delay(stepMs);
+    const int done = start - value + 1;
+    const int due = (int)((long)overMs * done / steps);
+    delay(due - elapsed);
+    elapsed = due;
   }
 }
 

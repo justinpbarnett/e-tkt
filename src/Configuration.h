@@ -102,11 +102,28 @@
 
 #define CHAR_MICROSTEPS 16
 #define CHAR_STEP_COUNT 200
-// Which slot the wheel parks in once the hall sensor has found home. The wheel
-// is keyed to the hub, so this is the same on every build; the per-machine
-// slack in where the sensor ended up is ASSEMBLY_CALIBRATION_ALIGN in
-// Machine.h.
-#define CHAR_HOME_POSITION 21
+// The shortest label the machine will put on tape, in characters. Anything
+// shorter is topped up with blank feeds after the last character is pressed,
+// so there is something to take hold of when the tape is cut.
+//
+// Served to the panel in api/capabilities. The panel pads short labels too,
+// with spaces on both sides so the text stays centred, and it used to carry
+// its own copy of this number written as 7 -- one past the minimum, because
+// a label that only just reaches the minimum leaves the device adding
+// trailing feeds, which pushes the text off centre.
+constexpr int MIN_LABEL_CHARACTERS = 6;
+
+// Which character sits under the press once the hall sensor has found home.
+// The wheel is keyed to the hub, so this is the same on every build; the
+// per-machine slack in where the sensor ended up is
+// ASSEMBLY_CALIBRATION_ALIGN in Machine.h.
+//
+// Named by the character rather than by its slot number. The number is
+// already written down once, in CHARACTERS, and a second copy of it here
+// would go stale silently the first time a character is inserted before
+// this one on the wheel -- the wheel would then park believing it is one
+// slot from where it is.
+#define CHAR_HOME_CHARACTER "J"
 
 // The press angle compensation that used to live here
 // (ASSEMBLY_CALIBRATION_FORCE) was replaced on 2026-09-22 by the two taught

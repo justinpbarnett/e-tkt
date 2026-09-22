@@ -22,25 +22,21 @@ void BenchRigs::beforePeripherals() {
   // triggers, so the 3.3 V peripherals can be checked with no motors attached.
   this->logger->log(
       "SELFTEST: character LED (GPIO 17) -- 3 blinks [already verified]");
-  for (int i = 0; i < 3; i++) {
-    this->ledChar->on(1.0f);
-    delay(250);
-    this->ledChar->off();
-    delay(250);
-  }
+  this->ledChar->blink(3, LIGHT_FULL, 250, 250);
+  this->ledChar->off();
 
   this->logger->log("SELFTEST: finish LED (GPIO 5) -- 3 blinks");
-  for (int i = 0; i < 3; i++) {
-    this->ledFinish->on(1.0f);
-    delay(250);
-    this->ledFinish->off();
-    delay(250);
-  }
+  this->ledFinish->blink(3, LIGHT_FULL, 250, 250);
+  this->ledFinish->off();
 
   this->logger->log("SELFTEST: both LEDs together -- 2 blinks");
+  // The one shape Light::blink cannot express: two LEDs lit and darkened
+  // together. Blinking them one after the other would test the same two
+  // pins twice over rather than testing that they can both be driven at
+  // once, which is the point of this third pass.
   for (int i = 0; i < 2; i++) {
-    this->ledChar->on(1.0f);
-    this->ledFinish->on(1.0f);
+    this->ledChar->on(LIGHT_FULL);
+    this->ledFinish->on(LIGHT_FULL);
     delay(500);
     this->ledChar->off();
     this->ledFinish->off();
@@ -74,7 +70,7 @@ void BenchRigs::beforePeripherals() {
       // Live indicator: character LED mirrors GPIO13 so the pin can be probed
       // at the bench without a serial capture. LED lit = HIGH = good.
       if (now) {
-        this->ledChar->on(1.0f);
+        this->ledChar->on(LIGHT_FULL);
       } else {
         this->ledChar->off();
       }
@@ -98,14 +94,14 @@ void BenchRigs::beforePeripherals() {
       for (int i = 0; i < 1200; i++) {
         int now = digitalRead(WIFI_RESET_PIN);
         if (now) {
-          this->ledChar->on(1.0f);
+          this->ledChar->on(LIGHT_FULL);
         } else {
           this->ledChar->off();
         }
         if (now != prev) {
           if (now == LOW) {
             presses++;
-            this->ledFinish->on(1.0f);
+            this->ledFinish->on(LIGHT_FULL);
             this->logger->log(String("SELFTEST: PRESS #") + presses);
           } else {
             this->ledFinish->off();
@@ -235,11 +231,11 @@ void BenchRigs::beforeHoming() {
         if (t % 40 == 0) {
           flip = !flip;
           if (flip) {
-            this->ledChar->on(1.0f);
+            this->ledChar->on(LIGHT_FULL);
             this->ledFinish->off();
           } else {
             this->ledChar->off();
-            this->ledFinish->on(1.0f);
+            this->ledFinish->on(LIGHT_FULL);
           }
         }
         delay(10);
@@ -263,8 +259,8 @@ void BenchRigs::beforeHoming() {
         if (t % 50 == 0) {
           lit = !lit;
           if (lit) {
-            this->ledChar->on(1.0f);
-            this->ledFinish->on(1.0f);
+            this->ledChar->on(LIGHT_FULL);
+            this->ledFinish->on(LIGHT_FULL);
           } else {
             this->ledChar->off();
             this->ledFinish->off();
@@ -280,8 +276,8 @@ void BenchRigs::beforeHoming() {
     }
 
     for (int round = 0; round < 2; round++) {
-      this->ledChar->on(1.0f);
-      if (round == 1) this->ledFinish->on(1.0f);
+      this->ledChar->on(LIGHT_FULL);
+      if (round == 1) this->ledFinish->on(LIGHT_FULL);
       this->logger->log(String("SERVOTEACH: round ") + (round + 1) +
                         "/2 -- stop the sweep where the press is " +
                         (round == 0 ? "FULLY CLEAR of the wheel (rest)"
@@ -315,7 +311,7 @@ void BenchRigs::beforeHoming() {
           lastBtn = HIGH;
           this->logger->log(String("SERVOTEACH: frozen at ") + angle +
                             " deg -- tap again within 6s to reject and resume");
-          this->ledFinish->on(1.0f);
+          this->ledFinish->on(LIGHT_FULL);
           bool rejected = false;
           for (int t = 0; t < 600 && !rejected; t++) {
             if (digitalRead(WIFI_RESET_PIN) == LOW)

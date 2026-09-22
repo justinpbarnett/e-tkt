@@ -74,6 +74,53 @@ void test_progress_never_moves_backwards(void) {
   }
 }
 
+// --- scroll offset --------------------------------------------------------
+//
+// The label is drawn as one strip and the screen is a window onto it. These
+// describe where that window sits. All widths are pixels; 128 is the OLED.
+
+void test_a_label_that_fits_does_not_scroll(void) {
+  TEST_ASSERT_EQUAL_INT(0, scrollOffset(0, 100, 128));
+  TEST_ASSERT_EQUAL_INT(0, scrollOffset(50, 100, 128));
+  TEST_ASSERT_EQUAL_INT(0, scrollOffset(100, 100, 128));
+}
+
+void test_an_exactly_full_label_does_not_scroll(void) {
+  TEST_ASSERT_EQUAL_INT(0, scrollOffset(64, 128, 128));
+}
+
+void test_a_long_label_holds_still_until_the_press_passes_the_middle(void) {
+  // Nothing moves while the character being pressed is still in the left
+  // half of the glass.
+  TEST_ASSERT_EQUAL_INT(0, scrollOffset(0, 400, 128));
+  TEST_ASSERT_EQUAL_INT(0, scrollOffset(63, 400, 128));
+  TEST_ASSERT_EQUAL_INT(0, scrollOffset(64, 400, 128));
+}
+
+void test_a_long_label_centres_the_character_being_pressed(void) {
+  // Past the middle, the strip slides so the press stays at x = 64.
+  TEST_ASSERT_EQUAL_INT(36, scrollOffset(100, 400, 128));
+  TEST_ASSERT_EQUAL_INT(136, scrollOffset(200, 400, 128));
+}
+
+void test_the_end_of_a_long_label_stops_at_the_right_edge(void) {
+  // Centring the last characters would drag blank space onto the screen.
+  // The strip stops with its right edge on the right edge of the glass.
+  TEST_ASSERT_EQUAL_INT(272, scrollOffset(390, 400, 128));
+  TEST_ASSERT_EQUAL_INT(272, scrollOffset(400, 400, 128));
+}
+
+void test_the_offset_never_goes_backwards_past_the_start(void) {
+  // A label barely over the width would otherwise compute a negative
+  // offset at the end and push the strip off the left of the glass.
+  TEST_ASSERT_EQUAL_INT(1, scrollOffset(129, 129, 128));
+  TEST_ASSERT_EQUAL_INT(0, scrollOffset(0, 129, 128));
+}
+
+void test_an_empty_label_has_no_offset(void) {
+  TEST_ASSERT_EQUAL_INT(0, scrollOffset(0, 0, 128));
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_percent_is_characters_done_over_length);
@@ -85,5 +132,12 @@ int main(int, char**) {
   RUN_TEST(test_negative_input_reports_zero);
   RUN_TEST(test_more_done_than_length_still_caps);
   RUN_TEST(test_progress_never_moves_backwards);
+  RUN_TEST(test_a_label_that_fits_does_not_scroll);
+  RUN_TEST(test_an_exactly_full_label_does_not_scroll);
+  RUN_TEST(test_a_long_label_holds_still_until_the_press_passes_the_middle);
+  RUN_TEST(test_a_long_label_centres_the_character_being_pressed);
+  RUN_TEST(test_the_end_of_a_long_label_stops_at_the_right_edge);
+  RUN_TEST(test_the_offset_never_goes_backwards_past_the_start);
+  RUN_TEST(test_an_empty_label_has_no_offset);
   return UNITY_END();
 }

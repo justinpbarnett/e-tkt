@@ -162,7 +162,21 @@ class ETKT {
   // Event group that the main loop blocks on for new commands.
   EventGroupHandle_t eventGroup;
 
-  void cut(int force = 0);
+  /**
+   * @brief Cuts the tape at the saved force calibration.
+   */
+  void cut();
+
+  /**
+   * @brief Cuts the tape at the given force, 1 to 9.
+   *
+   * Separate from cut() rather than a defaulted parameter: force is a 1-9
+   * value, so there is no number left over to mean "caller did not say".
+   * The full test button is the one caller that has a force of its own --
+   * the one being trialled -- so the cut is made at the same setting as the
+   * characters it just stamped.
+   */
+  void cutAt(int force);
 
   /**
    * Interanl handlers for each type of command the device can do.

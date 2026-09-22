@@ -336,6 +336,22 @@ void Network::capabilitiesGetHandler(AsyncWebServerRequest *request) {
   calibration["min"] = CALIBRATION_VALUE_MIN;
   calibration["max"] = CALIBRATION_VALUE_MAX;
 
+  // The shortest label the device will print. The panel pads up to it so the
+  // device does not have to, which is what keeps short labels centred.
+  const JsonObject label = root.createNestedObject("label");
+  label["minimum"] = MIN_LABEL_CHARACTERS;
+
+  // Every command that can actually be asked for -- the same rows that got a
+  // route registered above. The panel keeps its own wording for the busy
+  // button, which is copy rather than protocol, but it no longer keeps its
+  // own list of what the device can do.
+  const JsonArray commands = root.createNestedArray("commands");
+  for (size_t i = 0; i < ETKT::COMMAND_COUNT; i++) {
+    if (ETKT::COMMANDS[i].run != NULL) {
+      commands.add(ETKT::COMMANDS[i].name);
+    }
+  }
+
   response->setLength();
   request->send(response);
 }

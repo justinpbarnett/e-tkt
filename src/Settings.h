@@ -21,13 +21,16 @@
 class Settings {
  private:
   Logger* logger;
-  Preferences* preferences = new Preferences();
+  // By value. A `new Preferences()` here would make Settings the owner of a
+  // heap object, which means a destructor to free it and copy operations to
+  // suppress so the pointer cannot be freed twice. The member needs none of
+  // that: it lives and dies with the Settings that holds it.
+  Preferences preferences;
   uint32_t alignFactor = DEFAULT_ALIGN_FACTOR;
   uint32_t forceFactor = DEFAULT_FORCE_FACTOR;
 
  public:
   Settings(Logger* logger);
-  ~Settings();
 
   /**
    * @brief Initializes the settings object by loading the settings from EEPROM.

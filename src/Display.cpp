@@ -100,8 +100,15 @@ void Display::playSplashScreen() {
 // the glass moves.
 // ---------------------------------------------------------------------------
 
+// Everything from here to the end of the table is this file's own. None of
+// it is named in Display.h: the header used to declare the two draw helpers
+// as members taking `const struct ScreenSpec&`, which gave a purely internal
+// type external linkage and put a type the header cannot see into its
+// interface.
+namespace {
+
 // No icon. 0 is not a drawable glyph in u8g2_font_open_iconic_all_1x_t.
-#define NO_GLYPH 0
+constexpr int NO_GLYPH = 0;
 
 enum class ScreenLayout {
   // One word centred at y=37, an icon either side of it.
@@ -126,7 +133,7 @@ struct ScreenSpec {
   int glyphRightX;
 };
 
-static const ScreenSpec SCREEN_SPECS[] = {
+const ScreenSpec SCREEN_SPECS[] = {
     {Screen::WIFI_SETUP, ScreenLayout::NOTICE, false, "WI-FI SETUP", 15,
      "Please, connect to", "the \"E-TKT\" network...", 0x011a, 0, 0},
     {Screen::WIFI_RESET, ScreenLayout::NOTICE, false, "WI-FI RESET", 15,
@@ -145,34 +152,40 @@ static const ScreenSpec SCREEN_SPECS[] = {
      nullptr, nullptr, NO_GLYPH, 0, 0},
 };
 
-void Display::drawBanner(const ScreenSpec& spec) {
-  // clear() leaves the draw colour set to the opposite of the background, so
-  // the text reads either way round.
-  this->clear(spec.inverted ? 1 : 0);
-  this->u8g2->setFont(u8g2_font_nine_by_five_nbp_t_all);
-  this->u8g2->drawStr(spec.titleX, 37, spec.title);
+// Draws one word centred between two icons. The shape behind CUTTING,
+// FEEDING, REELING, TESTING, FINISHED and REBOOTING. The caller has already
+// cleared the glass, which leaves the draw colour set to the opposite of the
+// background so the text reads either way round.
+void drawBanner(U8G2_SSD1306_128X64_NONAME_F_HW_I2C* u8g2,
+                const ScreenSpec& spec) {
+  u8g2->setFont(u8g2_font_nine_by_five_nbp_t_all);
+  u8g2->drawStr(spec.titleX, 37, spec.title);
 
   if (spec.glyph != NO_GLYPH) {
-    this->u8g2->setFont(u8g2_font_open_iconic_all_1x_t);
-    this->u8g2->drawGlyph(spec.glyphLeftX, 37, spec.glyph);
-    this->u8g2->drawGlyph(spec.glyphRightX, 37, spec.glyph);
+    u8g2->setFont(u8g2_font_open_iconic_all_1x_t);
+    u8g2->drawGlyph(spec.glyphLeftX, 37, spec.glyph);
+    u8g2->drawGlyph(spec.glyphRightX, 37, spec.glyph);
   }
 
-  this->u8g2->sendBuffer();
+  u8g2->sendBuffer();
 }
 
-void Display::drawNotice(const ScreenSpec& spec) {
-  this->clear(spec.inverted ? 1 : 0);
-  this->u8g2->setFont(u8g2_font_nine_by_five_nbp_t_all);
-  this->u8g2->drawStr(spec.titleX, 12, spec.title);
-  this->u8g2->drawStr(3, 32, spec.line1);
-  this->u8g2->drawStr(3, 47, spec.line2);
+// Draws a titled notice with two lines of body text and one icon beside the
+// title. The shape behind WIFI_SETUP and WIFI_RESET.
+void drawNotice(U8G2_SSD1306_128X64_NONAME_F_HW_I2C* u8g2,
+                const ScreenSpec& spec) {
+  u8g2->setFont(u8g2_font_nine_by_five_nbp_t_all);
+  u8g2->drawStr(spec.titleX, 12, spec.title);
+  u8g2->drawStr(3, 32, spec.line1);
+  u8g2->drawStr(3, 47, spec.line2);
 
-  this->u8g2->setFont(u8g2_font_open_iconic_all_1x_t);
-  this->u8g2->drawGlyph(3, 12, spec.glyph);
+  u8g2->setFont(u8g2_font_open_iconic_all_1x_t);
+  u8g2->drawGlyph(3, 12, spec.glyph);
 
-  this->u8g2->sendBuffer();
+  u8g2->sendBuffer();
 }
+
+}  // namespace
 
 // Catches the one mistake this table invites: adding an enumerator to Screen
 // and forgetting its row. REBOOTING is last, so its value plus one is how
@@ -187,10 +200,14 @@ void Display::render(Screen screen) {
     if (SCREEN_SPECS[i].screen != screen) {
       continue;
     }
-    if (SCREEN_SPECS[i].layout == ScreenLayout::NOTICE) {
-      this->drawNotice(SCREEN_SPECS[i]);
+    const ScreenSpec& spec = SCREEN_SPECS[i];
+    // Both layouts started with this identical call, so it belongs here
+    // rather than at the top of each of them.
+    this->clear(spec.inverted ? 1 : 0);
+    if (spec.layout == ScreenLayout::NOTICE) {
+      drawNotice(this->u8g2, spec);
     } else {
-      this->drawBanner(SCREEN_SPECS[i]);
+      drawBanner(this->u8g2, spec);
     }
     return;
   }
@@ -296,23 +313,11 @@ void Display::renderProgress(int charactersDone, String label) {
     }
   }
 
-  // Calculate the render offset, which keeps the currently printing location
-  // visible if the label doesn't fit all on screen.
-  int render_offset = 0;
-  if (total_width > SCREEN_WIDTH) {
-    // If the "progress" location is off screen, offset the rendered label
-    // so the progress indicator is centered.
-    if (progress_width > SCREEN_WIDTH / 2) {
-      render_offset = progress_width - SCREEN_WIDTH / 2;
-    }
-
-    // If centering the progress location woudl cause the right side of the
-    // label to render before the right edge of the screen then realign so
-    // it does, simulating a scrolling box's bounds.
-    if (total_width - render_offset < SCREEN_WIDTH) {
-      render_offset = total_width - SCREEN_WIDTH;
-    }
-  }
+  // How far the label has slid to the left to keep the character being
+  // pressed on the glass. Arithmetic only, and tested as such in
+  // test_progress; see scrollOffset in Progress.h for the two rules.
+  const int render_offset =
+      scrollOffset(progress_width, total_width, SCREEN_WIDTH);
 
   // Iterate through the label again, this time drawing it on screen.  For
   // simplicity's sake always draw the entire label (even if its of screen)

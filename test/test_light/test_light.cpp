@@ -155,6 +155,29 @@ void test_fade_takes_roughly_the_time_it_was_given(void) {
                            "fade must fill the duration it was given");
 }
 
+void test_a_short_fade_still_takes_its_time(void) {
+  // A fade shorter than one millisecond per level. The naive schedule --
+  // one equal delay per step -- rounds that delay down to zero and the fade
+  // becomes an instant jump to dark, which on the bench reads as the LED
+  // simply switching off. The time asked for has to be spent whatever the
+  // step count is.
+  led->fadeOut(LIGHT_FULL, 100);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(100, millis(),
+                                   "a short fade must still take its time");
+}
+
+void test_every_fade_lands_exactly_on_its_duration(void) {
+  // Not "within one step": exactly. The remainder is spread across the
+  // steps rather than truncated away from each one.
+  const int durations[] = {1, 7, 100, 400, 1000, 3200, 3225};
+  for (unsigned i = 0; i < sizeof(durations) / sizeof(durations[0]); i++) {
+    stubReset();
+    led->fadeOut(LIGHT_FULL, durations[i]);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE((uint32_t)durations[i], millis(),
+                                     "fade must spend exactly its duration");
+  }
+}
+
 void test_a_shorter_fade_is_shorter(void) {
   led->fadeOut(LIGHT_FULL, 3200);
   const unsigned long slow = millis();
@@ -194,6 +217,8 @@ int main(int, char**) {
   RUN_TEST(test_fade_never_brightens);
   RUN_TEST(test_fade_starts_where_it_was_told_to);
   RUN_TEST(test_fade_takes_roughly_the_time_it_was_given);
+  RUN_TEST(test_a_short_fade_still_takes_its_time);
+  RUN_TEST(test_every_fade_lands_exactly_on_its_duration);
   RUN_TEST(test_a_shorter_fade_is_shorter);
   RUN_TEST(test_fade_from_dark_just_goes_dark);
   RUN_TEST(test_fade_uses_every_level_it_has);

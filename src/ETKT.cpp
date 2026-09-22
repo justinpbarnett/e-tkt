@@ -68,12 +68,19 @@ static_assert(sizeof(ETKT::COMMANDS) / sizeof(ETKT::COMMANDS[0]) ==
               "every Command needs a row in ETKT::COMMANDS");
 
 const CommandSpec* commandSpec(Command command) {
-  for (size_t i = 0; i < ETKT::COMMAND_COUNT; i++) {
-    if (ETKT::COMMANDS[i].command == command) {
-      return &ETKT::COMMANDS[i];
-    }
+  // The rows are written in enum order, so the enum is the index -- no
+  // search. Counting the rows (see the static_assert above) cannot catch a
+  // duplicated enumerator paired with a missing one, because the total
+  // still matches; a search would then hand back the wrong handler for one
+  // command and nothing for the other. Asking the row to agree that it is
+  // the row for this command turns that into the NULL the caller already
+  // logs.
+  const size_t index = static_cast<size_t>(command);
+  if (index >= ETKT::COMMAND_COUNT) {
+    return NULL;
   }
-  return NULL;
+  const CommandSpec* spec = &ETKT::COMMANDS[index];
+  return spec->command == command ? spec : NULL;
 }
 
 const CommandSpec* commandSpecByName(const String& name) {
@@ -178,7 +185,9 @@ void ETKT::submit(const CommandOptions& options) {
   this->lock->unlock();
 }
 
-void ETKT::cut(int force) {
+void ETKT::cut() { this->cutAt((int)this->settings->getForceFactor()); }
+
+void ETKT::cutAt(int force) {
   if (!ENABLE_CUT) {
     delay(500);
     return;
@@ -186,13 +195,8 @@ void ETKT::cut(int force) {
   // moves to a specific char (*) then presses label three times (more
   // vigorously)
   this->daisywheel->move("*", this->settings->getAlignFactor());
-  // force 0 means "caller did not say", i.e. use whatever is saved. The full
-  // test button passes the force being trialled instead, so the cut is made at
-  // the same setting as the characters it just stamped.
-  const int cutForce =
-      force > 0 ? force : (int)this->settings->getForceFactor();
   for (int i = 0; i < 3; i++) {
-    this->press->press(true, cutForce, false);
+    this->press->press(true, force, false);
   }
 }
 
@@ -201,22 +205,26 @@ void ETKT::loop() {
   xEventGroupWaitBits(eventGroup, BIT0, pdTRUE, pdFALSE,
                       500 / portTICK_PERIOD_MS);
 
-  // check for a command
+  // check for a command, and take a copy of which one it is while the lock
+  // is held. Only this function ever clears the slot, so reading it again
+  // after the unlock would in fact be safe today -- but that is a fact about
+  // the rest of the class, not about this code, and the next writer to the
+  // slot would silently break it. The enum is two bytes; copy it out.
   this->lock->lock();
   if (this->command == NULL) {
     this->lock->unlock();
     return;
   }
+  const Command running = this->command->command;
   this->lock->unlock();
 
   // Do the task. The command's row says which handler to run. A command with
   // no row at all is a bug worth hearing about; a row with no handler is
   // IDLE, which is a status rather than a job, so it falls straight through
   // to the parking code below.
-  const CommandSpec* spec = commandSpec(this->command->command);
+  const CommandSpec* spec = commandSpec(running);
   if (spec == NULL) {
-    this->logger->log(String("No table row for command ") +
-                      (int)this->command->command);
+    this->logger->log(String("No table row for command ") + (int)running);
   } else if (spec->run != NULL) {
     (this->*(spec->run))();
   }
@@ -328,7 +336,7 @@ void ETKT::testCommandFullInternal() {
   }
   this->feeder->feed();
   this->daisywheel->move("*", this->command->align);
-  this->cut(this->command->force);
+  this->cutAt(this->command->force);
 }
 
 void ETKT::homeCommandInternal() {
@@ -398,11 +406,11 @@ void ETKT::tagCommandInternal() {
     this->lock->unlock();
   }
 
-  if (labelLength < 6 &&
-      labelLength !=
-          1)  // minimum label length to make sure the user can grab it
-  {
-    int spaceDelta = 6 - labelLength;
+  // Top the tape up to something the user can take hold of. A one-character
+  // label is left alone deliberately: it is the single-letter tag the
+  // machine has always printed short.
+  if (labelLength < MIN_LABEL_CHARACTERS && labelLength != 1) {
+    const int spaceDelta = MIN_LABEL_CHARACTERS - labelLength;
     for (int i = 0; i < spaceDelta; i++) {
       this->feeder->feed();
     }

@@ -79,18 +79,6 @@ class Display {
    */
   void clear(int color = 0);
 
-  /**
-   * @brief Draws one word centred between two icons. The shape behind
-   * CUTTING, FEEDING, REELING, TESTING, FINISHED and REBOOTING.
-   */
-  void drawBanner(const struct ScreenSpec& spec);
-
-  /**
-   * @brief Draws a titled notice with two lines of body text and one icon
-   * beside the title. The shape behind WIFI_SETUP and WIFI_RESET.
-   */
-  void drawNotice(const struct ScreenSpec& spec);
-
  public:
   Display(Sound* sound, Characters* characters,
           U8G2_SSD1306_128X64_NONAME_F_HW_I2C* u8g2);

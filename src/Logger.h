@@ -51,13 +51,13 @@ class Logger {
   void initialize();
 
   /** @brief Ordinary progress. Reaches serial with no decoration. */
-  void log(String message);
+  void log(const String& message);
 
   /** @brief Something is off but the machine carried on. */
-  void warn(String message);
+  void warn(const String& message);
 
   /** @brief Something failed. */
-  void error(String message);
+  void error(const String& message);
 
   /**
    * @brief The last LOG_HISTORY_LINES lines, oldest first, newline separated

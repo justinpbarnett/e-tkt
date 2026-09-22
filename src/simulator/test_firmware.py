@@ -10,9 +10,19 @@ A failure here means one of the tables in src/ changed shape, and the
 simulator would otherwise have quietly served fewer routes than the device.
 """
 
+import os
+import re
+import sys
 import unittest
 
-import firmware
+# The simulator is a directory of scripts, not an installed package, so the
+# only thing that makes `import firmware` resolve is this file's own folder
+# being on the path. `unittest discover -s src/simulator` puts it there;
+# running this file by its path, or discovering from the repository root,
+# does not.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+import firmware  # noqa: E402  (needs the path above)
 
 
 class LoadFirmware(unittest.TestCase):
@@ -116,6 +126,26 @@ class LoadFirmware(unittest.TestCase):
 
     def test_an_empty_label_is_no_progress_rather_than_a_crash(self):
         self.assertEqual(0, self.fw.progress_percent(0, 0))
+
+
+    def test_minimum_label_length_comes_from_the_firmware(self):
+        # The panel pads short labels up to this. It read 7 out of its own
+        # source while the device called it 6.
+        self.assertEqual(6, self.fw.min_label_characters)
+
+    def test_the_panel_knows_every_command_the_device_offers(self):
+        # api/capabilities serves this list and data/script.js checks its
+        # wording table against it at startup. The check is only worth
+        # anything if the two are in step to begin with.
+        here = os.path.dirname(os.path.abspath(__file__))
+        panel = os.path.join(here, "..", "..", "data", "script.js")
+        with open(panel, encoding="utf-8") as handle:
+            source = handle.read()
+        table = re.search(r"const COMMAND_LABELS = \{(.*?)\n\};", source,
+                          re.S)
+        self.assertIsNotNone(table, "no COMMAND_LABELS table in script.js")
+        named = set(re.findall(r"^\s*(\w+):", table.group(1), re.M))
+        self.assertEqual({spec.name for spec in self.fw.routes()}, named)
 
 
 class Failures(unittest.TestCase):

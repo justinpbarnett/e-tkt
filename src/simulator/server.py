@@ -147,6 +147,8 @@ class Server:
                 'min': self.device.calibration_min,
                 'max': self.device.calibration_max,
             },
+            'label': {'minimum': self.device.min_label_characters},
+            'commands': [spec.name for spec in self.device.routes()],
         })
 
     async def recent_log(self, request):
@@ -238,7 +240,10 @@ class Server:
         else:
             # Any other command takes the same amount of time
             await asyncio.sleep(OTHER_COMMAND_SECONDS)
+        # Both together, as ETKT::loop() does when it clears the command:
+        # leaving progress behind reports an idle printer stuck at 99%.
         self.command = None
+        self.progress = 0
 
     async def print_label(self):
         # The device uppercases a copy and leaves the submitted label alone,
