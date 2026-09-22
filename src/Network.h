@@ -59,7 +59,7 @@ class Network {
   void commandPostHandler(const CommandSpec *spec,
                           AsyncWebServerRequest *request, JsonVariant &json);
   void statusGetHandler(AsyncWebServerRequest *request);
-  void charactersGetHandler(AsyncWebServerRequest *request);
+  void capabilitiesGetHandler(AsyncWebServerRequest *request);
   void notFoundHandler(AsyncWebServerRequest *request);
 
  public:

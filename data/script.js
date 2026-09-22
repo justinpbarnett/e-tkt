@@ -58,15 +58,20 @@ const COMMANDS = {
 // heard of, which means a cached script.js is talking to newer firmware.
 const UNKNOWN_BUSY_LABEL = " working... ";
 
-// The characters a label may contain, and what the ones the wheel does not
-// carry come out as instead. Both arrive from api/characters at startup;
-// until they do the panel refuses to validate anything, the same way it
-// refuses to save before align and force have loaded. Guessing would mean a
-// second copy of the wheel's character set living in this file, which is
-// exactly what this replaced: a comment, a regex, a duplicate of both, and a
-// hint line in index.html, none of which agreed with the wheel.
+// What the device will accept: the characters a label may contain, what the
+// ones the wheel does not carry come out as instead, and the range the
+// align and force fields are offered in. All three arrive from
+// api/capabilities at startup; until they do the panel refuses to validate
+// or to send anything, the same way it refuses to save before align and
+// force have loaded.
+//
+// None of it is guessed here on purpose. Each of these used to have a copy
+// in this file that could drift from the firmware and did: the character
+// set was a regex written twice, and the range was a literal here and two
+// pairs of min/max attributes in index.html.
 let printableCharacters = null;
 let characterAliases = null;
+let calibrationRange = null;
 
 window.onload = startupRoutine;
 
@@ -76,7 +81,7 @@ async function startupRoutine() {
   body.dataset.printing = "false";
   drawHelper();
   document.getElementById("text-input").focus();
-  await retrieveCharacters();
+  await retrieveCapabilities();
   await retrieveSettings();
   await getStatus();
 }
@@ -103,23 +108,34 @@ function checkOverlayScrollbars() {
   }
 }
 
-// Fetches what a label may say. Retries on its own rather than leaving the
-// panel unable to validate: the device answers this from one table, so there
-// is no local fallback to fall back to.
-async function retrieveCharacters() {
+// Fetches what the device will accept. Retries on its own rather than
+// leaving the panel unable to validate: the device answers this from its own
+// constants, so there is no local fallback to fall back to.
+async function retrieveCapabilities() {
   try {
-    const request = await fetchWithTimeout("api/characters", { timeout: 5000 });
+    const request = await fetchWithTimeout("api/capabilities", { timeout: 5000 });
     const response = await request.json();
     if (typeof response.printable !== "string" || response.printable.length === 0) {
-      throw new Error("api/characters served no printable set");
+      throw new Error("api/capabilities served no printable set");
+    }
+    const range = response.calibration;
+    if (!range || !Number.isInteger(range.min) || !Number.isInteger(range.max)) {
+      throw new Error("api/capabilities served no calibration range");
     }
     printableCharacters = response.printable;
     characterAliases = response.aliases || {};
+    calibrationRange = range;
   } catch (error) {
-    console.error("Unable to fetch the printable character set, retrying");
+    console.error("Unable to fetch what the device accepts, retrying");
     console.error(error);
-    setTimeout(retrieveCharacters, 2000);
+    setTimeout(retrieveCapabilities, 2000);
     return;
+  }
+  // changeField() reads the bounds back off the inputs, so this is where the
+  // device's range reaches the + and - buttons.
+  for (const field of ["align-field", "force-field"]) {
+    document.getElementById(field).min = calibrationRange.min;
+    document.getElementById(field).max = calibrationRange.max;
   }
   renderHint();
   validateField();
@@ -446,21 +462,27 @@ function clearField() {
   labelInput.focus();
 }
 
-// The device rejects any align or force outside 1-9. The fields are disabled
-// and only ever written by changeField() or retrieveSettings(), so an
-// out-of-range value means the settings fetch has not landed yet -- sending it
-// anyway would draw a 400 that nothing surfaces to the user.
+// The device rejects any align or force outside the range it served. The
+// fields are disabled and only ever written by changeField() or
+// retrieveSettings(), so an out-of-range value means a fetch has not landed
+// yet -- sending it anyway would draw a 400 that nothing surfaces to the
+// user.
 function calibrationValuesReady(...values) {
-  // the device rejects anything outside 1-9, so do not bother sending it
-  return values.every((value) => Number.isInteger(value) && value >= 1 && value <= 9);
+  if (calibrationRange === null) {
+    return false;
+  }
+  return values.every(
+    (value) =>
+      Number.isInteger(value) && value >= calibrationRange.min && value <= calibrationRange.max
+  );
 }
 
 function updateTempValues() {
   // updates the temporary setting values
 
   // Number() here so the values POST as JSON numbers rather than strings. The
-  // device rejects anything outside 1-9, and a stray string would be parsed as
-  // 0 and refused.
+  // device rejects anything outside the range it served, and a stray string
+  // would be parsed as 0 and refused.
   align = Number(document.getElementById("align-field").value);
   force = Number(document.getElementById("force-field").value);
 }
@@ -471,8 +493,13 @@ function changeField(action, fieldName) {
   const field = document.getElementById(fieldName);
   // field.value and the min/max attributes are all strings. "9" + 1 is "91",
   // not 10, so the add branch was doing a lexicographic string comparison
-  // while the remove branch coerced to numbers -- it only stayed inside 1-9
+  // while the remove branch coerced to numbers -- it only stayed in range
   // because "91" happens to sort after "9". Parse everything up front.
+  //
+  // The bounds come from api/capabilities, written onto the inputs by
+  // retrieveCapabilities(). Before that lands both read as 0 and neither
+  // button moves, which is the right answer: nothing here knows yet what
+  // the device would accept.
   const min = Number(field.min);
   const max = Number(field.max);
   let currentValue = Number(field.value);

@@ -137,11 +137,11 @@ void Network::initialize() {
       "/api/status", HTTP_GET,
       std::bind(&Network::statusGetHandler, this, std::placeholders::_1));
 
-  // What a label is allowed to say. Fetched once at page load so the webapp
-  // does not have to keep its own copy of the wheel's character set.
+  // What this device will accept. Fetched once at page load so the webapp
+  // does not have to keep its own copy of the rules.
   this->server->on(
-      "/api/characters", HTTP_GET,
-      std::bind(&Network::charactersGetHandler, this, std::placeholders::_1));
+      "/api/capabilities", HTTP_GET,
+      std::bind(&Network::capabilitiesGetHandler, this, std::placeholders::_1));
 
   // Serve static assets from the SPIFFS root directory.
   this->server->serveStatic("/", SPIFFS, "/").setDefaultFile("index.html");
@@ -286,12 +286,20 @@ void Network::statusGetHandler(AsyncWebServerRequest *request) {
   request->send(response);
 }
 
-// Serves the set of characters a label may contain, and what the two the
-// wheel does not carry come out as instead. The webapp validates against
-// this rather than a regex of its own: the same list used to be written out
-// in a comment, a regex, a second copy of both, and a hint line in
-// index.html, and all four disagreed with the wheel and with each other.
-void Network::charactersGetHandler(AsyncWebServerRequest *request) {
+// Everything the panel needs to know about what this device will accept,
+// fetched once at page load. Two things used to be written down on both
+// sides of the wire and disagree.
+//
+// The character set was in five places: the wheel map, a stale comment in
+// ETKT.cpp, a regex in script.js, a duplicate of that regex, and a hint
+// line in index.html that promised less than the wheel could do.
+//
+// The 1-9 calibration range was in four: CALIBRATION_VALUE_MIN and MAX in
+// PressGeometry.h, min and max attributes on two inputs in index.html, and
+// a literal in calibrationValuesReady(). Only the constants reach the check
+// that actually refuses a bad value, so the other three were a promise the
+// panel made on the device's behalf.
+void Network::capabilitiesGetHandler(AsyncWebServerRequest *request) {
   AsyncJsonResponse *response = new AsyncJsonResponse();
   const JsonObject &root = response->getRoot();
 
@@ -302,6 +310,13 @@ void Network::charactersGetHandler(AsyncWebServerRequest *request) {
        it != CHARACTER_ALIASES.end(); ++it) {
     aliases[it->first.c_str()] = it->second.c_str();
   }
+
+  // The range align and force are both offered in. readCalibrationField()
+  // refuses anything outside it, so this is the panel being told the same
+  // rule rather than carrying its own copy.
+  const JsonObject calibration = root.createNestedObject("calibration");
+  calibration["min"] = CALIBRATION_VALUE_MIN;
+  calibration["max"] = CALIBRATION_VALUE_MAX;
 
   response->setLength();
   request->send(response);

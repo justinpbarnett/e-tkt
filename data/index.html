@@ -126,8 +126,10 @@
             </div>
 
             <div id="single-column" style="margin: 12px 0 5px 0; justify-content: center">
-              <!-- Filled in from api/characters by renderHint(). The device owns the
-                   list of what a label may say; this is only where it lands. -->
+              <!-- Filled in from api/capabilities by renderHint(). The device owns
+                   the list of what a label may say; this is only where it lands.
+                   The align and force inputs below get their min and max from
+                   the same fetch, which is why neither carries one here. -->
               <div id="hint">...</div>
             </div>
 
@@ -349,8 +351,6 @@
                       type="text"
                       id="align-field"
                       name="align-field"
-                      min="1"
-                      max="9"
                       value=""
                       style="text-align: center; width: 30px; border: 0px; font-size: 30px"
                       disabled
@@ -395,8 +395,6 @@
                       type="text"
                       id="force-field"
                       name="force-field"
-                      min="1"
-                      max="9"
                       value=""
                       style="text-align: center; width: 30px; border: 0px; font-size: 30px"
                       disabled
