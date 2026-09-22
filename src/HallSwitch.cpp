@@ -6,6 +6,8 @@
 #include "Logger.h"
 
 
+HallSwitch::~HallSwitch() {}
+
 HallSwitch::HallSwitch(Logger* logger, uint8_t pin) {
   this->logger = logger;
   this->pin = pin;

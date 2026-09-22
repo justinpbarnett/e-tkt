@@ -500,7 +500,7 @@ void ETKT::tagCommand(String label) {
   this->startCommand(command);
 }
 
-void ETKT::cut() {
+void ETKT::cut(int force) {
   if (!ENABLE_CUT) {
     delay(500);
     return;
@@ -508,8 +508,13 @@ void ETKT::cut() {
   // moves to a specific char (*) then presses label three times (more
   // vigorously)
   this->daisywheel->move("*", this->settings->getAlignFactor());
+  // force 0 means "caller did not say", i.e. use whatever is saved. The full
+  // test button passes the force being trialled instead, so the cut is made at
+  // the same setting as the characters it just stamped.
+  const int cutForce =
+      force > 0 ? force : (int)this->settings->getForceFactor();
   for (int i = 0; i < 3; i++) {
-    this->press->press(true, this->settings->getForceFactor(), false);
+    this->press->press(true, cutForce, false);
   }
 }
 
@@ -640,7 +645,19 @@ void ETKT::testCommandInternal() {
   ledFinish->off();
 
   this->daisywheel->move("M", this->command->align);
-  this->press->press(false, 1, true);
+  // Deliberately the minimum force, matching docs/diy/calibration.md: this
+  // button "will slowly and lightly press the daisy wheel letter" to check
+  // that the press lands centred on the character. Force is calibrated
+  // separately, with the full test button against real tape.
+  //
+  // It must stay at minimum force. This is the only path that passes
+  // slow=true, so it is the only press that holds at peak for
+  // PRESS_TEST_DWELL_MS rather than PRESS_DWELL_MS -- and the calibration doc
+  // sends the user here while the force field is wound up to 9 ("take the
+  // opportunity to see if the alignment is correct"). A full-bite peak held
+  // for seconds is a stalled servo, which is what wears an MG996R's gears and
+  // reams the P_press splines.
+  this->press->press(false, CALIBRATION_VALUE_MIN, true);
 }
 
 void ETKT::testCommandFullInternal() {
@@ -654,7 +671,7 @@ void ETKT::testCommandFullInternal() {
   }
   this->feeder->feed();
   this->daisywheel->move("*", this->command->align);
-  this->cut();
+  this->cut(this->command->force);
 }
 
 void ETKT::homeCommandInternal() {

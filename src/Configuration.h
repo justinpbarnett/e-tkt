@@ -109,11 +109,11 @@
 #define ASSEMBLY_CALIBRATION_ALIGN 0.5f
 #define CHAR_HOME_POSITION 21
 
-// depending on servo characteristics and P_press assembling process, the
-// pressing angle might not be so precise and the value below compensates it use
-// a value between 0 and 20 to make sure the press is barely touching the daisy
-// wheel on test align
-#define ASSEMBLY_CALIBRATION_FORCE 15
+// The press angle compensation that used to live here
+// (ASSEMBLY_CALIBRATION_FORCE) was replaced on 2026-09-22 by the two taught
+// angles in Press.h: STAMP_ANGLE is the measured point where the press just
+// touches the daisy wheel, and PRESS_BITE_AT_MAX_FORCE is how much further
+// force 9 drives it.
 #define MICROSTEPS_FEED 8
 #define FEED_MOTOR_STEPS_PER_REVOLUTION 4076
 #define HALL_SENSOR_THRESHOLD 128  // between 0 and 4096

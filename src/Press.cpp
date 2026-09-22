@@ -6,6 +6,7 @@
 #include "Configuration.h"
 #include "Light.h"
 #include "Logger.h"
+#include "PressGeometry.h"
 
 
 Press::Press(Logger* logger, uint8_t pin, Light* pressLed) {
@@ -15,11 +16,39 @@ Press::Press(Logger* logger, uint8_t pin, Light* pressLed) {
   this->servo = new Servo();
 }
 
+Press::~Press() { delete this->servo; }
+
 void Press::initialize() {
   // set  servo
   this->servo->attach(this->pin);
   this->rest();
   delay(100);
+}
+
+void Press::sweep(int fromAngle, int toAngle, int stepMs) {
+  const int dir = pressDirection(fromAngle, toAngle);
+  // Counting the steps up front bounds the loop by distance rather than by
+  // hitting an exact angle, so a clamped endpoint can never run it away.
+  const int steps = abs(toAngle - fromAngle);
+  // The starting angle is written too, matching the original loop: it is
+  // normally a no-op because the servo is already there, but the bench hold()
+  // path can leave it somewhere else, and it keeps the ramp's total duration
+  // at (steps + 1) * stepMs.
+  int pos = fromAngle;
+  this->servo->write(pos);
+  delay(stepMs);
+  for (int i = 0; i < steps; i++) {
+    pos += dir;
+    this->servo->write(pos);
+    delay(stepMs);
+  }
+}
+
+void Press::settle(int angle, int holdMs) {
+  for (int elapsed = 0; elapsed < holdMs; elapsed += PRESS_SETTLE_STEP_MS) {
+    this->servo->write(angle);
+    delay(PRESS_SETTLE_STEP_MS);
+  }
 }
 
 void Press::press(bool strong, int force, bool slow) {
@@ -30,40 +59,40 @@ void Press::press(bool strong, int force, bool slow) {
 
   this->logger->log("Pressing...");
 
-  int delayFactor = 0;
+  const int stepMs = strong ? 4 : (slow ? 100 : 0);
 
-  auto peakAngle = TARGET_ANGLE + 9 - ASSEMBLY_CALIBRATION_FORCE - force;
+  // The press runs from REST_ANGLE to STAMP_ANGLE -- the measured
+  // just-touching point -- and then further by an amount that scales with
+  // force. The arithmetic lives in PressGeometry.h so it can be tested on the
+  // host; see test/test_press_geometry. It also clamps force into 1-9, which
+  // matters because Settings::getForceFactor() returns 0 when the EEPROM key
+  // is missing and a raw 0 would compute a peak shallower than the touch point.
+  const int peakAngle =
+      pressPeakAngle(REST_ANGLE, STAMP_ANGLE, PRESS_BITE_AT_MAX_FORCE, force);
+  this->logger->log(String("  force ") + clampCalibrationValue(force) +
+                    " -> peak " + peakAngle + " deg");
 
-  if (strong) {
-    delayFactor = 4;
-  } else {
-    delayFactor = slow ? 100 : 0;
-  }
   this->pressLed->on(1.0f);  // lights up the char led
 
-  for (int pos = REST_ANGLE; pos >= peakAngle; pos--) {
-    this->servo->write(pos);
-    delay(delayFactor);
-  }
-  for (int i = 0; i < 5;
-       i++)  // to make sure the servo has reached the peak position
-  {
-    this->servo->write(peakAngle);
-    delay(50);
-  }
+  this->sweep(REST_ANGLE, peakAngle, stepMs);
 
-  for (int pos = peakAngle; pos <= REST_ANGLE; pos++) {
-    this->servo->write(pos);
-    delay(delayFactor);
+  const int dwellMs = slow ? PRESS_TEST_DWELL_MS : PRESS_DWELL_MS;
+  if (slow) {
+    this->logger->log(String("  HOLDING at ") + peakAngle + " deg for " +
+                      dwellMs + "ms -- look at the gap now");
   }
-  for (int i = 0; i < 5;
-       i++)  // to make sure the servo has reached the rest position
-  {
-    this->servo->write(REST_ANGLE);
-    delay(50);
-  }
+  this->settle(peakAngle, dwellMs);
+
+  this->sweep(peakAngle, REST_ANGLE, stepMs);
+  this->settle(REST_ANGLE, PRESS_DWELL_MS);
 
   this->pressLed->on(0.2f);  // dims the char led
 }
 
 void Press::rest() { this->servo->write(REST_ANGLE); }
+
+void Press::hold(int angle) { this->servo->write(angle); }
+
+void Press::release() { this->servo->detach(); }
+
+void Press::engage() { this->servo->attach(this->pin); }

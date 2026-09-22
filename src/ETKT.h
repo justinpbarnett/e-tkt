@@ -129,7 +129,7 @@ class ETKT {
   // Event group that the main loop blocks on for new commands.
   EventGroupHandle_t eventGroup;
 
-  void cut();
+  void cut(int force = 0);
 
   /**
    * Interanl handlers for each type of command the device can do.

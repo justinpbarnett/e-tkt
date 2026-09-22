@@ -14,6 +14,7 @@
 #include "Display.h"
 #include "ETKT.h"
 #include "Logger.h"
+#include "PressGeometry.h"
 #include "SPIFFS.h"
 #include "esp_wifi.h"
 #include "esp_heap_caps.h"
@@ -67,7 +68,11 @@ void Network::clearWiFiCredentials() {
 }
 
 void Network::initialize() {
-  pinMode(resetPin, INPUT);
+  // devkit build 2026-09: the PCB pulls this pin high externally. On a bare
+  // ESP32 devkit an unwired GPIO13 floats low, which reads as "reset button
+  // held", so every boot wipes the WiFi credentials and calls esp_restart().
+  // The internal pull-up makes the button a plain short-to-GND.
+  pinMode(resetPin, INPUT_PULLUP);
 
   // local intialization. once its business is done, there is no need to keep it
   // around
@@ -166,21 +171,52 @@ void Network::notFoundHandler(AsyncWebServerRequest *request) {
   request->send(404, "text/plain", "Not found");
 }
 
+// Reads one 1-9 calibration field out of the request body. On success it
+// writes the value through and returns true; otherwise it fills the response
+// in with a 400 and returns false, so a handler can chain the fields it needs
+// and let the first failure stand.
+//
+// Refusing out-of-range values here rather than clamping them is the point:
+// Settings and pressPeakAngle() both clamp as a backstop, but a clamp is
+// silent -- the panel would report success while the machine used a different
+// number than the one on screen.
+static bool readCalibrationField(const JsonObject &request_data,
+                                 const char *field, const char *missingMessage,
+                                 AsyncJsonResponse *response_data,
+                                 int *value) {
+  const auto response_root = response_data->getRoot();
+  if (!request_data.containsKey(field)) {
+    response_root["error"] = missingMessage;
+    response_data->setCode(400);
+    return false;
+  }
+  const int parsed = request_data[field].as<int>();
+  if (!isValidCalibrationValue(parsed)) {
+    response_root["error"] = String("Please provide a ") + field +
+                             " value between " + CALIBRATION_VALUE_MIN +
+                             " and " + CALIBRATION_VALUE_MAX + ", got " +
+                             parsed;
+    response_data->setCode(400);
+    return false;
+  }
+  *value = parsed;
+  return true;
+}
+
 void Network::savePostHandler(AsyncWebServerRequest *request,
                               JsonVariant &json) {
   const auto request_data = json.as<JsonObject>();
   auto response_data = new AsyncJsonResponse();
   const auto response_root = response_data->getRoot();
   try {
-    if (!request_data.containsKey("align")) {
-      response_root["error"] = "Please provide an align value";
-      response_data->setCode(400);
-    } else if (!request_data.containsKey("force")) {
-      response_root["error"] = "Please provide a force value";
-      response_data->setCode(400);
-    } else {
-      auto align = request_data["align"].as<int>();
-      auto force = request_data["force"].as<int>();
+    int align = 0;
+    int force = 0;
+    if (readCalibrationField(request_data, "align",
+                             "Please provide an align value", response_data,
+                             &align) &&
+        readCalibrationField(request_data, "force",
+                             "Please provide a force value", response_data,
+                             &force)) {
       this->etkt->saveCommand(align, force);
       response_root["result"] = "success";
     }
@@ -250,11 +286,13 @@ void Network::testAlignPostHandler(AsyncWebServerRequest *request,
   auto response_data = new AsyncJsonResponse();
   const auto response_root = response_data->getRoot();
   try {
-    if (!request_data.containsKey("align")) {
-      response_root["error"] = "Please provide an align value";
-      response_data->setCode(400);
-    } else {
-      auto align = request_data["align"].as<int>();
+    // Align only. This test presses at the minimum force by design -- see
+    // ETKT::testCommandInternal -- so any force in the body is ignored rather
+    // than rejected, which keeps a stale cached script.js working.
+    int align = 0;
+    if (readCalibrationField(request_data, "align",
+                             "Please provide an align value", response_data,
+                             &align)) {
       this->etkt->testAlignCommand(align);
       response_root["result"] = "success";
     }
@@ -272,15 +310,14 @@ void Network::testFullPostHandler(AsyncWebServerRequest *request,
   auto response_data = new AsyncJsonResponse();
   const auto response_root = response_data->getRoot();
   try {
-    if (!request_data.containsKey("align")) {
-      response_root["error"] = "Please provide an align value";
-      response_data->setCode(400);
-    } else if (!request_data.containsKey("force")) {
-      response_root["error"] = "Please provide a force value";
-      response_data->setCode(400);
-    } else {
-      auto align = request_data["align"].as<int>();
-      auto force = request_data["force"].as<int>();
+    int align = 0;
+    int force = 0;
+    if (readCalibrationField(request_data, "align",
+                             "Please provide an align value", response_data,
+                             &align) &&
+        readCalibrationField(request_data, "force",
+                             "Please provide a force value", response_data,
+                             &force)) {
       this->etkt->testFullCommand(align, force);
       response_root["result"] = "success";
     }

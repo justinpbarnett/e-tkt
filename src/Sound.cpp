@@ -8,6 +8,8 @@
 #include "Utility.h"
 #include "pitches.h"
 
+Sound::~Sound() {}
+
 Sound::Sound(Characters* characters) { this->characters = characters; }
 
 void Sound::initialize() { pinMode(BUZZER_PIN, OUTPUT); }

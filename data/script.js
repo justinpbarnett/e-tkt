@@ -332,24 +332,41 @@ function clearField() {
   labelInput.focus();
 }
 
+// The device rejects any align or force outside 1-9. The fields are disabled
+// and only ever written by changeField() or retrieveSettings(), so an
+// out-of-range value means the settings fetch has not landed yet -- sending it
+// anyway would draw a 400 that nothing surfaces to the user.
+function calibrationValuesReady(...values) {
+  // the device rejects anything outside 1-9, so do not bother sending it
+  return values.every((value) => Number.isInteger(value) && value >= 1 && value <= 9);
+}
+
 function updateTempValues() {
   // updates the temporary setting values
 
-  align = document.getElementById("align-field").value;
-  force = document.getElementById("force-field").value;
+  // Number() here so the values POST as JSON numbers rather than strings. The
+  // device rejects anything outside 1-9, and a stray string would be parsed as
+  // 0 and refused.
+  align = Number(document.getElementById("align-field").value);
+  force = Number(document.getElementById("force-field").value);
 }
 
 function changeField(action, fieldName) {
   // incremental / decremental buttons for the align and force settings
 
   const field = document.getElementById(fieldName);
-  let currentValue = 0;
-  currentValue = field.value;
+  // field.value and the min/max attributes are all strings. "9" + 1 is "91",
+  // not 10, so the add branch was doing a lexicographic string comparison
+  // while the remove branch coerced to numbers -- it only stayed inside 1-9
+  // because "91" happens to sort after "9". Parse everything up front.
+  const min = Number(field.min);
+  const max = Number(field.max);
+  let currentValue = Number(field.value);
 
-  if (action == "add" && currentValue + 1 <= field.max) {
+  if (action == "add" && currentValue + 1 <= max) {
     currentValue++;
     field.value = currentValue;
-  } else if (action == "remove" && currentValue - 1 >= field.min) {
+  } else if (action == "remove" && currentValue - 1 >= min) {
     currentValue--;
     field.value = currentValue;
   }
@@ -399,7 +416,7 @@ function validateText(input) {
   return regex.test(input);
 }
 
-function toggleSettings(safe = true) {
+async function toggleSettings(safe = true) {
   // shows/hide settings page
 
   let state = document.getElementById("settings-frame").style.visibility;
@@ -408,7 +425,10 @@ function toggleSettings(safe = true) {
   // console.log(align + " / " + alignTemp + " / / " + force + " / " + forceTemp);
 
   if (state === "hidden") {
-    retrieveSettings();
+    // Must be awaited: alignTemp/forceTemp below are the snapshot the "discard
+    // unsaved changes?" check compares against, so taking it before the fetch
+    // lands captures the previous values and reports a spurious edit.
+    await retrieveSettings();
     alignTemp = align;
     forceTemp = force;
     document.getElementById("settings-frame").style.visibility = "visible";
@@ -464,7 +484,13 @@ async function cutCommand() {
 
 async function testAlignCommand() {
   // sends test command to the device
-  align = document.getElementById("align-field").value;
+  updateTempValues();
+  if (!calibrationValuesReady(align)) {
+    console.error("Cannot run the alignment test: align not loaded from the device yet");
+    return;
+  }
+  // no force: this test always presses at the minimum, slowly and lightly, so
+  // the alignment can be checked without embossing anything
   let data = {
     align: align,
   };
@@ -478,8 +504,11 @@ async function testAlignCommand() {
 
 async function testFullCommand() {
   // sends test command to the device
-  align = document.getElementById("align-field").value;
-  force = document.getElementById("force-field").value;
+  updateTempValues();
+  if (!calibrationValuesReady(align, force)) {
+    console.error("Cannot run the full test: align/force not loaded from the device yet");
+    return;
+  }
   let data = {
     align: align,
     force: force,
@@ -495,10 +524,14 @@ async function testFullCommand() {
 async function settingsCommand() {
   // sends settings save command to the device, and triggers self restart in 15 seconds
 
-  align = document.getElementById("align-field").value;
-  force = document.getElementById("force-field").value;
+  updateTempValues();
 
   // console.log("settings / align (" + align + ") force (" + force + ")");
+
+  if (!calibrationValuesReady(align, force)) {
+    console.error("Cannot save: align/force not loaded from the device yet");
+    return;
+  }
 
   if (confirm("Confirm saving align [" + align + "] and force [" + force + "] settings?")) {
     setUiBusy(true);

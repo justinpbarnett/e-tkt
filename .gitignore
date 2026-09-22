@@ -1,5 +1,6 @@
 .pio
-test/
+# test/ is deliberately NOT ignored: src/PressGeometry.h has host-side unit
+# tests under test/, run with `pio test -e native`, and they belong in git.
 lib/
 include/
 .vscode/
