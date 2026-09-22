@@ -132,18 +132,24 @@ void ETKT::initialize() {
   this->daisywheel->initialize();
 }
 
-StatusUpdate* ETKT::createStatus() {
-  auto status = new StatusUpdate();
+StatusUpdate ETKT::createStatus() {
+  StatusUpdate status;
+
+  // Outside the lock on purpose. The lock guards the in-flight command and
+  // its progress; settings are not behind it, and cannot change underneath
+  // this anyway -- the only thing that writes them is the save command,
+  // which reboots the device on its way out.
+  status.align = this->settings->getAlignFactor();
+  status.force = this->settings->getForceFactor();
+
   this->lock->lock();
   if (this->command != NULL) {
-    status->currentCommand = this->command->command;
-    status->currentCommandString = this->command->commandAsString();
-    status->currentLabel = this->command->label;
-    status->progress = this->progress;
+    status.currentCommand = this->command->command;
+    status.currentLabel = this->command->label;
+    status.progress = this->progress;
   }
   this->lock->unlock();
-  status->align = this->settings->getAlignFactor();
-  status->force = this->settings->getForceFactor();
+
   return status;
 }
 

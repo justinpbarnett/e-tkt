@@ -267,18 +267,21 @@ void Network::statusGetHandler(AsyncWebServerRequest *request) {
   AsyncJsonResponse *response = new AsyncJsonResponse();
   const JsonObject &root = response->getRoot();
 
-  auto status = this->etkt->createStatus();
-  root["progress"] = status->progress;
-  root["busy"] = status->currentCommand != Command::IDLE;
-  root["command"] = status->currentCommandString;
-  root["align"] = status->align;
-  root["force"] = status->force;
+  const StatusUpdate status = this->etkt->createStatus();
+  root["progress"] = status.progress;
+  root["busy"] = status.currentCommand != Command::IDLE;
+  // Named from the table, so this is the same string /api/<name> answers to.
+  // An idle device now says "idle" here rather than sending an empty string.
+  // ArduinoJson keeps a const char* by reference rather than copying it;
+  // these point into the table, which is static, so they outlive the send.
+  root["command"] = commandName(status.currentCommand);
+  root["align"] = status.align;
+  root["force"] = status.force;
 
   // Return the current label, if relevant.
-  if (status->currentCommand == Command::TAG) {
-    root["current_label"] = status->currentLabel;
+  if (status.currentCommand == Command::TAG) {
+    root["current_label"] = status.currentLabel;
   }
-  delete status;
   root["mem_heap_free_bytes"] = heap_caps_get_free_size(MALLOC_CAP_8BIT);
   root["mem_largest_free_block_bytes"] = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
   root["uptime_ms"] = millis();

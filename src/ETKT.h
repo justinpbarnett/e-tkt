@@ -105,30 +105,26 @@ struct CommandOptions {
   String label = "";
   int align = 0;
   int force = 0;
-
-  ~CommandOptions() { this->label = ""; }
-
-  String commandAsString() { return commandName(this->command); }
 };
 
 /**
- * @brief A struct for storing the current status of the E-TKT.
+ * @brief One consistent look at what the device is doing right now.
  *
- * This is primarily used to communicate that device status to the webapp.
+ * A snapshot, not a view: the command and its progress are read together
+ * under one lock, so the percentage reported here belongs to the command
+ * reported beside it. Served to the webapp by GET /api/status, which polls
+ * once a second.
+ *
+ * currentCommand is IDLE when nothing is running, and the other fields are
+ * then at their defaults. Whether the device is busy is that comparison and
+ * nothing else -- there is no separate flag to keep in step with it.
  */
 struct StatusUpdate {
   int progress = 0;  // percent, 0 to 99. See Progress.h.
-  bool busy = false;
   int align = 0;
   int force = 0;
   String currentLabel = "";
-  String currentCommandString = "";
   Command currentCommand = Command::IDLE;
-
-  ~StatusUpdate() {
-    this->currentLabel = "";
-    this->currentCommandString = "";
-  }
 };
 
 class PrinterBusyException : public std::exception
@@ -223,7 +219,12 @@ class ETKT {
   static const size_t COMMAND_COUNT;
 
   /**
-   * @brief Returns the current status of the device, ie the printing status.
-  */
-  StatusUpdate* createStatus();
+   * @brief Returns a snapshot of what the device is doing right now.
+   *
+   * By value: the caller gets a copy it owns and nothing has to be freed.
+   * Cheap enough at one poll a second, and the alternative -- handing back
+   * a pointer the caller must delete -- put ownership in the interface for
+   * no gain.
+   */
+  StatusUpdate createStatus();
 };
