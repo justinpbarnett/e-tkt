@@ -29,20 +29,25 @@
 // case, and the route list in Network.cpp -- and home and move had already
 // fallen out of the webapp's copy.
 const CommandSpec ETKT::COMMANDS[] = {
-    {Command::CUT, "cut", false, false, false, &ETKT::cutCommandInternal},
-    {Command::FEED, "feed", false, false, false, &ETKT::feedCommandInternal},
-    {Command::REEL, "reel", false, false, false, &ETKT::reelCommandInternal},
-    {Command::TEST_ALIGN, "testalign", true, false, false,
+    //            name         align  force  label field  handler
+    {Command::CUT, "cut", false, false, NULL, &ETKT::cutCommandInternal},
+    {Command::FEED, "feed", false, false, NULL, &ETKT::feedCommandInternal},
+    {Command::REEL, "reel", false, false, NULL, &ETKT::reelCommandInternal},
+    // Align only. This test presses at the minimum force by design -- see
+    // testCommandInternal -- so a force in the body is ignored, not refused,
+    // which keeps a stale cached script.js working.
+    {Command::TEST_ALIGN, "testalign", true, false, NULL,
      &ETKT::testCommandInternal},
-    {Command::TEST_FULL, "testfull", true, true, false,
+    {Command::TEST_FULL, "testfull", true, true, NULL,
      &ETKT::testCommandFullInternal},
-    {Command::SAVE, "save", true, true, false, &ETKT::saveCommandInternal},
-    {Command::TAG, "tag", false, false, true, &ETKT::tagCommandInternal},
-    {Command::HOME, "home", false, false, false, &ETKT::homeCommandInternal},
-    {Command::MOVE, "move", false, false, true, &ETKT::moveCommandInternal},
+    {Command::SAVE, "save", true, true, NULL, &ETKT::saveCommandInternal},
+    {Command::TAG, "tag", false, false, "tag", &ETKT::tagCommandInternal},
+    {Command::HOME, "home", false, false, NULL, &ETKT::homeCommandInternal},
+    {Command::MOVE, "move", false, false, "character",
+     &ETKT::moveCommandInternal},
     // IDLE is a status, not a job: no handler, and no route is registered for
     // it. It keeps a name because /api/status reports one.
-    {Command::IDLE, "idle", false, false, false, NULL},
+    {Command::IDLE, "idle", false, false, NULL, NULL},
 };
 
 const size_t ETKT::COMMAND_COUNT =

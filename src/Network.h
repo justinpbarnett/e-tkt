@@ -52,17 +52,12 @@ class Network {
   void clearWiFiCredentials();
 
   /**
-   * Callbacks to handle each type of command form the webapp.
+   * Handles a POST to /api/<name> for any command in ETKT::COMMANDS. spec is
+   * the row that route was registered from, and says which body fields to
+   * read; it points into static storage and outlives the request.
    */
-  void cutPostHandler(AsyncWebServerRequest *request);
-  void reelPostHandler(AsyncWebServerRequest *request);
-  void feedPostHandler(AsyncWebServerRequest *request);
-  void savePostHandler(AsyncWebServerRequest *request, JsonVariant &json);
-  void testAlignPostHandler(AsyncWebServerRequest *request, JsonVariant &json);
-  void testFullPostHandler(AsyncWebServerRequest *request, JsonVariant &json);
-  void homePostHandler(AsyncWebServerRequest *request);
-  void movePostHandler(AsyncWebServerRequest *request, JsonVariant &json);
-  void tagPostHandler(AsyncWebServerRequest *request, JsonVariant &json);
+  void commandPostHandler(const CommandSpec *spec,
+                          AsyncWebServerRequest *request, JsonVariant &json);
   void statusGetHandler(AsyncWebServerRequest *request);
   void charactersGetHandler(AsyncWebServerRequest *request);
   void notFoundHandler(AsyncWebServerRequest *request);

@@ -116,35 +116,21 @@ void Network::initialize() {
     return;
   }
 
-  this->server->addHandler(new AsyncCallbackJsonWebHandler(
-      "/api/cut",
-      std::bind(&Network::cutPostHandler, this, std::placeholders::_1)));
-  this->server->addHandler(new AsyncCallbackJsonWebHandler(
-      "/api/feed",
-      std::bind(&Network::feedPostHandler, this, std::placeholders::_1)));
-  this->server->addHandler(new AsyncCallbackJsonWebHandler(
-      "/api/reel",
-      std::bind(&Network::reelPostHandler, this, std::placeholders::_1)));
-  this->server->addHandler(new AsyncCallbackJsonWebHandler(
-      "/api/save", std::bind(&Network::savePostHandler, this,
-                             std::placeholders::_1, std::placeholders::_2)));
-  this->server->addHandler(new AsyncCallbackJsonWebHandler(
-      "/api/testalign",
-      std::bind(&Network::testAlignPostHandler, this, std::placeholders::_1,
-                std::placeholders::_2)));
-  this->server->addHandler(new AsyncCallbackJsonWebHandler(
-      "/api/testfull",
-      std::bind(&Network::testFullPostHandler, this, std::placeholders::_1,
-                std::placeholders::_2)));
-  this->server->addHandler(new AsyncCallbackJsonWebHandler(
-      "/api/home",
-      std::bind(&Network::homePostHandler, this, std::placeholders::_1)));
-  this->server->addHandler(new AsyncCallbackJsonWebHandler(
-      "/api/move", std::bind(&Network::movePostHandler, this,
-                             std::placeholders::_1, std::placeholders::_2)));
-  this->server->addHandler(new AsyncCallbackJsonWebHandler(
-      "/api/tag", std::bind(&Network::tagPostHandler, this,
-                            std::placeholders::_1, std::placeholders::_2)));
+  // One route per command, straight off the table in ETKT.cpp. A command
+  // added there gets its endpoint here for free, and cannot get one whose
+  // name disagrees with the name /api/status reports for it.
+  for (size_t i = 0; i < ETKT::COMMAND_COUNT; i++) {
+    const CommandSpec *spec = &ETKT::COMMANDS[i];
+    if (spec->run == NULL) {
+      // Nothing to run means nothing to post to.
+      continue;
+    }
+    this->server->addHandler(new AsyncCallbackJsonWebHandler(
+        String("/api/") + spec->name,
+        [this, spec](AsyncWebServerRequest *request, JsonVariant &json) {
+          this->commandPostHandler(spec, request, json);
+        }));
+  }
 
   // Check printing status
   this->server->on(
@@ -209,195 +195,70 @@ static bool readCalibrationField(const JsonObject &request_data,
   return true;
 }
 
-void Network::savePostHandler(AsyncWebServerRequest *request,
-                              JsonVariant &json) {
-  const auto request_data = json.as<JsonObject>();
-  auto response_data = new AsyncJsonResponse();
-  const auto response_root = response_data->getRoot();
-  try {
-    int align = 0;
-    int force = 0;
-    if (readCalibrationField(request_data, "align",
-                             "Please provide an align value", response_data,
-                             &align) &&
-        readCalibrationField(request_data, "force",
-                             "Please provide a force value", response_data,
-                             &force)) {
-      CommandOptions options;
-      options.command = Command::SAVE;
-      options.align = align;
-      options.force = force;
-      this->etkt->submit(options);
-      response_root["result"] = "success";
-    }
-  } catch (const std::exception &e) {
-    response_root["error"] = e.what();
-    response_data->setCode(400);
+// Reads the body fields this command declares it needs. Returns false with
+// the response already filled in as a 400 if one is missing or out of range,
+// so the caller can stop at the first failure.
+static bool readCommandOptions(const CommandSpec *spec,
+                               const JsonObject &request_data,
+                               AsyncJsonResponse *response_data,
+                               CommandOptions *options) {
+  if (spec->usesAlign &&
+      !readCalibrationField(request_data, "align",
+                            "Please provide an align value", response_data,
+                            &options->align)) {
+    return false;
   }
-  response_data->setLength();
-  request->send(response_data);
-}
-
-void Network::homePostHandler(AsyncWebServerRequest *request) {
-  auto response_data = new AsyncJsonResponse();
-  const auto response_root = response_data->getRoot();
-  try {
-    CommandOptions options;
-    options.command = Command::HOME;
-    this->etkt->submit(options);
-    response_root["result"] = "success";
-  } catch (const std::exception &e) {
-    response_root["error"] = e.what();
-    response_data->setCode(400);
+  if (spec->usesForce &&
+      !readCalibrationField(request_data, "force",
+                            "Please provide a force value", response_data,
+                            &options->force)) {
+    return false;
   }
-  response_data->setLength();
-  request->send(response_data);
-}
-
-void Network::movePostHandler(AsyncWebServerRequest *request,
-                              JsonVariant &json) {
-  const auto request_data = json.as<JsonObject>();
-  auto response_data = new AsyncJsonResponse();
-  const auto response_root = response_data->getRoot();
-  try {
-    CommandOptions options;
-    options.command = Command::MOVE;
-    options.label = request_data["character"].as<String>();
-    this->etkt->submit(options);
-    response_root["result"] = "success";
-  } catch (const std::exception &e) {
-    response_root["error"] = e.what();
-    response_data->setCode(400);
-  }
-  response_data->setLength();
-  request->send(response_data);
-}
-
-void Network::tagPostHandler(AsyncWebServerRequest *request,
-                             JsonVariant &json) {
-  const auto request_data = json.as<JsonObject>();
-  auto response_data = new AsyncJsonResponse();
-  const auto response_root = response_data->getRoot();
-  try {
-    if (!request_data.containsKey("tag")) {
-      response_root["error"] = "Please provide a tag value";
+  if (spec->labelField != NULL) {
+    if (!request_data.containsKey(spec->labelField)) {
+      response_data->getRoot()["error"] =
+          String("Please provide a ") + spec->labelField + " value";
       response_data->setCode(400);
-    } else {
-      auto tag = request_data["tag"].as<String>();
-      CommandOptions options;
-      options.command = Command::TAG;
-      options.label = tag;
-      this->etkt->submit(options);
-      response_root["result"] = "success";
+      return false;
     }
-  } catch (const std::exception &e) {
-    response_root["error"] = e.what();
-    response_data->setCode(400);
+    options->label = request_data[spec->labelField].as<String>();
   }
-  response_data->setLength();
-  request->send(response_data);
+  return true;
 }
 
-void Network::testAlignPostHandler(AsyncWebServerRequest *request,
-                                   JsonVariant &json) {
+// Every command endpoint. There used to be nine of these, alike down to the
+// catch block, and the differences that mattered -- which fields the body
+// must carry -- were buried in the sameness. The table in ETKT.cpp holds
+// those differences now and this reads them.
+void Network::commandPostHandler(const CommandSpec *spec,
+                                 AsyncWebServerRequest *request,
+                                 JsonVariant &json) {
   const auto request_data = json.as<JsonObject>();
   auto response_data = new AsyncJsonResponse();
   const auto response_root = response_data->getRoot();
-  try {
-    // Align only. This test presses at the minimum force by design -- see
-    // ETKT::testCommandInternal -- so any force in the body is ignored rather
-    // than rejected, which keeps a stale cached script.js working.
-    int align = 0;
-    if (readCalibrationField(request_data, "align",
-                             "Please provide an align value", response_data,
-                             &align)) {
-      CommandOptions options;
-      options.command = Command::TEST_ALIGN;
-      options.align = align;
+
+  CommandOptions options;
+  options.command = spec->command;
+
+  if (readCommandOptions(spec, request_data, response_data, &options)) {
+    try {
       this->etkt->submit(options);
       response_root["result"] = "success";
+    } catch (const PrinterBusyException &e) {
+      // 409, not 400. The request was fine; the machine was not. A caller
+      // that gets a 400 has something to fix in what it sent, and retrying
+      // the same body would be pointless -- here it is the only sensible
+      // thing to do.
+      response_root["error"] = e.what();
+      response_data->setCode(409);
+    } catch (const std::exception &e) {
+      // Nothing else escapes submit() today. If something does it is the
+      // device failing, not the caller.
+      response_root["error"] = e.what();
+      response_data->setCode(500);
     }
-  } catch (const std::exception &e) {
-    response_root["error"] = e.what();
-    response_data->setCode(400);
   }
-  response_data->setLength();
-  request->send(response_data);
-}
 
-void Network::testFullPostHandler(AsyncWebServerRequest *request,
-                                  JsonVariant &json) {
-  const auto request_data = json.as<JsonObject>();
-  auto response_data = new AsyncJsonResponse();
-  const auto response_root = response_data->getRoot();
-  try {
-    int align = 0;
-    int force = 0;
-    if (readCalibrationField(request_data, "align",
-                             "Please provide an align value", response_data,
-                             &align) &&
-        readCalibrationField(request_data, "force",
-                             "Please provide a force value", response_data,
-                             &force)) {
-      CommandOptions options;
-      options.command = Command::TEST_FULL;
-      options.align = align;
-      options.force = force;
-      this->etkt->submit(options);
-      response_root["result"] = "success";
-    }
-  } catch (const std::exception &e) {
-    response_root["error"] = e.what();
-    response_data->setCode(400);
-  }
-  response_data->setLength();
-  request->send(response_data);
-}
-
-void Network::cutPostHandler(AsyncWebServerRequest *request) {
-  auto response_data = new AsyncJsonResponse();
-  const auto response_root = response_data->getRoot();
-  try {
-    CommandOptions options;
-    options.command = Command::CUT;
-    this->etkt->submit(options);
-    response_root["result"] = "success";
-  } catch (const std::exception &e) {
-    response_root["error"] = e.what();
-    response_data->setCode(400);
-  }
-  response_data->setLength();
-  request->send(response_data);
-}
-
-void Network::feedPostHandler(AsyncWebServerRequest *request) {
-  auto response_data = new AsyncJsonResponse();
-  const auto response_root = response_data->getRoot();
-  try {
-    CommandOptions options;
-    options.command = Command::FEED;
-    this->etkt->submit(options);
-    response_root["result"] = "success";
-  } catch (const std::exception &e) {
-    response_root["error"] = e.what();
-    response_data->setCode(400);
-  }
-  response_data->setLength();
-  request->send(response_data);
-}
-
-void Network::reelPostHandler(AsyncWebServerRequest *request) {
-  auto response_data = new AsyncJsonResponse();
-  const auto response_root = response_data->getRoot();
-  try {
-    CommandOptions options;
-    options.command = Command::REEL;
-    this->etkt->submit(options);
-    response_root["result"] = "success";
-  } catch (const std::exception &e) {
-    response_root["error"] = e.what();
-    response_data->setCode(400);
-  }
   response_data->setLength();
   request->send(response_data);
 }

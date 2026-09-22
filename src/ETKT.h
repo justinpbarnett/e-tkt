@@ -60,12 +60,17 @@ struct CommandSpec {
   // /api/status reports, and the path the webapp posts to, /api/<name>.
   const char* name;
 
-  // Which of CommandOptions' optional fields this command reads. A field a
-  // command does not read is ignored rather than refused, so a stale cached
-  // script.js that sends too much still works.
+  // Which of CommandOptions' optional fields this command reads, and so
+  // which fields /api/<name> requires in its body. A field a command does
+  // not read is ignored rather than refused, so a stale cached script.js
+  // that sends too much still works.
   bool usesAlign;
   bool usesForce;
-  bool usesLabel;
+
+  // The body field this command's label arrives in, or NULL if it takes no
+  // label. Two commands take one and they disagree on the name: a tag is a
+  // whole label, a move is a single character.
+  const char* labelField;
 
   // The handler ETKT::loop() runs for this command. NULL means there is
   // nothing to run: IDLE is a status, not a job.
