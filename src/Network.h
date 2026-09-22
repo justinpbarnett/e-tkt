@@ -64,6 +64,7 @@ class Network {
   void movePostHandler(AsyncWebServerRequest *request, JsonVariant &json);
   void tagPostHandler(AsyncWebServerRequest *request, JsonVariant &json);
   void statusGetHandler(AsyncWebServerRequest *request);
+  void charactersGetHandler(AsyncWebServerRequest *request);
   void notFoundHandler(AsyncWebServerRequest *request);
 
  public:

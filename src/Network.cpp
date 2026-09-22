@@ -10,15 +10,15 @@
 
 #include "ArduinoJson.h"
 #include "AsyncJson.h"
+#include "CharacterSet.h"
 #include "Configuration.h"
 #include "Display.h"
 #include "ETKT.h"
 #include "Logger.h"
 #include "PressGeometry.h"
 #include "SPIFFS.h"
-#include "esp_wifi.h"
 #include "esp_heap_caps.h"
-
+#include "esp_wifi.h"
 
 Network *Network::instance = NULL;
 
@@ -150,6 +150,12 @@ void Network::initialize() {
   this->server->on(
       "/api/status", HTTP_GET,
       std::bind(&Network::statusGetHandler, this, std::placeholders::_1));
+
+  // What a label is allowed to say. Fetched once at page load so the webapp
+  // does not have to keep its own copy of the wheel's character set.
+  this->server->on(
+      "/api/characters", HTTP_GET,
+      std::bind(&Network::charactersGetHandler, this, std::placeholders::_1));
 
   // Serve static assets from the SPIFFS root directory.
   this->server->serveStatic("/", SPIFFS, "/").setDefaultFile("index.html");
@@ -415,6 +421,27 @@ void Network::statusGetHandler(AsyncWebServerRequest *request) {
   root["mem_heap_free_bytes"] = heap_caps_get_free_size(MALLOC_CAP_8BIT);
   root["mem_largest_free_block_bytes"] = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
   root["uptime_ms"] = millis();
+  response->setLength();
+  request->send(response);
+}
+
+// Serves the set of characters a label may contain, and what the two the
+// wheel does not carry come out as instead. The webapp validates against
+// this rather than a regex of its own: the same list used to be written out
+// in a comment, a regex, a second copy of both, and a hint line in
+// index.html, and all four disagreed with the wheel and with each other.
+void Network::charactersGetHandler(AsyncWebServerRequest *request) {
+  AsyncJsonResponse *response = new AsyncJsonResponse();
+  const JsonObject &root = response->getRoot();
+
+  root["printable"] = printableCharacters();
+
+  const JsonObject aliases = root.createNestedObject("aliases");
+  for (std::map<String, String>::const_iterator it = CHARACTER_ALIASES.begin();
+       it != CHARACTER_ALIASES.end(); ++it) {
+    aliases[it->first.c_str()] = it->second.c_str();
+  }
+
   response->setLength();
   request->send(response);
 }

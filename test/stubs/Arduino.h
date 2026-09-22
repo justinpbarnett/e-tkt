@@ -136,6 +136,17 @@ class String {
   bool operator!=(const String& other) const {
     return this->value != other.value;
   }
+
+  // std::map<String, ...> needs an ordering. Arduino's String compares with
+  // strcmp, so byte order is what the device sees when it walks CHARACTERS.
+  bool operator<(const String& other) const {
+    return this->value < other.value;
+  }
+
+  int indexOf(const String& needle) const {
+    const size_t at = this->value.find(needle.value);
+    return at == std::string::npos ? -1 : (int)at;
+  }
 };
 
 inline String operator+(const String& a, const String& b) {

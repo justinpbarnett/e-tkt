@@ -58,6 +58,16 @@ const COMMANDS = {
 // heard of, which means a cached script.js is talking to newer firmware.
 const UNKNOWN_BUSY_LABEL = " working... ";
 
+// The characters a label may contain, and what the ones the wheel does not
+// carry come out as instead. Both arrive from api/characters at startup;
+// until they do the panel refuses to validate anything, the same way it
+// refuses to save before align and force have loaded. Guessing would mean a
+// second copy of the wheel's character set living in this file, which is
+// exactly what this replaced: a comment, a regex, a duplicate of both, and a
+// hint line in index.html, none of which agreed with the wheel.
+let printableCharacters = null;
+let characterAliases = null;
+
 window.onload = startupRoutine;
 
 async function startupRoutine() {
@@ -66,6 +76,7 @@ async function startupRoutine() {
   body.dataset.printing = "false";
   drawHelper();
   document.getElementById("text-input").focus();
+  await retrieveCharacters();
   await retrieveSettings();
   await getStatus();
 }
@@ -90,6 +101,84 @@ function checkOverlayScrollbars() {
   if (scrollbarWidth === 0) {
     document.body.classList.add("overlay-scroll-enabled");
   }
+}
+
+// Fetches what a label may say. Retries on its own rather than leaving the
+// panel unable to validate: the device answers this from one table, so there
+// is no local fallback to fall back to.
+async function retrieveCharacters() {
+  try {
+    const request = await fetchWithTimeout("api/characters", { timeout: 5000 });
+    const response = await request.json();
+    if (typeof response.printable !== "string" || response.printable.length === 0) {
+      throw new Error("api/characters served no printable set");
+    }
+    printableCharacters = response.printable;
+    characterAliases = response.aliases || {};
+  } catch (error) {
+    console.error("Unable to fetch the printable character set, retrying");
+    console.error(error);
+    setTimeout(retrieveCharacters, 2000);
+    return;
+  }
+  renderHint();
+  validateField();
+}
+
+// Fills the hint line under the input. Normally it lists what may be typed.
+// While the label holds a character the wheel does not carry it says what
+// that character will come out as instead, which is the only warning before
+// the tape is spent.
+function renderHint() {
+  const hint = document.getElementById("hint");
+  if (printableCharacters === null) {
+    return;
+  }
+
+  const typed = document.getElementById("text-input").value.toUpperCase();
+  const surprises = Object.keys(characterAliases)
+    .filter((character) => typed.indexOf(character) >= 0)
+    .map((character) => character + " prints " + characterAliases[character]);
+
+  hint.textContent =
+    surprises.length > 0 ? surprises.join("   ") : summariseCharacters(printableCharacters);
+}
+
+// Turns the served character set into something short enough to sit under
+// the input. A run of three or more consecutive letters or digits collapses
+// to a range; everything else is listed as itself. Nothing is left out, so
+// the line cannot quietly stop matching what the device accepts.
+function summariseCharacters(characters) {
+  const sameKind = (a, b) =>
+    (/[0-9]/.test(a) && /[0-9]/.test(b)) || (/[A-Z]/.test(a) && /[A-Z]/.test(b));
+
+  const parts = [];
+  let run = [];
+  const flush = () => {
+    if (run.length === 0) {
+      return;
+    }
+    parts.push(run.length >= 3 ? run[0] + "-" + run[run.length - 1] : run.join(" "));
+    run = [];
+  };
+
+  for (const glyph of characters) {
+    if (glyph === " ") {
+      continue;
+    }
+    const previous = run[run.length - 1];
+    const follows = previous !== undefined && glyph.codePointAt(0) === previous.codePointAt(0) + 1;
+    if (previous !== undefined && !(follows && sameKind(previous, glyph))) {
+      flush();
+    }
+    run.push(glyph);
+  }
+  flush();
+
+  if (characters.indexOf(" ") >= 0) {
+    parts.push("space");
+  }
+  return parts.join(" ");
 }
 
 async function retrieveSettings() {
@@ -236,20 +325,21 @@ function onTextInputSelectionchange() {
   }
 }
 
+// Whether the label in the input is something the device would accept. Every
+// character is checked against the set the device served, so this answer and
+// the device's answer cannot drift apart. Case does not matter: the label is
+// sent lowercase and the firmware upper-cases it again.
 function isValidLabelText() {
-  // test for suported characters
-  // $-.23456789*abcdefghijklmnopqrstuvwxyz♡☆♪€@
-
-  //  supported emoji:
-  // 	♡
-  // 	☆
-  // 	♪
-  // 	€
-  // 	@
-  // 	$
-  let labelInput = document.getElementById("text-input");
-  let regex = /^[a-zA-Z0-9 .\-♡☆♪€@$]+$/i;
-  return labelInput.value.length > 0 && regex.test(labelInput.value);
+  const value = document.getElementById("text-input").value;
+  if (value.length === 0 || printableCharacters === null) {
+    return false;
+  }
+  for (const character of value.toUpperCase()) {
+    if (printableCharacters.indexOf(character) < 0) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function updateScrollHelper() {
@@ -300,6 +390,7 @@ function validateField() {
   // instantly validates label field by blocking buttons and giving visual feedback
   let labelInput = document.getElementById("text-input");
   drawHelper();
+  renderHint();
 
   if (!isValidLabelText() && labelInput.value != "") {
     document.getElementById("hint").style.color = "red";
@@ -421,22 +512,6 @@ function insertIntoField(specialChar) {
   labelInput.setSelectionRange(insertStartPoint + 1, insertStartPoint + 1);
   validateField();
   labelInput.focus();
-}
-
-function validateText(input) {
-  // test for suported characters
-  // $-.23456789*abcdefghijklmnopqrstuvwxyz♡☆♪€@
-
-  //  supported emoji:
-  // 	♡
-  // 	☆
-  // 	♪
-  // 	€
-  // 	@
-  // 	$
-
-  let regex = /^[a-zA-Z0-9 .\-♡☆♪€@$]+$/i;
-  return regex.test(input);
 }
 
 async function toggleSettings(safe = true) {

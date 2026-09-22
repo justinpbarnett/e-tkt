@@ -337,7 +337,9 @@ void ETKT::tagCommandInternal() {
 
   this->logger->log(String("print ") + label);
 
-  // all possible characters: $-.23456789*abcdefghijklmnopqrstuvwxyz♡☆♪€@
+  // What a label may say is CHARACTERS in CharacterSet.h, less the cut
+  // mark, plus the space. printableCharacters() is that list; the webapp
+  // fetches it rather than keeping one of its own.
   int labelLength = Utility::utf8Length(label);
 
   this->ledChar->on(0.2f);
