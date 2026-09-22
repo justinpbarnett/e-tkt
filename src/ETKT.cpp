@@ -20,6 +20,13 @@
 #include "Settings.h"
 #include "Sound.h"
 
+// How the finish LED celebrates a finished label: five half-brightness
+// flashes, then a slow fade to dark. Timings, not shapes -- Light owns what a
+// blink and a fade are.
+static const int FINISH_BLINK_TIMES = 5;
+static const int FINISH_BLINK_MS = 100;
+static const int FINISH_FADE_MS = 3225;
+
 // The one statement of what commands this device has. Columns, in order:
 // the enumerator, the name it answers to on the wire and in /api/<name>,
 // whether it reads align, force and label, and the handler loop() runs.
@@ -235,7 +242,7 @@ void ETKT::loop() {
 
 void ETKT::feedCommandInternal() {
   this->display->render(Screen::FEEDING);
-  this->ledFinish->on(1.0f / 8);
+  this->ledFinish->on(LIGHT_FAINT);
   this->press->rest();
   delay(500);
   this->feeder->feed();
@@ -245,7 +252,7 @@ void ETKT::feedCommandInternal() {
 
 void ETKT::reelCommandInternal() {
   this->display->render(Screen::REELING);
-  this->ledFinish->on(1.0f / 8);
+  this->ledFinish->on(LIGHT_FAINT);
   this->press->rest();
   delay(500);
 
@@ -256,7 +263,7 @@ void ETKT::reelCommandInternal() {
 
 void ETKT::cutCommandInternal() {
   this->display->render(Screen::CUTTING);
-  this->ledChar->on(0.2f);
+  this->ledChar->on(LIGHT_DIM);
   this->press->rest();
   delay(500);
 
@@ -325,8 +332,8 @@ void ETKT::testCommandFullInternal() {
 }
 
 void ETKT::homeCommandInternal() {
-  this->ledFinish->on(1.0f);
-  this->ledChar->on(1.0f);
+  this->ledFinish->on(LIGHT_FULL);
+  this->ledChar->on(LIGHT_FULL);
   this->press->rest();
   delay(500);
   this->daisywheel->home(this->settings->getAlignFactor());
@@ -353,7 +360,7 @@ void ETKT::tagCommandInternal() {
   // fetches it rather than keeping one of its own.
   int labelLength = Utility::utf8Length(label);
 
-  this->ledChar->on(0.2f);
+  this->ledChar->on(LIGHT_DIM);
 
   this->display->renderProgress(0, label);
 
@@ -406,21 +413,11 @@ void ETKT::tagCommandInternal() {
   this->ledChar->off();
   display->render(Screen::FINISHED);
 
-  this->logger->log("Blinking LED");
-  // Blink the finish led a few times.
-  for (int i = 0; i < 5; i++) {
-    this->ledFinish->off();
-    delay(100);
-    this->ledFinish->on(0.5f);
-    delay(100);
-  }
-
-  this->logger->log("Fading LED");
-  // Then fade it out.
-  for (int i = 128; i >= 0; i--) {
-    this->ledFinish->on(i / 128.0f);
-    delay(25);
-  }
-  this->ledFinish->off();
+  // Blink, then fade out. blink() leaves the LED lit at LIGHT_HALF and the
+  // fade restarts from LIGHT_FULL, which is a jump; it is how this has always
+  // looked, and at zero milliseconds apart it is not a thing anyone sees.
+  this->ledFinish->blink(FINISH_BLINK_TIMES, LIGHT_HALF, FINISH_BLINK_MS,
+                         FINISH_BLINK_MS);
+  this->ledFinish->fadeOut(LIGHT_FULL, FINISH_FADE_MS);
   this->logger->log("Printing Complete");
 }

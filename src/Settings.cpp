@@ -51,8 +51,8 @@ void Settings::save(uint32_t newAlignFactor, uint32_t newForceFactor) {
   const uint32_t align = clampCalibrationValueUnsigned(newAlignFactor);
   const uint32_t force = clampCalibrationValueUnsigned(newForceFactor);
   if (align != newAlignFactor || force != newForceFactor) {
-    this->logger->log(String("Clamped calibration to align ") + align +
-                      " force " + force);
+    this->logger->warn(String("Clamped calibration to align ") + align +
+                       " force " + force);
   }
 
   this->preferences->begin("calibration", false);

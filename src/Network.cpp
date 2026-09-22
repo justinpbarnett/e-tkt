@@ -92,13 +92,14 @@ void Network::initialize() {
   // here  "AutoConnectAP"
   // and goes into a blocking loop awaiting configuration
   if (!wifiManager.autoConnect("E-TKT")) {
-    this->logger->log("failed to connect and hit timeout");
+    this->logger->error("failed to connect and hit timeout");
     // reset and try again, or maybe put it to deep sleep
     ESP.restart();
   }
 
   if (!MDNS.begin("e-tkt")) {
-    this->logger->log("Error starting mDNS");
+    // Not fatal: the device is still reachable at its IP, just not by name.
+    this->logger->warn("Error starting mDNS");
   } else {
     // Advertise the webserver over mdns-sd, and add some custom props
     // to identify it as an e-tkt in case future integrations want to
@@ -112,7 +113,7 @@ void Network::initialize() {
 
   // Initialize SPIFFS
   if (!SPIFFS.begin()) {
-    this->logger->log("An Error has occurred while mounting SPIFFS");
+    this->logger->error("An Error has occurred while mounting SPIFFS");
     return;
   }
 
@@ -143,6 +144,13 @@ void Network::initialize() {
       "/api/capabilities", HTTP_GET,
       std::bind(&Network::capabilitiesGetHandler, this, std::placeholders::_1));
 
+  // What the machine has been doing. Plain text, because the only reader is
+  // somebody stood at the bench opening http://e-tkt.local/api/log in a
+  // phone browser to find out why the last label came out wrong.
+  this->server->on(
+      "/api/log", HTTP_GET,
+      std::bind(&Network::logGetHandler, this, std::placeholders::_1));
+
   // Serve static assets from the SPIFFS root directory.
   this->server->serveStatic("/", SPIFFS, "/").setDefaultFile("index.html");
 
@@ -157,6 +165,13 @@ void Network::initialize() {
 
   // Start server
   this->server->begin();
+}
+
+// The last lines the device logged, oldest first. Until this existed the only
+// way to read them was a USB cable and a serial monitor, which is a problem
+// for a machine that is on a bench, on wifi, and printing a label wrong.
+void Network::logGetHandler(AsyncWebServerRequest *request) {
+  request->send(200, "text/plain", this->logger->recent());
 }
 
 void Network::notFoundHandler(AsyncWebServerRequest *request) {

@@ -74,7 +74,7 @@ void Press::press(bool strong, int force, bool slow) {
   this->logger->log(String("  force ") + clampCalibrationValue(force) +
                     " -> peak " + peakAngle + " deg");
 
-  this->pressLed->on(1.0f);  // lights up the char led
+  this->pressLed->on(LIGHT_FULL);  // lights up the char led
 
   this->sweep(REST_ANGLE, peakAngle, stepMs);
 
@@ -88,7 +88,7 @@ void Press::press(bool strong, int force, bool slow) {
   this->sweep(peakAngle, REST_ANGLE, stepMs);
   this->settle(REST_ANGLE, PRESS_DWELL_MS);
 
-  this->pressLed->on(0.2f);  // dims the char led
+  this->pressLed->on(LIGHT_DIM);  // dims the char led
 }
 
 void Press::rest() { this->servo->write(REST_ANGLE); }

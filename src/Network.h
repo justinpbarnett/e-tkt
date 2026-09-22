@@ -60,6 +60,7 @@ class Network {
                           AsyncWebServerRequest *request, JsonVariant &json);
   void statusGetHandler(AsyncWebServerRequest *request);
   void capabilitiesGetHandler(AsyncWebServerRequest *request);
+  void logGetHandler(AsyncWebServerRequest *request);
   void notFoundHandler(AsyncWebServerRequest *request);
 
  public:

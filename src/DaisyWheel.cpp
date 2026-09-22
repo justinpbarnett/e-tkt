@@ -72,10 +72,11 @@ void DaisyWheel::home(int align) {
 
   this->homed = hallState;
   if (!hallState) {
-    logger->log("HOMING FAILED: swept 1.5 revolutions with no hall trigger. "
-                "Check the magnet on the hub, the sensor gap, and the 10k "
-                "pull-up to 3V3. Continuing with an unreferenced wheel -- "
-                "characters will be wrong until this is fixed.");
+    logger->error(
+        "HOMING FAILED: swept 1.5 revolutions with no hall trigger. "
+        "Check the magnet on the hub, the sensor gap, and the 10k "
+        "pull-up to 3V3. Continuing with an unreferenced wheel -- "
+        "characters will be wrong until this is fixed.");
   }
 
   this->stepper->setCurrentPosition(0);
@@ -100,7 +101,11 @@ bool DaisyWheel::move(String c, int alignFactor) {
   this->stepper->enableOutputs();
   auto charIndex = this->characters->getCharacterIndex(c);
   if (charIndex < 0) {
-    // Invalid character
+    // Nothing on the wheel prints this. Drop the coil current on the way out:
+    // the enableOutputs() above has the motor holding position for a move
+    // that can never happen, and this path used to return with it still hot.
+    logger->error(String("No character '") + c + "' on the daisy wheel");
+    this->deenergize();
     return false;
   }
   if (charIndex == this->currentChar) {
