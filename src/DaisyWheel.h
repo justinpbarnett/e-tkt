@@ -23,6 +23,7 @@ class DaisyWheel {
   const int stepsPerRevolution = CHAR_STEP_COUNT * CHAR_MICROSTEPS;
   float stepsPerChar = 0;
   int currentChar;
+  bool homed = false;
 
  public:
   DaisyWheel(Logger* logger, HallSwitch* hall, Characters* characters,
@@ -43,6 +44,13 @@ class DaisyWheel {
    * @brief Moves the daisy wheel to the provided character "c".
    */
   bool move(String c, int alignFactor);
+
+  /**
+   * @brief True if the last home() found the hall trigger. False means the
+   * wheel swept its full search range without seeing the magnet and its
+   * position is unreferenced.
+   */
+  bool isHomed() { return this->homed; }
 
   /**
    * @brief Deactivates the daisy wheel stepper motor, potentially losing its

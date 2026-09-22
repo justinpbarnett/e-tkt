@@ -1,7 +1,7 @@
 #pragma once
 
 #include <Arduino.h>
-#include <preferences.h>
+#include <Preferences.h>
 
 #include <tuple>
 

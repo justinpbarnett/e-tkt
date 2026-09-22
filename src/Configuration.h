@@ -68,7 +68,16 @@
  *
  * Developers of the firmware may find it useful to turn on these features
  */
-#define ENABLE_SERIAL false  // Enables serial output
+// TEMPORARY bring-up scaffolding, one block each in ETKT::initialize(). All
+// five are verified on machine 1 and are kept only to bring machines 2 and 3
+// up; delete them once machine 3 is finished.
+#define BENCH_SELFTEST false      // LEDs/buzzer/button, verified 2026-09-18
+#define BENCH_FEEDER_TEST false   // feeder, verified 2026-09-21
+#define BENCH_A4988_TEST false    // A4988 + staged hold, verified 2026-09-21
+#define BENCH_SERVO_TEST false    // teach REST_ANGLE/STAMP_ANGLE per machine
+#define BENCH_HALL_MONITOR false  // rotate and sweep for hall edges
+
+#define ENABLE_SERIAL true   // Enables serial output
 #define ENABLE_OTA false     // Enables OTA updates at http://e-tkt.local/update
 #define DEBUG_WIFI false     // Enables WiFi debugging
 

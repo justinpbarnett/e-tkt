@@ -10,3 +10,6 @@ include/
 _electronic/e-tkt-backups/
 _electronic/fp-info-cache
 src/simulator/__pycache__/
+
+# stray Bambu Studio slicer output
+result.json

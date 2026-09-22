@@ -59,16 +59,25 @@ void DaisyWheel::home(int align) {
   // that is as the new home position.
   this->stepper->move(-this->stepsPerRevolution * 1.5f);
   auto hallState = hall->triggered();
-  while (!hallState) {
+  // Give up once the 1.5-revolution sweep is exhausted rather than spinning
+  // here forever: the stepper has stopped by then, so the hall reading can no
+  // longer change and the original loop could never exit.
+  while (!hallState && this->stepper->distanceToGo() != 0) {
     this->stepper->run();
     // TODO: less intrusive way to avoid triggering watchdog?
     delayMicroseconds(100);
 
     hallState = hall->triggered();
   }
-  // TODO: Add a failure path for if the stepper moved a full rotation without
-  // trigerring the sensor, inidcating that something is wrong with the
-  // hardware.
+
+  this->homed = hallState;
+  if (!hallState) {
+    logger->log("HOMING FAILED: swept 1.5 revolutions with no hall trigger. "
+                "Check the magnet on the hub, the sensor gap, and the 10k "
+                "pull-up to 3V3. Continuing with an unreferenced wheel -- "
+                "characters will be wrong until this is fixed.");
+  }
+
   this->stepper->setCurrentPosition(0);
 
   this->stepper->runToNewPosition(-stepsPerChar + (stepsPerChar * a) +
