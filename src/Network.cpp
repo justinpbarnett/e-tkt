@@ -217,7 +217,11 @@ void Network::savePostHandler(AsyncWebServerRequest *request,
         readCalibrationField(request_data, "force",
                              "Please provide a force value", response_data,
                              &force)) {
-      this->etkt->saveCommand(align, force);
+      CommandOptions options;
+      options.command = Command::SAVE;
+      options.align = align;
+      options.force = force;
+      this->etkt->submit(options);
       response_root["result"] = "success";
     }
   } catch (const std::exception &e) {
@@ -232,7 +236,9 @@ void Network::homePostHandler(AsyncWebServerRequest *request) {
   auto response_data = new AsyncJsonResponse();
   const auto response_root = response_data->getRoot();
   try {
-    this->etkt->homeCommand();
+    CommandOptions options;
+    options.command = Command::HOME;
+    this->etkt->submit(options);
     response_root["result"] = "success";
   } catch (const std::exception &e) {
     response_root["error"] = e.what();
@@ -248,7 +254,10 @@ void Network::movePostHandler(AsyncWebServerRequest *request,
   auto response_data = new AsyncJsonResponse();
   const auto response_root = response_data->getRoot();
   try {
-    this->etkt->moveCommand(request_data["character"].as<String>());
+    CommandOptions options;
+    options.command = Command::MOVE;
+    options.label = request_data["character"].as<String>();
+    this->etkt->submit(options);
     response_root["result"] = "success";
   } catch (const std::exception &e) {
     response_root["error"] = e.what();
@@ -269,7 +278,10 @@ void Network::tagPostHandler(AsyncWebServerRequest *request,
       response_data->setCode(400);
     } else {
       auto tag = request_data["tag"].as<String>();
-      this->etkt->tagCommand(tag);
+      CommandOptions options;
+      options.command = Command::TAG;
+      options.label = tag;
+      this->etkt->submit(options);
       response_root["result"] = "success";
     }
   } catch (const std::exception &e) {
@@ -293,7 +305,10 @@ void Network::testAlignPostHandler(AsyncWebServerRequest *request,
     if (readCalibrationField(request_data, "align",
                              "Please provide an align value", response_data,
                              &align)) {
-      this->etkt->testAlignCommand(align);
+      CommandOptions options;
+      options.command = Command::TEST_ALIGN;
+      options.align = align;
+      this->etkt->submit(options);
       response_root["result"] = "success";
     }
   } catch (const std::exception &e) {
@@ -318,7 +333,11 @@ void Network::testFullPostHandler(AsyncWebServerRequest *request,
         readCalibrationField(request_data, "force",
                              "Please provide a force value", response_data,
                              &force)) {
-      this->etkt->testFullCommand(align, force);
+      CommandOptions options;
+      options.command = Command::TEST_FULL;
+      options.align = align;
+      options.force = force;
+      this->etkt->submit(options);
       response_root["result"] = "success";
     }
   } catch (const std::exception &e) {
@@ -333,7 +352,9 @@ void Network::cutPostHandler(AsyncWebServerRequest *request) {
   auto response_data = new AsyncJsonResponse();
   const auto response_root = response_data->getRoot();
   try {
-    this->etkt->cutCommand();
+    CommandOptions options;
+    options.command = Command::CUT;
+    this->etkt->submit(options);
     response_root["result"] = "success";
   } catch (const std::exception &e) {
     response_root["error"] = e.what();
@@ -347,7 +368,9 @@ void Network::feedPostHandler(AsyncWebServerRequest *request) {
   auto response_data = new AsyncJsonResponse();
   const auto response_root = response_data->getRoot();
   try {
-    this->etkt->feedCommand();
+    CommandOptions options;
+    options.command = Command::FEED;
+    this->etkt->submit(options);
     response_root["result"] = "success";
   } catch (const std::exception &e) {
     response_root["error"] = e.what();
@@ -361,7 +384,9 @@ void Network::reelPostHandler(AsyncWebServerRequest *request) {
   auto response_data = new AsyncJsonResponse();
   const auto response_root = response_data->getRoot();
   try {
-    this->etkt->reelCommand();
+    CommandOptions options;
+    options.command = Command::REEL;
+    this->etkt->submit(options);
     response_root["result"] = "success";
   } catch (const std::exception &e) {
     response_root["error"] = e.what();

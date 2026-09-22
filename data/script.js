@@ -31,6 +31,33 @@ let alignTemp;
 let forceTemp;
 let scrollbarHeight = 0;
 
+// One row per command the device can run, keyed by the name it answers to.
+// That name is also the path this panel posts to, api/<name>, and the string
+// /api/status reports back while the command runs.
+//
+// Keep it in step with COMMANDS in src/ETKT.cpp. This list used to be spread
+// across the senders below and the status switch in handleData(), and home
+// and move had already fallen out of both: a home or a move started from
+// outside the panel left the button showing whatever it said last.
+//
+// No button posts home or move today. They are listed because the device can
+// still be running one, and the panel has to be able to say so.
+const COMMANDS = {
+  cut: { busyLabel: " cutting... " },
+  feed: { busyLabel: " feeding... " },
+  reel: { busyLabel: " reeling... " },
+  testalign: { busyLabel: " testing... " },
+  testfull: { busyLabel: " testing... " },
+  save: { busyLabel: " saving... " },
+  tag: { busyLabel: " printing... " },
+  home: { busyLabel: " homing... " },
+  move: { busyLabel: " moving... " },
+};
+
+// Shown when the device reports a command this copy of the panel has never
+// heard of, which means a cached script.js is talking to newer firmware.
+const UNKNOWN_BUSY_LABEL = " working... ";
+
 window.onload = startupRoutine;
 
 async function startupRoutine() {
@@ -117,11 +144,7 @@ async function labelCommand() {
   if (isValidLabelText()) {
     document.getElementById("text-input").blur();
     setUiBusy(true);
-    let response = await postJson("api/tag", { tag: buildTreatedLabel().toLowerCase() });
-    if (!response.ok) {
-      console.error("Unable to feed");
-      console.error((await response.json())["error"]);
-    }
+    await sendCommand("tag", { tag: buildTreatedLabel().toLowerCase() });
   }
 }
 
@@ -451,35 +474,23 @@ async function reelCommand() {
   if (prompt) {
     toggleSettings(false);
     setUiBusy(true);
-    document.getElementById("submit-button").value = " reeling... ";
-    let response = await postJson("api/reel", {});
-    if (!response.ok) {
-      console.error("Unable to reel");
-      console.error((await response.json())["error"]);
-    }
+    document.getElementById("submit-button").value = COMMANDS.reel.busyLabel;
+    await sendCommand("reel");
   }
 }
 
 async function feedCommand() {
   // sends feed command to the device
   setUiBusy(true);
-  document.getElementById("submit-button").value = " feeding... ";
-  let response = await postJson("api/feed", {});
-  if (!response.ok) {
-    console.error("Unable to feed");
-    console.error((await response.json())["error"]);
-  }
+  document.getElementById("submit-button").value = COMMANDS.feed.busyLabel;
+  await sendCommand("feed");
 }
 
 async function cutCommand() {
   // sends cut command to the device
   setUiBusy(true);
-  document.getElementById("submit-button").value = " cutting... ";
-  let response = await postJson("api/cut", { });
-  if (!response.ok) {
-    console.error("Unable to cut");
-    console.error((await response.json())["error"]);
-  }
+  document.getElementById("submit-button").value = COMMANDS.cut.busyLabel;
+  await sendCommand("cut");
 }
 
 async function testAlignCommand() {
@@ -495,11 +506,7 @@ async function testAlignCommand() {
     align: align,
   };
   setUiBusy(true);
-  let response = await postJson("api/testalign", data);
-  if (!response.ok) {
-    console.error("Unable to perform test");
-    console.error((await response.json())["error"]);
-  }
+  await sendCommand("testalign", data);
 }
 
 async function testFullCommand() {
@@ -514,11 +521,7 @@ async function testFullCommand() {
     force: force,
   };
   setUiBusy(true);
-  let response = await postJson("api/testfull", data);
-  if (!response.ok) {
-    console.error("Unable to perform test");
-    console.error((await response.json())["error"]);
-  }
+  await sendCommand("testfull", data);
 }
 
 async function settingsCommand() {
@@ -535,11 +538,8 @@ async function settingsCommand() {
 
   if (confirm("Confirm saving align [" + align + "] and force [" + force + "] settings?")) {
     setUiBusy(true);
-    document.getElementById("submit-button").value = " saving... ";
-    let response = await postJson("api/save", { align: align, force: force });
-    if (!response.ok) {
-      console.error("Unable to save settings");
-      console.error((await response.json())["error"]);
+    document.getElementById("submit-button").value = COMMANDS.save.busyLabel;
+    if (!(await sendCommand("save", { align: align, force: force }))) {
       return;
     }
 
@@ -575,6 +575,18 @@ async function fetchWithTimeout(resource, options = {}) {
   });
   clearTimeout(id);
   return response;
+}
+
+// Sends one command to the device and reports a refusal to the console. The
+// name is a key in COMMANDS, which is also the path it posts to. Returns
+// whether the device accepted it.
+async function sendCommand(name, data = {}) {
+  const response = await postJson("api/" + name, data);
+  if (!response.ok) {
+    console.error("Unable to " + name);
+    console.error((await response.json())["error"]);
+  }
+  return response.ok;
 }
 
 // Helper method to post a json request, supports timeouts.
@@ -641,37 +653,35 @@ function handleData(data_json) {
   // the browser read a point below the OLED beside it.
   let percentage = parseInt(data_json.progress);
 
+  const submitButton = document.getElementById("submit-button");
+  const spec = COMMANDS[data_json.command];
+  submitButton.value = spec ? spec.busyLabel : UNKNOWN_BUSY_LABEL;
+
+  // tag is the only command with more to show than its own name: it scrolls
+  // the label past a progress bar as the characters go down, and it counts
+  // the percentage into the button. Everything else has said its piece.
+  if (data_json.command !== "tag") {
+    return;
+  }
+
   let scroll = document.getElementById("text-form-scroll"); // picks up the parent scroll element
 
-  switch (data_json.command) {
-    case "tag":
-      document.getElementById("submit-button").value = " printing " + percentage + "% ";
-      let body = document.getElementsByTagName("body")[0];
-      body.dataset.printing = "true";
-      const label = data_json.current_label || "unknown";
-      const printingLabel = document.getElementById("printing-label");
-      printingLabel.style.width = getLabelWidth(printingLabel, label) + "px";
-      printingLabel.innerHTML = label;
-      const printed = label.substring(0, Math.round(label.length * (percentage / 100)));
-      const progressLength = measureText(printingLabel, printed) + 3;
-      document.getElementById("progress-bar").style.width = progressLength + "px";
+  submitButton.value = " printing " + percentage + "% ";
+  let body = document.getElementsByTagName("body")[0];
+  body.dataset.printing = "true";
+  const label = data_json.current_label || "unknown";
+  const printingLabel = document.getElementById("printing-label");
+  printingLabel.style.width = getLabelWidth(printingLabel, label) + "px";
+  printingLabel.innerHTML = label;
+  const printed = label.substring(0, Math.round(label.length * (percentage / 100)));
+  const progressLength = measureText(printingLabel, printed) + 3;
+  document.getElementById("progress-bar").style.width = progressLength + "px";
 
-      if (progressLength < scroll.clientWidth / 2) {
-        scroll.scrollLeft = 0;
-      } else if (progressLength > scroll.scrollWidth - scroll.clientWidth / 2) {
-        scroll.scrollLeft = scroll.scrollWidth;
-      } else {
-        scroll.scrollLeft = progressLength - scroll.clientWidth / 2;
-      }
-      break;
-    case "reel":
-      document.getElementById("submit-button").value = " reeling... ";
-      break;
-    case "feed":
-      document.getElementById("submit-button").value = " feeding... ";
-      break;
-    case "cut":
-      document.getElementById("submit-button").value = " cutting... ";
-      break;
+  if (progressLength < scroll.clientWidth / 2) {
+    scroll.scrollLeft = 0;
+  } else if (progressLength > scroll.scrollWidth - scroll.clientWidth / 2) {
+    scroll.scrollLeft = scroll.scrollWidth;
+  } else {
+    scroll.scrollLeft = progressLength - scroll.clientWidth / 2;
   }
 }

@@ -20,6 +20,64 @@
 #include "Settings.h"
 #include "Sound.h"
 
+// The one statement of what commands this device has. Columns, in order:
+// the enumerator, the name it answers to on the wire and in /api/<name>,
+// whether it reads align, force and label, and the handler loop() runs.
+//
+// Before this table the same nine commands were written out four times over
+// -- a name switch, a factory method each, a dispatch switch with no default
+// case, and the route list in Network.cpp -- and home and move had already
+// fallen out of the webapp's copy.
+const CommandSpec ETKT::COMMANDS[] = {
+    {Command::CUT, "cut", false, false, false, &ETKT::cutCommandInternal},
+    {Command::FEED, "feed", false, false, false, &ETKT::feedCommandInternal},
+    {Command::REEL, "reel", false, false, false, &ETKT::reelCommandInternal},
+    {Command::TEST_ALIGN, "testalign", true, false, false,
+     &ETKT::testCommandInternal},
+    {Command::TEST_FULL, "testfull", true, true, false,
+     &ETKT::testCommandFullInternal},
+    {Command::SAVE, "save", true, true, false, &ETKT::saveCommandInternal},
+    {Command::TAG, "tag", false, false, true, &ETKT::tagCommandInternal},
+    {Command::HOME, "home", false, false, false, &ETKT::homeCommandInternal},
+    {Command::MOVE, "move", false, false, true, &ETKT::moveCommandInternal},
+    // IDLE is a status, not a job: no handler, and no route is registered for
+    // it. It keeps a name because /api/status reports one.
+    {Command::IDLE, "idle", false, false, false, NULL},
+};
+
+const size_t ETKT::COMMAND_COUNT =
+    sizeof(ETKT::COMMANDS) / sizeof(ETKT::COMMANDS[0]);
+
+// IDLE is the last enumerator, so its value is the index of the last row and
+// the table has to be one longer. Add an enumerator without a row and the
+// build stops here rather than the device answering "unknown" at runtime.
+static_assert(sizeof(ETKT::COMMANDS) / sizeof(ETKT::COMMANDS[0]) ==
+                  static_cast<size_t>(Command::IDLE) + 1,
+              "every Command needs a row in ETKT::COMMANDS");
+
+const CommandSpec* commandSpec(Command command) {
+  for (size_t i = 0; i < ETKT::COMMAND_COUNT; i++) {
+    if (ETKT::COMMANDS[i].command == command) {
+      return &ETKT::COMMANDS[i];
+    }
+  }
+  return NULL;
+}
+
+const CommandSpec* commandSpecByName(const String& name) {
+  for (size_t i = 0; i < ETKT::COMMAND_COUNT; i++) {
+    if (name == ETKT::COMMANDS[i].name) {
+      return &ETKT::COMMANDS[i];
+    }
+  }
+  return NULL;
+}
+
+const char* commandName(Command command) {
+  const CommandSpec* spec = commandSpec(command);
+  return spec == NULL ? "unknown" : spec->name;
+}
+
 ETKT::ETKT(Logger* logger, Settings* settings, Characters* characters,
            Display* display, DaisyWheel* daisywheel, HallSwitch* hall,
            Feeder* feeder, Press* press, Sound* sound, Light* ledFinish,
@@ -84,65 +142,22 @@ StatusUpdate* ETKT::createStatus() {
   return status;
 }
 
-void ETKT::cutCommand() {
-  auto command = new CommandOptions();
-  command->command = Command::CUT;
-  this->startCommand(command);
-}
+void ETKT::submit(const CommandOptions& options) {
+  // Copied on the way in. The webserver builds its options on the request
+  // task's stack and the device needs them to outlive the request, but who
+  // owns what should not be part of the interface: a refused command leaves
+  // the caller's copy exactly as it found it.
+  CommandOptions* queued = new CommandOptions(options);
 
-void ETKT::feedCommand() {
-  auto command = new CommandOptions();
-  command->command = Command::FEED;
-  this->startCommand(command);
-}
-
-void ETKT::reelCommand() {
-  auto command = new CommandOptions();
-  command->command = Command::REEL;
-  this->startCommand(command);
-}
-
-void ETKT::testAlignCommand(int align) {
-  auto command = new CommandOptions();
-  command->command = Command::TEST_ALIGN;
-  command->align = align;
-  this->startCommand(command);
-}
-
-void ETKT::testFullCommand(int align, int force) {
-  auto command = new CommandOptions();
-  command->command = Command::TEST_FULL;
-  command->align = align;
-  command->force = force;
-  this->startCommand(command);
-}
-
-void ETKT::saveCommand(int align, int force) {
-  auto command = new CommandOptions();
-  command->command = Command::SAVE;
-  command->align = align;
-  command->force = force;
-  this->startCommand(command);
-}
-
-void ETKT::homeCommand() {
-  auto command = new CommandOptions();
-  command->command = Command::HOME;
-  this->startCommand(command);
-}
-
-void ETKT::moveCommand(String character) {
-  auto command = new CommandOptions();
-  command->command = Command::MOVE;
-  command->label = character;
-  this->startCommand(command);
-}
-
-void ETKT::tagCommand(String label) {
-  auto command = new CommandOptions();
-  command->command = Command::TAG;
-  command->label = label;
-  this->startCommand(command);
+  this->lock->lock();
+  if (this->command != NULL) {
+    this->lock->unlock();
+    delete queued;
+    throw PrinterBusyException();
+  }
+  this->command = queued;
+  xEventGroupSetBits(this->eventGroup, BIT0);
+  this->lock->unlock();
 }
 
 void ETKT::cut(int force) {
@@ -163,18 +178,6 @@ void ETKT::cut(int force) {
   }
 }
 
-void ETKT::startCommand(CommandOptions* command) {
-  this->lock->lock();
-  if (this->command != NULL) {
-    this->lock->unlock();
-    delete command;
-    throw PrinterBusyException();
-  }
-  this->command = command;
-  xEventGroupSetBits(this->eventGroup, BIT0);
-  this->lock->unlock();
-}
-
 void ETKT::loop() {
   // Wait for the signal, with a timeout of 500 ms just in case.
   xEventGroupWaitBits(eventGroup, BIT0, pdTRUE, pdFALSE,
@@ -188,44 +191,23 @@ void ETKT::loop() {
   }
   this->lock->unlock();
 
-  // Do the task
-  switch (this->command->command) {
-    case Command::CUT:
-      this->cutCommandInternal();
-      break;
-    case Command::FEED:
-      this->feedCommandInternal();
-      break;
-    case Command::REEL:
-      this->reelCommandInternal();
-      break;
-    case Command::TEST_ALIGN:
-      this->testCommandInternal();
-      break;
-    case Command::TEST_FULL:
-      this->testCommandFullInternal();
-      break;
-    case Command::SAVE:
-      this->saveCommandInternal();
-      break;
-    case Command::TAG:
-      this->tagCommandInternal();
-      break;
-    case Command::HOME:
-      this->homeCommandInternal();
-      break;
-    case Command::MOVE:
-      this->moveCommandInternal();
-      break;
-    case Command::IDLE:
-      break;
+  // Do the task. The command's row says which handler to run. A command with
+  // no row at all is a bug worth hearing about; a row with no handler is
+  // IDLE, which is a status rather than a job, so it falls straight through
+  // to the parking code below.
+  const CommandSpec* spec = commandSpec(this->command->command);
+  if (spec == NULL) {
+    this->logger->log(String("No table row for command ") +
+                      (int)this->command->command);
+  } else if (spec->run != NULL) {
+    (this->*(spec->run))();
   }
 
   // Park the machine before the command slot is released. Everything below
   // talks to hardware -- a full OLED redraw with a QR code on it, then three
   // motors -- and it used to run with the lock held, which stalled every
   // status poll from the web task for as long as that took. Parking first
-  // also closes a gap: startCommand() goes on refusing new work until the
+  // also closes a gap: submit() goes on refusing new work until the
   // slot is genuinely clear, so nothing can begin against a machine that is
   // still being put away.
   this->display->renderIdle();

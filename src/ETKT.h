@@ -22,6 +22,13 @@
 
 /**
  * @brief The different types of command the E-TKT can execute.
+ *
+ * The enumerator is a command's identity inside the firmware. Everything
+ * else about it -- the name it answers to on the wire, which of the
+ * calibration and label fields it reads, and the code that carries it out --
+ * lives in one row of ETKT::COMMANDS. Adding a command means adding an
+ * enumerator and a row and nothing else; a static_assert in ETKT.cpp fails
+ * the build if the two ever fall out of step.
  */
 enum Command {
   CUT = 0,
@@ -36,11 +43,57 @@ enum Command {
   IDLE = 9
 };
 
+// Declared here only so CommandSpec below can name a handler on it.
+class ETKT;
+
+/**
+ * @brief Everything outside the ETKT needs to know about one command.
+ *
+ * One row per enumerator, in ETKT::COMMANDS. The device used to restate this
+ * list in four places -- a name switch, a factory method per command, a
+ * dispatch switch, and the route table in Network.cpp -- and they drifted.
+ */
+struct CommandSpec {
+  Command command;
+
+  // The name the command answers to outside the device: the string
+  // /api/status reports, and the path the webapp posts to, /api/<name>.
+  const char* name;
+
+  // Which of CommandOptions' optional fields this command reads. A field a
+  // command does not read is ignored rather than refused, so a stale cached
+  // script.js that sends too much still works.
+  bool usesAlign;
+  bool usesForce;
+  bool usesLabel;
+
+  // The handler ETKT::loop() runs for this command. NULL means there is
+  // nothing to run: IDLE is a status, not a job.
+  void (ETKT::*run)();
+};
+
+/**
+ * @brief Returns the row for a command, or NULL if the command has no row.
+ */
+const CommandSpec* commandSpec(Command command);
+
+/**
+ * @brief Returns the row whose name matches, or NULL if none does.
+ *
+ * The name is the bare command, "cut", not the route, "/api/cut".
+ */
+const CommandSpec* commandSpecByName(const String& name);
+
+/**
+ * @brief Returns the wire name of a command, or "unknown" if it has no row.
+ */
+const char* commandName(Command command);
+
 /**
  * @brief A struct for storing the options for a command.
  *
  * The struct includes the superset of options a command can include. The
- * command itself determines which options are relevant.
+ * command's row in ETKT::COMMANDS says which of them that command reads.
  */
 struct CommandOptions {
   Command command = Command::IDLE;
@@ -50,32 +103,7 @@ struct CommandOptions {
 
   ~CommandOptions() { this->label = ""; }
 
-  String commandAsString() {
-    switch (this->command) {
-      case Command::CUT:
-        return "cut";
-      case Command::FEED:
-        return "feed";
-      case Command::REEL:
-        return "reel";
-      case Command::TEST_ALIGN:
-        return "testalign";
-      case Command::TEST_FULL:
-        return "testfull";
-      case Command::SAVE:
-        return "save";
-      case Command::TAG:
-        return "tag";
-      case Command::HOME:
-        return "home";
-      case Command::MOVE:
-        return "move";
-      case Command::IDLE:
-        return "idle";
-      default:
-        return "unknown";
-    }
-  }
+  String commandAsString() { return commandName(this->command); }
 };
 
 /**
@@ -148,11 +176,6 @@ class ETKT {
   void moveCommandInternal();
   void tagCommandInternal();
 
-  /**
-   * @brief Starts the given command or rejects it if the device is busy
-   */
-  void startCommand(CommandOptions* command);
-
  public:
   ETKT(Logger* logger, Settings* settings, Characters* characters,
        Display* display, DaisyWheel* daisywheel, HallSwitch* hall,
@@ -171,20 +194,28 @@ class ETKT {
   void loop();
 
   /**
-   * Public handlers for each command, expected to be called by the Webserver.
+   * @brief Queues a command, or refuses it if one is already running.
    *
-   * Each handler is responsible for creating and populating a CommandOptions
-   * struct and calling startCommand() with it.
+   * The caller fills in whichever of align, force and label the command's
+   * row in COMMANDS says it reads; anything else in `options` is ignored.
+   * Throws PrinterBusyException if a command is already in flight, and
+   * queues nothing in that case.
+   *
+   * The device takes a copy, so the caller keeps what it passed in either
+   * way.
    */
-  void cutCommand();
-  void feedCommand();
-  void reelCommand();
-  void testAlignCommand(int align);
-  void testFullCommand(int align, int force);
-  void saveCommand(int align, int force);
-  void homeCommand();
-  void moveCommand(String character);
-  void tagCommand(String label);
+  void submit(const CommandOptions& options);
+
+  /**
+   * @brief One row per Command: the firmware's only list of what exists.
+   *
+   * Public because the webserver registers its routes from it and reports
+   * command names out of it. The order is not meaningful and the index is
+   * not the enumerator, so reach rows through commandSpec() or
+   * commandSpecByName() rather than by subscript.
+   */
+  static const CommandSpec COMMANDS[];
+  static const size_t COMMAND_COUNT;
 
   /**
    * @brief Returns the current status of the device, ie the printing status.
