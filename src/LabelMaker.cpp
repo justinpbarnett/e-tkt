@@ -68,9 +68,10 @@ ArduinoServo* pressServo = new ArduinoServo();
 ArduinoStepper* charStepper = new ArduinoStepper(
     AccelStepper::DRIVER, PIN_STEPPER_CHAR_STEP, PIN_STEPPER_CHAR_DIR);
 // MICROSTEPS_FEED is 8, which is AccelStepper's HALF4WIRE -- an interface
-// kind, not a microstep count, despite the name. The four numbers after it are
-// the feeder's coil pins, carried over verbatim from Feeder's old constructor.
-ArduinoStepper* feedStepper = new ArduinoStepper(MICROSTEPS_FEED, 15, 2, 16, 4);
+// kind, not a microstep count, despite the name.
+ArduinoStepper* feedStepper = new ArduinoStepper(
+    MICROSTEPS_FEED, PIN_STEPPER_FEED_COIL_1, PIN_STEPPER_FEED_COIL_2,
+    PIN_STEPPER_FEED_COIL_3, PIN_STEPPER_FEED_COIL_4);
 U8G2_SSD1306_128X64_NONAME_F_HW_I2C* screen =
     new U8G2_SSD1306_128X64_NONAME_F_HW_I2C(U8G2_R0, U8X8_PIN_NONE);
 

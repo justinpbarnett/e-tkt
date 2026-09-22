@@ -2,31 +2,18 @@
 
 #include <Arduino.h>
 
+#include "Machine.h"
+
 /**
  * Basic Configuration
  *
- * Depending on the hardware you've used to build your E-TKT, you might need to
- * enable some of these constants to get the hardware into a working state
+ * Every value in this file is the same on every E-TKT ever built: it describes
+ * the design, not the machine in front of you. The numbers that differ from one
+ * physical build to the next -- taught servo angles, the hall sensor's
+ * threshold and polarity, the wheel's assembly offset, the feed direction --
+ * live in Machine.h, which is included above so nothing that reads them has to
+ * know they moved.
  */
-
-/**
- * If your hall sensor has inverted logic (eg active LOW and neutral HIGH)
- * uncomment this #define to invert the logic checking it. If you're affected by
- * this then you'll see the character daisy wheel move forward slightly and then
- * stop when the E-TKT starts up instead of moving to the "J" position.
- *
- * For instance, invert if using a "3144" hall sensor but don't invert if using
- * a "44E 402" hall sensor. If you're not sure if you need this, try it both
- * ways and see which one works.
- */
-#define INVERT_HALL_SENSOR_LOGIC false
-
-/**
- * If your feed motor moves in the wrong direction by default, uncomment the
- * define below to reverse it. It should be obvious if this is happening since
- * the tape gets fed in the wrong direction.
- */
-#define REVERSE_FEED_STEPPER_DIRECTION false
 
 /**
  * Speed and acceleration of the stepper motor that feeds the label tape,
@@ -74,7 +61,7 @@
 #define BENCH_SELFTEST false      // LEDs/buzzer/button, verified 2026-09-18
 #define BENCH_FEEDER_TEST false   // feeder, verified 2026-09-21
 #define BENCH_A4988_TEST false    // A4988 + staged hold, verified 2026-09-21
-#define BENCH_SERVO_TEST false    // teach REST_ANGLE/STAMP_ANGLE per machine
+#define BENCH_SERVO_TEST false    // teach Machine.h's two press angles
 #define BENCH_HALL_MONITOR false  // rotate and sweep for hall edges
 
 #define ENABLE_SERIAL true   // Enables serial output
@@ -93,6 +80,18 @@
 #define PIN_STEPPER_CHAR_DIR 33
 #define PIN_STEPPER_CHAR_ENABLE 25
 #define BUZZER_PIN 26
+// The feeder's four coil pins, in the order AccelStepper wants them rather
+// than the order the ULN2003 board prints on its silkscreen -- the middle two
+// are conventionally swapped for a 28BYJ-48, so these are numbered by position
+// in the constructor, not by the label next to the header.
+//
+// Flash the firmware BEFORE wiring these: 2 and 15 are boot strapping pins,
+// and a coil holding either one at the wrong level stops the ESP32 entering
+// the bootloader.
+#define PIN_STEPPER_FEED_COIL_1 15
+#define PIN_STEPPER_FEED_COIL_2 2
+#define PIN_STEPPER_FEED_COIL_3 16
+#define PIN_STEPPER_FEED_COIL_4 4
 
 /**
  * Physical Characteristics
@@ -103,17 +102,16 @@
 
 #define CHAR_MICROSTEPS 16
 #define CHAR_STEP_COUNT 200
-// depending on the hall sensor positioning, the variable below makes sure the
-// initial calibration is within tolerance use a value between -1.0 and 1.0 to
-// make it roughly align during assembly
-#define ASSEMBLY_CALIBRATION_ALIGN 0.5f
+// Which slot the wheel parks in once the hall sensor has found home. The wheel
+// is keyed to the hub, so this is the same on every build; the per-machine
+// slack in where the sensor ended up is ASSEMBLY_CALIBRATION_ALIGN in
+// Machine.h.
 #define CHAR_HOME_POSITION 21
 
 // The press angle compensation that used to live here
 // (ASSEMBLY_CALIBRATION_FORCE) was replaced on 2026-09-22 by the two taught
-// angles in Press.h: STAMP_ANGLE is the measured point where the press just
-// touches the daisy wheel, and PRESS_BITE_AT_MAX_FORCE is how much further
-// force 9 drives it.
+// angles now in Machine.h: STAMP_ANGLE is the measured point where the press
+// just touches the daisy wheel, and PRESS_BITE_AT_MAX_FORCE is how much
+// further force 9 drives it.
 #define MICROSTEPS_FEED 8
 #define FEED_MOTOR_STEPS_PER_REVOLUTION 4076
-#define HALL_SENSOR_THRESHOLD 128  // between 0 and 4096

@@ -6,28 +6,17 @@
 #include "Drivers.h"
 #include "Light.h"
 #include "Logger.h"
+// REST_ANGLE, STAMP_ANGLE and PRESS_BITE_AT_MAX_FORCE. They are taught on
+// each bench rather than chosen here, because the P_press is press-fit onto
+// the servo's splined hub and the printed part decides where rest is.
+// Configuration.h pulls this in too; it is named here because this file reads
+// the three angles directly.
+#include "Machine.h"
 #include "PressGeometry.h"
 
-// Stock E-TKT geometry, restored 2026-09-22. The P_press is press-fit onto the
-// servo's splined hub, so the printed part -- not the firmware -- defines where
-// rest is. Assembly order matters and is easy to get backwards: power the board
-// FIRST so the servo homes to REST_ANGLE, and only then push the P_press on so
-// its lateral line sits 100% vertical (docs/diy/assembly/04_servo.md). Fitting
-// the part first and teaching angles afterwards produces a stroke roughly twice
-// as long as the design intends.
+// The timings below are the same on every machine. The angles they move
+// between are not -- those are in Machine.h.
 //
-// docs/diy/calibration.md gives the one hard check on this: at power-on the
-// press should sit 2mm from the I_nema_wheel_hub. If it does not, the fix is a
-// re-fit of the P_press, not a different number here.
-//
-// LOW angle drives the press INTO the daisy wheel, HIGH swings it clear.
-//
-// REST_ANGLE: press clear of the wheel, P_press lateral line vertical here.
-// STAMP_ANGLE: press just touching the wheel, measured on the bench.
-#define REST_ANGLE 50
-#define STAMP_ANGLE 15
-#define PRESS_BITE_AT_MAX_FORCE 8  // degrees past STAMP_ANGLE at force 9
-
 // The alignment test (press(..., slow=true), the SETUP "test" button) parks at
 // the peak this long instead of PRESS_DWELL_MS, so the gap between press and
 // daisy wheel can actually be looked at. Force 1 to 9 is only

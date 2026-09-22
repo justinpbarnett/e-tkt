@@ -4,8 +4,10 @@
 // no hardware, which is the whole reason it was pulled out of Press::press().
 // Run with:  pio test -e native
 #include <stdint.h>
+#include <stdlib.h>
 #include <unity.h>
 
+#include "Machine.h"
 #include "PressGeometry.h"
 
 // Stock E-TKT geometry: rest is HIGH, stamp is LOW, so the press travels
@@ -161,6 +163,50 @@ void test_matches_angles_measured_on_hardware(void) {
   TEST_ASSERT_EQUAL_INT(7, pressPeakAngle(50, 15, 8, 9));
 }
 
+// --- the machine that is actually selected -------------------------------
+// Everything above runs on literal angles. These run on whatever Machine.h's
+// MACHINE currently names, so a number typed in wrong while teaching machine 2
+// or 3 fails here rather than on the bench, where the whole force range is
+// eight degrees and nobody can see it.
+//
+// Machine.h's own static_asserts already cover the two that stop the build:
+// equal angles, and a bite of zero. These cover the ones that still compile.
+
+void test_selected_machine_presses_toward_the_daisy_wheel(void) {
+  // Whichever way the P_press ended up seated, force must travel further in
+  // than the touch point, never back out toward rest.
+  const int touch =
+      pressPeakAngle(REST_ANGLE, STAMP_ANGLE, PRESS_BITE_AT_MAX_FORCE, 1);
+  const int deepest =
+      pressPeakAngle(REST_ANGLE, STAMP_ANGLE, PRESS_BITE_AT_MAX_FORCE, 9);
+  TEST_ASSERT_EQUAL_INT(STAMP_ANGLE, touch);
+  TEST_ASSERT_TRUE_MESSAGE(abs(deepest - REST_ANGLE) > abs(touch - REST_ANGLE),
+                           "force 9 must sit further from rest than force 1");
+}
+
+void test_selected_machine_gives_nine_distinct_forces(void) {
+  // A bite smaller than the eight gaps between the forces collapses steps
+  // onto one angle, so part of the slider does nothing at all. The taught
+  // bite has to be big enough to spread all nine.
+  for (int f = 2; f <= 9; f++) {
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(
+        pressPeakAngle(REST_ANGLE, STAMP_ANGLE, PRESS_BITE_AT_MAX_FORCE, f - 1),
+        pressPeakAngle(REST_ANGLE, STAMP_ANGLE, PRESS_BITE_AT_MAX_FORCE, f),
+        "two force values press to the same angle");
+  }
+}
+
+void test_selected_machine_reaches_force_nine_within_servo_travel(void) {
+  // pressPeakAngle clamps at the servo's limits, which would silently cap the
+  // top of the force range. The taught angles must leave room for the bite.
+  const int dir = pressDirection(REST_ANGLE, STAMP_ANGLE);
+  TEST_ASSERT_EQUAL_INT_MESSAGE(
+      STAMP_ANGLE + dir * PRESS_BITE_AT_MAX_FORCE,
+      pressPeakAngle(REST_ANGLE, STAMP_ANGLE, PRESS_BITE_AT_MAX_FORCE, 9),
+      "force 9 is clamped by the servo's travel, so the top of the range is "
+      "cut off");
+}
+
 int main(int, char **) {
   UNITY_BEGIN();
   RUN_TEST(test_force_zero_is_treated_as_one);
@@ -182,5 +228,8 @@ int main(int, char **) {
   RUN_TEST(test_unsigned_clamp_pins_zero_to_the_minimum);
   RUN_TEST(test_unsigned_clamp_pins_large_values_to_the_maximum);
   RUN_TEST(test_matches_angles_measured_on_hardware);
+  RUN_TEST(test_selected_machine_presses_toward_the_daisy_wheel);
+  RUN_TEST(test_selected_machine_gives_nine_distinct_forces);
+  RUN_TEST(test_selected_machine_reaches_force_nine_within_servo_travel);
   return UNITY_END();
 }

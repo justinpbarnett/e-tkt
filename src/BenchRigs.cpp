@@ -354,7 +354,8 @@ void BenchRigs::beforeHoming() {
     this->logger->log(String("SERVOTEACH: RESULT rest=") + captured[0] +
                       " stamp=" + captured[1]);
     this->logger->log(String("SERVOTEACH: SET  REST_ANGLE ") + captured[0] +
-                      "   STAMP_ANGLE " + captured[1] + "  (both in Press.h)");
+                      "   STAMP_ANGLE " + captured[1] +
+                      "  (both in Machine.h)");
     this->press->hold(captured[0]);
     delay(500);
   }
