@@ -6,19 +6,21 @@
 
 #include "Characters.h"
 #include "Configuration.h"
+#include "Progress.h"
 #include "Sound.h"
 #include "Utility.h"
 #include "etktLogo.h"
 
-
-Display::Display(Sound *sound, Characters *characters) {
-  this->u8g2 = new U8G2_SSD1306_128X64_NONAME_F_HW_I2C(U8G2_R0, U8X8_PIN_NONE);
+Display::Display(Sound* sound, Characters* characters,
+                 U8G2_SSD1306_128X64_NONAME_F_HW_I2C* u8g2) {
+  this->u8g2 = u8g2;
   this->sound = sound;
   this->characters = characters;
 }
 
 Display::~Display() {
-  delete this->u8g2;
+  // The screen is handed in, not built here, so it is not ours to delete.
+  // qrcode is built in the member initialiser above, so it is.
   delete this->qrcode;
 }
 
@@ -189,7 +191,7 @@ void Display::renderIdle() {
   delay(1000);
 }
 
-void Display::renderProgress(float progress, String label) {
+void Display::renderProgress(int charactersDone, String label) {
   this->clear();
 
   // Show "⚙️ PRINTING" header.
@@ -210,7 +212,7 @@ void Display::renderProgress(float progress, String label) {
     auto character = Utility::utf8CharAt(label, i);
     auto font = this->characters->getFont(character);
     total_width += font.width;
-    if (i < progress) {
+    if (i < charactersDone) {
       progress_width += font.width;
     }
   }
@@ -279,7 +281,8 @@ void Display::renderProgress(float progress, String label) {
   }
 
   // Print "XX%" at the bottom of the screen.
-  String progressString = String((int)(100.0f * progress / labelLength)) + "%";
+  String progressString =
+      String(progressPercent(charactersDone, labelLength)) + "%";
   this->u8g2->setDrawColor(1);
   this->u8g2->drawStr(6, 60, progressString.c_str());
 

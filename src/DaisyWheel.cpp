@@ -1,25 +1,25 @@
 #include "DaisyWheel.h"
 
-#include <AccelStepper.h>
-
 #include "Arduino.h"
 #include "Characters.h"
 #include "Configuration.h"
+#include "Drivers.h"
 #include "HallSwitch.h"
 #include "Logger.h"
 #include "Settings.h"
 
 DaisyWheel::DaisyWheel(Logger* logger, HallSwitch* hall, Characters* characters,
-                   Settings* settings) {
+                       Settings* settings, StepperDriver* stepper) {
   this->logger = logger;
   this->hall = hall;
   this->characters = characters;
   this->settings = settings;
-  this->stepper = new AccelStepper(AccelStepper::DRIVER, PIN_STEPPER_CHAR_STEP,
-                                   PIN_STEPPER_CHAR_DIR);
+  this->stepper = stepper;
 }
 
-DaisyWheel::~DaisyWheel() { delete stepper; }
+DaisyWheel::~DaisyWheel() {
+  // The stepper is handed in, not built here, so it is not ours to delete.
+}
 
 void DaisyWheel::initialize() {
   this->stepsPerChar = (float)this->stepsPerRevolution /

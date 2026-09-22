@@ -1,22 +1,23 @@
 #include "Press.h"
 
 #include <Arduino.h>
-#include <ESP32Servo.h>
 
 #include "Configuration.h"
+#include "Drivers.h"
 #include "Light.h"
 #include "Logger.h"
 #include "PressGeometry.h"
 
-
-Press::Press(Logger* logger, uint8_t pin, Light* pressLed) {
+Press::Press(Logger* logger, uint8_t pin, Light* pressLed, ServoDriver* servo) {
   this->logger = logger;
   this->pin = pin;
   this->pressLed = pressLed;
-  this->servo = new Servo();
+  this->servo = servo;
 }
 
-Press::~Press() { delete this->servo; }
+Press::~Press() {
+  // The servo is handed in, not built here, so it is not ours to delete.
+}
 
 void Press::initialize() {
   // set  servo
@@ -59,7 +60,8 @@ void Press::press(bool strong, int force, bool slow) {
 
   this->logger->log("Pressing...");
 
-  const int stepMs = strong ? 4 : (slow ? 100 : 0);
+  const int stepMs = strong ? PRESS_STEP_STRONG_MS
+                            : (slow ? PRESS_STEP_SLOW_MS : PRESS_STEP_QUICK_MS);
 
   // The press runs from REST_ANGLE to STAMP_ANGLE -- the measured
   // just-touching point -- and then further by an amount that scales with

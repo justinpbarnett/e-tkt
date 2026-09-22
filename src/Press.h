@@ -1,9 +1,9 @@
 #pragma once
 
 #include <Arduino.h>
-#include <ESP32Servo.h>
 
 #include "Configuration.h"
+#include "Drivers.h"
 #include "Light.h"
 #include "Logger.h"
 #include "PressGeometry.h"
@@ -47,6 +47,23 @@
 #define PRESS_DWELL_MS 250
 #define PRESS_SETTLE_STEP_MS 50
 
+// How long the ramp waits between one degree and the next.
+//
+// QUICK is the printing path: every degree still gets written, as fast as the
+// loop can issue them. STRONG eases through each one, which is what cutting
+// uses so its three repeated presses land the same way each time. SLOW is the
+// calibration crawl.
+//
+// These also decide the real time spent at the peak, which is longer than the
+// dwell above: the ramp in writes the peak and then waits a step before
+// returning, and the ramp out writes the peak again before its first step, so
+// the servo is commanded to hold for dwell + 2 * step. At QUICK that is
+// exactly PRESS_DWELL_MS. At SLOW it is PRESS_TEST_DWELL_MS + 200.
+// test/test_press pins both.
+#define PRESS_STEP_QUICK_MS 0
+#define PRESS_STEP_STRONG_MS 4
+#define PRESS_STEP_SLOW_MS 100
+
 /**
  * @brief Controlls a press connected to a servo.
  */
@@ -54,7 +71,9 @@ class Press {
  private:
   uint8_t pin;
   Logger* logger;
-  Servo* servo;
+  // Not owned. The composition root in LabelMaker.cpp builds it and
+  // outlives every module, so nothing here deletes it.
+  ServoDriver* servo;
   Light* pressLed;
 
   /**
@@ -71,7 +90,7 @@ class Press {
   void settle(int angle, int holdMs);
 
  public:
-  Press(Logger* logger, uint8_t pin, Light* pressLed);
+  Press(Logger* logger, uint8_t pin, Light* pressLed, ServoDriver* servo);
   ~Press();
 
   /**

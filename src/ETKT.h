@@ -7,9 +7,10 @@
 #include <mutex>
 #include <thread>
 
-#include "DaisyWheel.h"
+#include "BenchRigs.h"
 #include "Characters.h"
 #include "Configuration.h"
+#include "DaisyWheel.h"
 #include "Display.h"
 #include "Feeder.h"
 #include "HallSwitch.h"
@@ -83,7 +84,7 @@ struct CommandOptions {
  * This is primarily used to communicate that device status to the webapp.
  */
 struct StatusUpdate {
-  float progress = 0;
+  int progress = 0;  // percent, 0 to 99. See Progress.h.
   bool busy = false;
   int align = 0;
   int force = 0;
@@ -121,9 +122,12 @@ class ETKT {
   Sound* sound;
   Characters* characters;
 
+  // Temporary. Delete with the rest of BenchRigs once machine 3 is finished.
+  BenchRigs* benchRigs;
+
   // Device state, which should onyl ever be modified inside an exclusive lock.
   CommandOptions* command = NULL;
-  float progress;
+  int progress;  // percent, 0 to 99. See Progress.h.
   std::mutex* lock;
 
   // Event group that the main loop blocks on for new commands.
@@ -151,8 +155,9 @@ class ETKT {
 
  public:
   ETKT(Logger* logger, Settings* settings, Characters* characters,
-       Display* display, DaisyWheel* daisywheel, HallSwitch* hall, Feeder* feeder,
-       Press* press, Sound* sound, Light* ledFinish, Light* ledChar);
+       Display* display, DaisyWheel* daisywheel, HallSwitch* hall,
+       Feeder* feeder, Press* press, Sound* sound, Light* ledFinish,
+       Light* ledChar, BenchRigs* benchRigs);
   ~ETKT();
 
   /**

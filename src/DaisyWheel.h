@@ -1,10 +1,9 @@
 #pragma once
 
-#include <AccelStepper.h>
-
 #include "Arduino.h"
 #include "Characters.h"
 #include "Configuration.h"
+#include "Drivers.h"
 #include "HallSwitch.h"
 #include "Logger.h"
 #include "Settings.h"
@@ -18,7 +17,8 @@ class DaisyWheel {
   Logger* logger;
   HallSwitch* hall;
   Settings* settings;
-  AccelStepper* stepper;
+  // Not owned; see LabelMaker.cpp.
+  StepperDriver* stepper;
   Characters* characters;
   const int stepsPerRevolution = CHAR_STEP_COUNT * CHAR_MICROSTEPS;
   float stepsPerChar = 0;
@@ -27,7 +27,7 @@ class DaisyWheel {
 
  public:
   DaisyWheel(Logger* logger, HallSwitch* hall, Characters* characters,
-           Settings* settings);
+             Settings* settings, StepperDriver* stepper);
   ~DaisyWheel();
 
   /**

@@ -636,10 +636,10 @@ function handleData(data_json) {
   if (!data_json.busy) {
     return;
   }
+  // The device already holds the last point back while it finishes feeding
+  // and cutting (see Progress.h). Subtracting another one here is what made
+  // the browser read a point below the OLED beside it.
   let percentage = parseInt(data_json.progress);
-  if (percentage > 0) {
-    percentage -= 1; // avoid 100% progress while still finishing
-  }
 
   let scroll = document.getElementById("text-form-scroll"); // picks up the parent scroll element
 

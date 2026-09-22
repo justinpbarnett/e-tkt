@@ -1,18 +1,19 @@
 #include "Feeder.h"
 
-#include <AccelStepper.h>
 #include <Arduino.h>
 
 #include "Configuration.h"
+#include "Drivers.h"
 #include "Logger.h"
 
-
-Feeder::Feeder(Logger* logger) {
+Feeder::Feeder(Logger* logger, StepperDriver* stepper) {
   this->logger = logger;
-  this->stepper = new AccelStepper(MICROSTEPS_FEED, 15, 2, 16, 4);
+  this->stepper = stepper;
 }
 
-Feeder::~Feeder() { delete stepper; }
+Feeder::~Feeder() {
+  // The stepper is handed in, not built here, so it is not ours to delete.
+}
 
 void Feeder::initialize() {
   this->stepper->setMaxSpeed(FEED_STEPPER_MAX_SPEED);

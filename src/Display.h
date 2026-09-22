@@ -24,6 +24,12 @@ const String AUTHOR_SIGNATURE = "andrei.cc";
  */
 class Display {
  private:
+  // Handed in and not owned, like every other driver -- see LabelMaker.cpp.
+  // This one keeps its concrete type rather than getting an interface of its
+  // own. U8G2 has upwards of thirty methods that Display reaches for, no
+  // second adapter is in prospect, and a thirty-method interface with one
+  // implementation behind it buys nothing. The seam here is where the screen
+  // gets built, not a place to substitute a different one.
   U8G2_SSD1306_128X64_NONAME_F_HW_I2C* u8g2;
   Characters* characters;
   Sound* sound;
@@ -36,7 +42,8 @@ class Display {
   String ip = "";
 
  public:
-  Display(Sound* sound, Characters* characters);
+  Display(Sound* sound, Characters* characters,
+          U8G2_SSD1306_128X64_NONAME_F_HW_I2C* u8g2);
   ~Display();
   void initialize();
   void clear(int color = 0);
@@ -70,10 +77,15 @@ class Display {
   void setConnectionInfo(String ip, String ssid);
 
   /**
-   * Renders print progress on the screen, for use in the middle of pritning a
+   * Renders print progress on the screen, for use in the middle of printing a
    * label.
+   *
+   * @param charactersDone how many characters have finished pressing. A
+   *        count, not an index, and the same number ETKT feeds to
+   *        progressPercent(), so the OLED caption and the web UI cannot
+   *        disagree.
    */
-  void renderProgress(float progress, String label);
+  void renderProgress(int charactersDone, String label);
 
   /**
    * Renders a brief info screen for after printing has completed.

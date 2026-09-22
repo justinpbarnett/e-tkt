@@ -1,9 +1,9 @@
 #pragma once
 
-#include <AccelStepper.h>
 #include <Arduino.h>
 
 #include "Configuration.h"
+#include "Drivers.h"
 #include "Logger.h"
 
 /**
@@ -15,10 +15,11 @@
 class Feeder {
  private:
   Logger* logger;
-  AccelStepper* stepper;
+  // Not owned; see LabelMaker.cpp.
+  StepperDriver* stepper;
 
  public:
-  Feeder(Logger* logger);
+  Feeder(Logger* logger, StepperDriver* stepper);
   ~Feeder();
   void initialize();
   void feed(int repeat = 1);
