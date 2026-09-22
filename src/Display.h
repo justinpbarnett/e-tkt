@@ -17,6 +17,35 @@
 const String STARTUP_MELODY = "  E.TKT ";
 const String AUTHOR_SIGNATURE = "andrei.cc";
 
+// How long the two confirmation screens stay up before whatever comes next
+// replaces them. These used to be delay() calls inside the renderers, which
+// meant Display decided how long its caller blocked.
+#define SAVED_SCREEN_MS 3000
+#define REBOOT_SCREEN_MS 2000
+
+/**
+ * @brief The fixed screens the machine shows while it is doing something.
+ *
+ * Every one of these was its own public method with the same nine lines
+ * inside it and a different word in the middle. They are data now: the table
+ * in Display.cpp holds the word, the icon and where both sit, and one
+ * renderer draws all of them. Adding a screen is a row in that table.
+ *
+ * The two screens that carry values -- the idle screen and the save
+ * confirmation -- are not in here, because a fixed-text table cannot express
+ * them. Print progress is not either; it animates.
+ */
+enum class Screen {
+  WIFI_SETUP,
+  WIFI_RESET,
+  CUTTING,
+  FEEDING,
+  REELING,
+  TESTING,
+  FINISHED,
+  REBOOTING,
+};
+
 /**
  * Renders various screens on the OLED device, such asprinting progress, 
  * boot splash animation, QR Code, etc. Its hard coded to use a 128x64 OLED,
@@ -41,12 +70,32 @@ class Display {
   String ssid = "";
   String ip = "";
 
+  /**
+   * @brief Paints every pixel the given colour and leaves the draw colour set
+   * to its opposite, so whatever is drawn next shows up against it.
+   *
+   * Private: every screen in this class starts with it and nothing outside
+   * has ever called it.
+   */
+  void clear(int color = 0);
+
+  /**
+   * @brief Draws one word centred between two icons. The shape behind
+   * CUTTING, FEEDING, REELING, TESTING, FINISHED and REBOOTING.
+   */
+  void drawBanner(const struct ScreenSpec& spec);
+
+  /**
+   * @brief Draws a titled notice with two lines of body text and one icon
+   * beside the title. The shape behind WIFI_SETUP and WIFI_RESET.
+   */
+  void drawNotice(const struct ScreenSpec& spec);
+
  public:
   Display(Sound* sound, Characters* characters,
           U8G2_SSD1306_128X64_NONAME_F_HW_I2C* u8g2);
   ~Display();
   void initialize();
-  void clear(int color = 0);
 
   /**
    * Renders the E-TKT logo, and plays the startup melody.  Blocks until the
@@ -55,15 +104,15 @@ class Display {
   void playSplashScreen();
 
   /**
-   * Renders a screen asking you you to conenct to the soft-AP point for
-   * configuration.
+   * @brief Shows one of the fixed screens and returns as soon as it is on the
+   * glass.
+   *
+   * It does not wait afterwards. Two of these screens are meant to be looked
+   * at for a few seconds; SAVED_SCREEN_MS and REBOOT_SCREEN_MS say how long,
+   * and the caller does the waiting, because how long a person stares at a
+   * confirmation is not something a renderer should decide.
    */
-  void renderConfig();
-
-  /**
-   * Displays a screen informing you that the device is about to reboot.
-   */
-  void renderReset();
+  void render(Screen screen);
 
   /**
    * Renders a screen with a QR code and high level info abotu the device.  Thsi
@@ -88,37 +137,12 @@ class Display {
   void renderProgress(int charactersDone, String label);
 
   /**
-   * Renders a brief info screen for after printing has completed.
+   * @brief Renders the save confirmation, showing the two values that were
+   * just written to EEPROM.
+   *
+   * Its own method rather than a Screen, because it is the one fixed screen
+   * that carries numbers. Returns immediately; the caller waits
+   * SAVED_SCREEN_MS.
    */
-  void renderFinished();
-
-  /**
-   * Renders a screen informing of a on-off cut happening.
-   */
-  void renderCut();
-
-  /**
-   * Renders a screen informing of a reel in progress.
-   */
-  void renderReel();
-
-  /**
-   * Renders a screen informing that a test print is being done.
-   */
-  void renderTest(int a, int f);
-
-  /**
-   * Renders a screen ifnroming that settings are being saved.
-   */
-  void renderSettings(int a, int f);
-
-  /**
-   * Renders a screen ifnorming that a feed is in progress.
-   */
-  void renderFeed();
-
-  /**
-   * Renders a creen informing that a controlled reboot is about to happen.
-   */
-  void renderReboot();
+  void renderSaved(int align, int force);
 };

@@ -39,13 +39,14 @@ void Display::setConnectionInfo(String ip, String ssid) {
 }
 
 void Display::clear(int color) {
-  // paints all pixels according to the desired target color
-  for (uint8_t y = 0; y < 64; y++) {
-    for (uint8_t x = 0; x < 128; x++) {
-      this->u8g2->setDrawColor(color);
-      this->u8g2->drawPixel(x, y);
-    }
-  }
+  // Paints every pixel the target colour. This used to be a nested loop
+  // calling setDrawColor and drawPixel 8192 times per screen change, which is
+  // 16384 calls into U8G2 to fill a buffer that drawBox fills in one.
+  this->u8g2->setDrawColor(color);
+  this->u8g2->drawBox(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+  // Kept from the original. It cannot matter to the buffer, which is in RAM
+  // and is not sent until sendBuffer(), but the only machine that could show
+  // otherwise is on a bench nobody is watching right now.
   delay(100);
   this->u8g2->setDrawColor(color == 0 ? 1 : 0);
   this->u8g2->setFont(u8g2_font_6x13_te);
@@ -89,36 +90,114 @@ void Display::playSplashScreen() {
   sound->play(3000, 150);
 }
 
-void Display::renderConfig() {
-  // screen for the wifi configuration mode
+// ---------------------------------------------------------------------------
+// The fixed screens.
+//
+// Nine renderers used to sit here, each one nine lines long, each one
+// differing from its neighbours in a word, an icon and a couple of pixel
+// offsets. Those differences are the table below; the drawing is drawBanner
+// and drawNotice. The pixel positions are carried over exactly, so nothing on
+// the glass moves.
+// ---------------------------------------------------------------------------
 
-  this->clear();
+// No icon. 0 is not a drawable glyph in u8g2_font_open_iconic_all_1x_t.
+#define NO_GLYPH 0
 
+enum class ScreenLayout {
+  // One word centred at y=37, an icon either side of it.
+  BANNER,
+  // A title at y=12 with an icon beside it, then two lines of body text.
+  NOTICE,
+};
+
+struct ScreenSpec {
+  Screen screen;
+  ScreenLayout layout;
+  // True paints the screen white and the text black. Only FINISHED does.
+  bool inverted;
+  const char* title;
+  int titleX;
+  // NOTICE only.
+  const char* line1;
+  const char* line2;
+  uint16_t glyph;
+  // BANNER only: where the two copies of the icon sit.
+  int glyphLeftX;
+  int glyphRightX;
+};
+
+static const ScreenSpec SCREEN_SPECS[] = {
+    {Screen::WIFI_SETUP, ScreenLayout::NOTICE, false, "WI-FI SETUP", 15,
+     "Please, connect to", "the \"E-TKT\" network...", 0x011a, 0, 0},
+    {Screen::WIFI_RESET, ScreenLayout::NOTICE, false, "WI-FI RESET", 15,
+     "Connection cleared!", "Release the button.", 0x00cd, 0, 0},
+    {Screen::CUTTING, ScreenLayout::BANNER, false, "CUTTING", 44, nullptr,
+     nullptr, 0x00f2, 26, 90},
+    {Screen::FEEDING, ScreenLayout::BANNER, false, "FEEDING", 44, nullptr,
+     nullptr, 0x006e, 26, 90},
+    {Screen::REELING, ScreenLayout::BANNER, false, "REELING", 44, nullptr,
+     nullptr, 0x00d5, 26, 90},
+    {Screen::TESTING, ScreenLayout::BANNER, false, "TESTING", 44, nullptr,
+     nullptr, 0x0073, 26, 90},
+    {Screen::FINISHED, ScreenLayout::BANNER, true, "FINISHED!", 42, nullptr,
+     nullptr, 0x0073, 27, 90},
+    {Screen::REBOOTING, ScreenLayout::BANNER, false, "REBOOTING...", 38,
+     nullptr, nullptr, NO_GLYPH, 0, 0},
+};
+
+void Display::drawBanner(const ScreenSpec& spec) {
+  // clear() leaves the draw colour set to the opposite of the background, so
+  // the text reads either way round.
+  this->clear(spec.inverted ? 1 : 0);
   this->u8g2->setFont(u8g2_font_nine_by_five_nbp_t_all);
-  this->u8g2->drawStr(15, 12, "WI-FI SETUP");
-  this->u8g2->drawStr(3, 32, "Please, connect to");
-  this->u8g2->drawStr(3, 47, "the \"E-TKT\" network...");
+  this->u8g2->drawStr(spec.titleX, 37, spec.title);
 
-  this->u8g2->setFont(u8g2_font_open_iconic_all_1x_t);
-  this->u8g2->drawGlyph(3, 12, 0x011a);
+  if (spec.glyph != NO_GLYPH) {
+    this->u8g2->setFont(u8g2_font_open_iconic_all_1x_t);
+    this->u8g2->drawGlyph(spec.glyphLeftX, 37, spec.glyph);
+    this->u8g2->drawGlyph(spec.glyphRightX, 37, spec.glyph);
+  }
 
   this->u8g2->sendBuffer();
 }
 
-void Display::renderReset() {
-  // screen for the wifi configuration reset confirmation
-
-  this->clear();
-
+void Display::drawNotice(const ScreenSpec& spec) {
+  this->clear(spec.inverted ? 1 : 0);
   this->u8g2->setFont(u8g2_font_nine_by_five_nbp_t_all);
-  this->u8g2->drawStr(15, 12, "WI-FI RESET");
-  this->u8g2->drawStr(3, 32, "Connection cleared!");
-  this->u8g2->drawStr(3, 47, "Release the button.");
+  this->u8g2->drawStr(spec.titleX, 12, spec.title);
+  this->u8g2->drawStr(3, 32, spec.line1);
+  this->u8g2->drawStr(3, 47, spec.line2);
 
   this->u8g2->setFont(u8g2_font_open_iconic_all_1x_t);
-  this->u8g2->drawGlyph(3, 12, 0x00cd);
+  this->u8g2->drawGlyph(3, 12, spec.glyph);
 
   this->u8g2->sendBuffer();
+}
+
+// Catches the one mistake this table invites: adding an enumerator to Screen
+// and forgetting its row. REBOOTING is last, so its value plus one is how
+// many rows there have to be.
+static_assert(sizeof(SCREEN_SPECS) / sizeof(SCREEN_SPECS[0]) ==
+                  static_cast<int>(Screen::REBOOTING) + 1,
+              "every Screen needs a row in SCREEN_SPECS");
+
+void Display::render(Screen screen) {
+  const int count = sizeof(SCREEN_SPECS) / sizeof(SCREEN_SPECS[0]);
+  for (int i = 0; i < count; i++) {
+    if (SCREEN_SPECS[i].screen != screen) {
+      continue;
+    }
+    if (SCREEN_SPECS[i].layout == ScreenLayout::NOTICE) {
+      this->drawNotice(SCREEN_SPECS[i]);
+    } else {
+      this->drawBanner(SCREEN_SPECS[i]);
+    }
+    return;
+  }
+  // Unreachable: the static_assert above counts the rows, and every row
+  // names a distinct Screen. Leave whatever is on the glass rather than
+  // blanking it, so a missing row shows up as a screen that did not change
+  // instead of one that went dark.
 }
 
 void Display::renderIdle() {
@@ -289,115 +368,23 @@ void Display::renderProgress(int charactersDone, String label) {
   this->u8g2->sendBuffer();
 }
 
-void Display::renderFinished() {
-  // screen with finish confirmation
-
-  this->clear(1);
-  this->u8g2->setDrawColor(0);
-  this->u8g2->setFont(u8g2_font_nine_by_five_nbp_t_all);
-  this->u8g2->drawStr(42, 37, "FINISHED!");
-
-  this->u8g2->setFont(u8g2_font_open_iconic_all_1x_t);
-  this->u8g2->drawGlyph(27, 37, 0x0073);
-  this->u8g2->drawGlyph(90, 37, 0x0073);
-
-  this->u8g2->sendBuffer();
-}
-
-void Display::renderCut() {
-  // screen for manual cut mode
-
+void Display::renderSaved(int align, int force) {
   this->clear(0);
-  this->u8g2->setDrawColor(1);
-  this->u8g2->setFont(u8g2_font_nine_by_five_nbp_t_all);
-  this->u8g2->drawStr(44, 37, "CUTTING");
-
-  this->u8g2->setFont(u8g2_font_open_iconic_all_1x_t);
-  this->u8g2->drawGlyph(26, 37, 0x00f2);
-  this->u8g2->drawGlyph(90, 37, 0x00f2);
-
-  this->u8g2->sendBuffer();
-}
-
-void Display::renderFeed() {
-  // screen for manual feed mode
-
-  this->clear(0);
-  this->u8g2->setDrawColor(1);
-  this->u8g2->setFont(u8g2_font_nine_by_five_nbp_t_all);
-  this->u8g2->drawStr(44, 37, "FEEDING");
-
-  this->u8g2->setFont(u8g2_font_open_iconic_all_1x_t);
-  this->u8g2->drawGlyph(26, 37, 0x006e);
-  this->u8g2->drawGlyph(90, 37, 0x006e);
-
-  this->u8g2->sendBuffer();
-}
-
-void Display::renderReel() {
-  // screen for reeling mode
-
-  this->clear(0);
-  this->u8g2->setDrawColor(1);
-  this->u8g2->setFont(u8g2_font_nine_by_five_nbp_t_all);
-  this->u8g2->drawStr(44, 37, "REELING");
-
-  this->u8g2->setFont(u8g2_font_open_iconic_all_1x_t);
-  this->u8g2->drawGlyph(26, 37, 0x00d5);
-  this->u8g2->drawGlyph(90, 37, 0x00d5);
-
-  this->u8g2->sendBuffer();
-}
-
-void Display::renderTest(int a, int f) {
-  // screen for settings test mode
-
-  this->clear(0);
-  this->u8g2->setDrawColor(1);
-  this->u8g2->setFont(u8g2_font_nine_by_five_nbp_t_all);
-  this->u8g2->drawStr(44, 37, "TESTING");
-
-  this->u8g2->setFont(u8g2_font_open_iconic_all_1x_t);
-  this->u8g2->drawGlyph(26, 37, 0x0073);
-  this->u8g2->drawGlyph(90, 37, 0x0073);
-
-  this->u8g2->sendBuffer();
-}
-
-void Display::renderSettings(int a, int f) {
-  // screen for settings save mode
-
-  this->clear(0);
-  this->u8g2->setDrawColor(1);
   this->u8g2->setFont(u8g2_font_nine_by_five_nbp_t_all);
   this->u8g2->drawStr(47, 17, "SAVED!");
 
   String alignString = "ALIGN: ";
-  alignString.concat(a);
-  const char *alignChar = alignString.c_str();
-  this->u8g2->drawStr(44, 37, alignChar);
+  alignString.concat(align);
+  this->u8g2->drawStr(44, 37, alignString.c_str());
 
   String forceString = "FORCE: ";
-  forceString.concat(f);
-  const char *forceChar = forceString.c_str();
-  this->u8g2->drawStr(42, 57, forceChar);
+  forceString.concat(force);
+  this->u8g2->drawStr(42, 57, forceString.c_str());
 
   this->u8g2->setFont(u8g2_font_open_iconic_all_1x_t);
   this->u8g2->drawGlyph(33, 16, 0x0073);
   this->u8g2->drawGlyph(83, 16, 0x0073);
 
   this->u8g2->sendBuffer();
-  delay(3000);
-}
-
-void Display::renderReboot() {
-  // screen for imminent reboot
-
-  this->clear();
-
-  this->u8g2->setFont(u8g2_font_nine_by_five_nbp_t_all);
-  this->u8g2->drawStr(38, 37, "REBOOTING...");
-
-  this->u8g2->sendBuffer();
-  delay(2000);
+  // No delay here. The caller waits SAVED_SCREEN_MS.
 }

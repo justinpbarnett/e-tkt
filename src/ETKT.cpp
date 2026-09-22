@@ -221,23 +221,27 @@ void ETKT::loop() {
       break;
   }
 
-  this->lock->lock();
-
-  // Clean up the command
-  delete this->command;
-  this->command = NULL;
-  this->progress = 0;
-
-  // Turn everything off
+  // Park the machine before the command slot is released. Everything below
+  // talks to hardware -- a full OLED redraw with a QR code on it, then three
+  // motors -- and it used to run with the lock held, which stalled every
+  // status poll from the web task for as long as that took. Parking first
+  // also closes a gap: startCommand() goes on refusing new work until the
+  // slot is genuinely clear, so nothing can begin against a machine that is
+  // still being put away.
   this->display->renderIdle();
   this->daisywheel->deenergize();
   this->press->rest();
   this->feeder->deenergize();
+
+  this->lock->lock();
+  delete this->command;
+  this->command = NULL;
+  this->progress = 0;
   this->lock->unlock();
 }
 
 void ETKT::feedCommandInternal() {
-  this->display->renderFeed();
+  this->display->render(Screen::FEEDING);
   this->ledFinish->on(1.0f / 8);
   this->press->rest();
   delay(500);
@@ -247,7 +251,7 @@ void ETKT::feedCommandInternal() {
 }
 
 void ETKT::reelCommandInternal() {
-  this->display->renderReel();
+  this->display->render(Screen::REELING);
   this->ledFinish->on(1.0f / 8);
   this->press->rest();
   delay(500);
@@ -258,7 +262,7 @@ void ETKT::reelCommandInternal() {
 }
 
 void ETKT::cutCommandInternal() {
-  this->display->renderCut();
+  this->display->render(Screen::CUTTING);
   this->ledChar->on(0.2f);
   this->press->rest();
   delay(500);
@@ -271,11 +275,16 @@ void ETKT::saveCommandInternal() {
   this->logger->log("saving settings");
 
   display->initialize();
-  display->renderSettings(this->command->align, this->command->force);
+  display->renderSaved(this->command->align, this->command->force);
+  // The waits used to live inside the two renderers. They are the caller's
+  // business: how long a confirmation stays up is a decision about this
+  // command, not about how to draw a screen.
+  delay(SAVED_SCREEN_MS);
   ledFinish->off();
 
   settings->save(this->command->align, this->command->force);
-  display->renderReboot();
+  display->render(Screen::REBOOTING);
+  delay(REBOOT_SCREEN_MS);
   ledFinish->off();
   ledChar->off();
   delay(500);
@@ -286,7 +295,10 @@ void ETKT::saveCommandInternal() {
 }
 
 void ETKT::testCommandInternal() {
-  display->renderTest(this->command->align, this->command->force);
+  // No align or force on this screen. renderTest() took both and drew
+  // neither, and showing them would be worse than showing nothing: the press
+  // below deliberately ignores command->force and uses the minimum.
+  display->render(Screen::TESTING);
   ledFinish->off();
 
   this->daisywheel->move("M", this->command->align);
@@ -397,7 +409,7 @@ void ETKT::tagCommandInternal() {
   this->cut();
 
   this->ledChar->off();
-  display->renderFinished();
+  display->render(Screen::FINISHED);
 
   this->logger->log("Blinking LED");
   // Blink the finish led a few times.

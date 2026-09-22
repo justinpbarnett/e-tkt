@@ -46,7 +46,7 @@ void Network::softAPCallbackStatic(AsyncWiFiManager *manager) {
 
 void Network::softAPCallback(AsyncWiFiManager *manager) {
   // captive portal to configure SSID and password
-  this->display->renderConfig();
+  this->display->render(Screen::WIFI_SETUP);
   this->logger->log(String("SoftAP SSID: ") + manager->getConfigPortalSSID());
 }
 
@@ -62,7 +62,7 @@ void Network::clearWiFiCredentials() {
   } else {
     this->logger->log("WiFi Configurations Cleared!");
   }
-  this->display->renderReset();
+  this->display->render(Screen::WIFI_RESET);
   delay(1500);
   esp_restart();
 }
