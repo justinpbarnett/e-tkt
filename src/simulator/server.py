@@ -85,6 +85,7 @@ class Server:
         self.align = device.default_align
         self.force = device.default_force
         self.command = None
+        self.running = None
         self.label = ""
         self.progress = 0
         self.log = deque(maxlen=LOG_LINES)
@@ -147,7 +148,10 @@ class Server:
                 'min': self.device.calibration_min,
                 'max': self.device.calibration_max,
             },
-            'label': {'minimum': self.device.min_label_characters},
+            'label': {
+                'minimum': self.device.min_label_characters,
+                'maximum': self.device.max_label_characters,
+            },
             'commands': [spec.name for spec in self.device.routes()],
         })
 
@@ -186,6 +190,20 @@ class Server:
                     "Please provide a %s value" % spec.label_field)
             label = str(body[spec.label_field])
 
+            # Only for a field that is text to emboss. A move's field names a
+            # slot on the wheel instead, cut mark included, and the device
+            # leaves that one to DaisyWheel::move().
+            if spec.label_is_text:
+                if len(label) > self.device.max_label_characters:
+                    return self.refuse(
+                        "A %s may be at most %d characters, got %d"
+                        % (spec.label_field,
+                           self.device.max_label_characters, len(label)))
+                unprintable = self.device.unprintable_character(label)
+                if unprintable:
+                    return self.refuse(
+                        "The daisy wheel cannot print '%s'" % unprintable)
+
         # Busy is checked after the body and not before, because that is the
         # order the device checks them in: the fields are read on the
         # request's own task and only then handed to submit(), which is what
@@ -204,7 +222,10 @@ class Server:
         self.command = spec
         self.label = label
         self.progress = 0
-        asyncio.create_task(self.run(spec))
+        # Held, not dropped. asyncio keeps only a weak reference to a task, so
+        # a create_task() whose result nobody stores can be collected part way
+        # through a label.
+        self.running = asyncio.create_task(self.run(spec))
         return web.json_response({'result': 'success'})
 
     def read_calibration(self, wanted, body, field, missing):
@@ -243,6 +264,7 @@ class Server:
         # Both together, as ETKT::loop() does when it clears the command:
         # leaving progress behind reports an idle printer stuck at 99%.
         self.command = None
+        self.running = None
         self.progress = 0
 
     async def print_label(self):
@@ -253,8 +275,11 @@ class Server:
         for character in label:
             if character not in self.device.printable:
                 # What DaisyWheel::move() says when it is asked for a
-                # character the wheel does not carry. The device prints the
-                # rest of the label anyway, and so does this.
+                # character the wheel does not carry. Nothing posted to
+                # /api/tag reaches here any more -- accept() refuses such a
+                # label -- but the device still logs this line for a label
+                # raised from inside itself, and skips the press for that
+                # character while printing the rest.
                 self.record("ERROR",
                             "No character '%s' on the daisy wheel"
                             % character)

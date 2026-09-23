@@ -56,6 +56,14 @@ class LoadFirmware(unittest.TestCase):
         self.assertEqual("character", self.fw.command("move").label_field)
         self.assertIsNone(self.fw.command("cut").label_field)
 
+    def test_a_tag_is_text_to_emboss_and_a_move_is_not(self):
+        # The column that decides whether the field is checked against what
+        # the wheel carries. A move names a slot on the wheel instead, the
+        # cut mark included, so it is left to DaisyWheel::move().
+        self.assertTrue(self.fw.command("tag").label_is_text)
+        self.assertFalse(self.fw.command("move").label_is_text)
+        self.assertFalse(self.fw.command("cut").label_is_text)
+
     def test_save_reads_both_calibration_fields(self):
         save = self.fw.command("save")
         self.assertTrue(save.uses_align)
@@ -84,6 +92,22 @@ class LoadFirmware(unittest.TestCase):
 
     def test_the_cut_mark_is_not_printable(self):
         self.assertNotIn("*", self.fw.printable)
+
+    def test_a_printable_label_has_no_unprintable_character(self):
+        # Mirrors unprintableCharacter(), which is what api/tag refuses on.
+        self.assertEqual("", self.fw.unprintable_character("HELLO WORLD"))
+        self.assertEqual("", self.fw.unprintable_character(""))
+
+    def test_the_first_character_the_wheel_lacks_comes_back(self):
+        self.assertEqual("?", self.fw.unprintable_character("HI?"))
+        self.assertEqual("É", self.fw.unprintable_character("CAFÉ"))
+
+    def test_a_typed_label_is_checked_in_the_case_it_prints_in(self):
+        # The panel sends what was typed and the device upper-cases it.
+        self.assertEqual("", self.fw.unprintable_character("hello world"))
+
+    def test_the_cut_mark_is_not_allowed_in_a_label(self):
+        self.assertEqual("*", self.fw.unprintable_character("A*B"))
 
     def test_the_aliases_are_read(self):
         self.assertEqual({"0": "O", "1": "I"}, self.fw.aliases)
@@ -133,6 +157,11 @@ class LoadFirmware(unittest.TestCase):
         # source while the device called it 6.
         self.assertEqual(6, self.fw.min_label_characters)
 
+    def test_maximum_label_length_comes_from_the_firmware(self):
+        # The same number the panel already enforces as maxlength on the tag
+        # field, now said by the device as well.
+        self.assertEqual(247, self.fw.max_label_characters)
+
     def test_the_panel_knows_every_command_the_device_offers(self):
         # api/capabilities serves this list and data/script.js checks its
         # wording table against it at startup. The check is only worth
@@ -164,7 +193,8 @@ class Failures(unittest.TestCase):
         # Not eight commands and a shrug: a route quietly going missing is
         # the drift this module exists to catch.
         table = ('const CommandSpec ETKT::COMMANDS[] = {\n'
-                 '    {Command::CUT, "cut", false, false, NULL, &ETKT::cut},\n'
+                 '    {Command::CUT, "cut", false, false, NULL, false,\n'
+                 '     &ETKT::cut},\n'
                  '    {Command::FEED, "feed", false, false, NULL, 7, &f},\n'
                  '};')
         with self.assertRaises(firmware.FirmwareParseError) as caught:

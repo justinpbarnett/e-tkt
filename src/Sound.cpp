@@ -5,6 +5,7 @@
 
 #include "Characters.h"
 #include "Configuration.h"
+#include "Melody.h"
 #include "Utility.h"
 #include "pitches.h"
 
@@ -62,8 +63,6 @@ void Sound::playMelody(String notes, String durations) {
     if (frequency == 0) {
       continue;
     }
-    char charDuration = durations[i];
-    float duration = 2000 / atoi(&charDuration);
-    this->play(frequency, duration);
+    this->play(frequency, melodyNoteMs(durations, i));
   }
 }

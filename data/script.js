@@ -264,10 +264,13 @@ function calculateLength() {
   let treatedLabel = buildTreatedLabel();
 
   if (!isValidLabelText()) {
-    label.innerHTML = "??mm";
+    label.textContent = "??mm";
     label.style.opacity = 0.2;
   } else {
-    label.innerHTML = (treatedLabel.length < 7 ? 7 : treatedLabel.length) * 4 + "mm";
+    const target = paddedLabelTarget();
+    const characters =
+      target !== null && treatedLabel.length < target ? target : treatedLabel.length;
+    label.textContent = characters * 4 + "mm";
     label.style.opacity = 1;
   }
 }
@@ -281,9 +284,23 @@ async function labelCommand() {
   }
 }
 
+// How many characters the panel pads a label up to, or null while the device
+// has not said yet.
+//
+// One past the device's minimum. A label that only just reaches the minimum
+// leaves the device topping the tape up with trailing feeds, which pushes the
+// text off centre; padding one further does not. The number comes from
+// api/capabilities -- three places here used to write it as a bare 7 while
+// the device called it 6, and two of them kept saying 7 after the third
+// started asking.
+function paddedLabelTarget() {
+  return minLabelCharacters === null ? null : minLabelCharacters + 1;
+}
+
 function buildTreatedLabel() {
   const LabelInput = document.getElementById("text-input");
   let fieldValue = LabelInput.value;
+  let multiplier;
   if (fieldValue.length == 0) {
     fieldValue = "WRITE HERE";
   }
@@ -296,19 +313,14 @@ function buildTreatedLabel() {
       break;
   }
 
-  // Pad to one past the device's minimum. Spaces go on both sides so the
-  // text stays centred; stopping exactly at the minimum would leave the
-  // device topping the tape up with trailing feeds instead, which does not.
-  //
-  // The number comes from api/capabilities. It used to be written here as a
-  // bare 7 while the device called it 6, and no fallback is written here
-  // now: a guessed minimum is the same drift in a different place. Until
-  // the device has said, only the mode's own padding is applied. That
-  // shows for as long as the first api/capabilities call takes: the two
-  // callers that draw the preview run again when it lands, and the one
-  // that sends is behind isValidLabelText(), which refuses until then.
-  if (minLabelCharacters !== null) {
-    const target = minLabelCharacters + 1;
+  // Spaces go on both sides so the text stays centred. No fallback when the
+  // device has not said yet: a guessed minimum is the same drift in a
+  // different place, so only the mode's own padding is applied. That shows
+  // for as long as the first api/capabilities call takes -- the two callers
+  // that draw the preview run again when it lands, and the one that sends is
+  // behind isValidLabelText(), which refuses until then.
+  const target = paddedLabelTarget();
+  if (target !== null) {
     const printLength = fieldValue.length + multiplier * 2;
     if (printLength < target) {
       multiplier = Math.ceil((target - printLength) / 2);
@@ -326,7 +338,11 @@ function getScrollbarHeight(element) {
 }
 
 function getLabelWidth(element, label) {
-  return Math.max(measureText(element, label), measureText(element, " ".repeat(7))) + 4;
+  // A floor, so a short label does not collapse the box it sits in. The floor
+  // is the padded length the panel aims at, not a number of its own.
+  const target = paddedLabelTarget();
+  const floor = target === null ? 0 : measureText(element, " ".repeat(target));
+  return Math.max(measureText(element, label), floor) + 4;
 }
 
 function drawHelper() {
@@ -758,7 +774,7 @@ async function getStatus() {
   }
 }
 
-wasBusy = false;
+let wasBusy = false;
 
 // Enables or disables UI elements to prevent intercations while the printer is printing,
 // reeling, cutting, etc.
@@ -816,7 +832,9 @@ function handleData(data_json) {
   const label = data_json.current_label || "unknown";
   const printingLabel = document.getElementById("printing-label");
   printingLabel.style.width = getLabelWidth(printingLabel, label) + "px";
-  printingLabel.innerHTML = label;
+  // textContent, not innerHTML: this is current_label off api/status, which
+  // is whatever was posted to api/tag, and a label is text.
+  printingLabel.textContent = label;
   const printed = label.substring(0, Math.round(label.length * (percentage / 100)));
   const progressLength = measureText(printingLabel, printed) + 3;
   document.getElementById("progress-bar").style.width = progressLength + "px";

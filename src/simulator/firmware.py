@@ -29,11 +29,13 @@ class Command:
     handler: IDLE is a status rather than a job, and gets no route.
     """
 
-    def __init__(self, name, uses_align, uses_force, label_field, runnable):
+    def __init__(self, name, uses_align, uses_force, label_field,
+                 label_is_text, runnable):
         self.name = name
         self.uses_align = uses_align
         self.uses_force = uses_force
         self.label_field = label_field
+        self.label_is_text = label_is_text
         self.runnable = runnable
 
     def __repr__(self):
@@ -45,7 +47,7 @@ class Firmware:
 
     def __init__(self, commands, printable, aliases, calibration_min,
                  calibration_max, default_align, default_force, progress_max,
-                 min_label_characters):
+                 min_label_characters, max_label_characters):
         self.commands = commands
         self.printable = printable
         self.aliases = aliases
@@ -55,6 +57,19 @@ class Firmware:
         self.default_force = default_force
         self.progress_max = progress_max
         self.min_label_characters = min_label_characters
+        self.max_label_characters = max_label_characters
+
+    def unprintable_character(self, label):
+        """The first character of `label` a label may not contain, or "".
+
+        Mirrors unprintableCharacter() in CharacterSet.cpp, upper-casing
+        first for the same reason: the panel sends what was typed and the
+        device upper-cases it on the way to the press.
+        """
+        for character in label.upper():
+            if character not in self.printable:
+                return character
+        return ""
 
     def command(self, name):
         """The row with this name, or None. Mirrors commandSpecByName()."""
@@ -109,17 +124,21 @@ def load(src_dir=None):
         progress_max=_number(progress, "PROGRESS_MAX_WHILE_PRINTING"),
         min_label_characters=_number(
             configuration, "MIN_LABEL_CHARACTERS"),
+        max_label_characters=_number(
+            configuration, "MAX_LABEL_CHARACTERS"),
     )
 
 
 # One row of the table: enumerator, wire name, the two calibration flags, the
-# label field or NULL, and the handler or NULL.
+# label field or NULL, whether that field is text to emboss, and the handler
+# or NULL.
 _COMMAND_ROW = re.compile(
     r'\{\s*Command::\w+\s*,'
     r'\s*"([^"]*)"\s*,'
     r'\s*(true|false)\s*,'
     r'\s*(true|false)\s*,'
     r'\s*(NULL|"[^"]*")\s*,'
+    r'\s*(true|false)\s*,'
     r'\s*(NULL|&ETKT::\w+)\s*,?\s*\}', re.S)
 
 
@@ -128,12 +147,14 @@ def parse_commands(source):
     body = _initializer(source, r"const\s+CommandSpec\s+ETKT::COMMANDS\[\]",
                         "ETKT::COMMANDS")
     commands = []
-    for name, align, force, label, handler in _COMMAND_ROW.findall(body):
+    for name, align, force, label, is_text, handler in _COMMAND_ROW.findall(
+            body):
         commands.append(Command(
             name=name,
             uses_align=align == "true",
             uses_force=force == "true",
             label_field=None if label == "NULL" else label.strip('"'),
+            label_is_text=is_text == "true",
             runnable=handler != "NULL",
         ))
 
@@ -226,34 +247,36 @@ def _initializer(source, declaration, name):
     body = []
     depth = 1
     index = opening.end()
+    # Reads through source in place. Slicing the remainder off on each turn
+    # copied the rest of the file once per character, which is the whole file
+    # squared for a table near the top of a long one.
     while index < len(source) and depth > 0:
-        rest = source[index:]
-        if rest.startswith("//"):
+        if source.startswith("//", index):
             index = source.find("\n", index)
             if index < 0:
                 break
             continue
-        if rest.startswith("/*"):
+        if source.startswith("/*", index):
             end = source.find("*/", index + 2)
             if end < 0:
                 break
             index = end + 2
             continue
-        if rest[0] in "\"'":
-            quote = rest[0]
+        character = source[index]
+        if character in "\"'":
             end = index + 1
-            while end < len(source) and source[end] != quote:
+            while end < len(source) and source[end] != character:
                 end += 2 if source[end] == "\\" else 1
             body.append(source[index:end + 1])
             index = end + 1
             continue
-        if rest[0] == "{":
+        if character == "{":
             depth += 1
-        elif rest[0] == "}":
+        elif character == "}":
             depth -= 1
             if depth == 0:
                 return "".join(body)
-        body.append(rest[0])
+        body.append(character)
         index += 1
 
     raise FirmwareParseError(

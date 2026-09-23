@@ -36,25 +36,29 @@ static const int FINISH_FADE_MS = 3225;
 // case, and the route list in Network.cpp -- and home and move had already
 // fallen out of the webapp's copy.
 const CommandSpec ETKT::COMMANDS[] = {
-    //            name         align  force  label field  handler
-    {Command::CUT, "cut", false, false, NULL, &ETKT::cutCommandInternal},
-    {Command::FEED, "feed", false, false, NULL, &ETKT::feedCommandInternal},
-    {Command::REEL, "reel", false, false, NULL, &ETKT::reelCommandInternal},
+    //            name       align  force  label field  text  handler
+    {Command::CUT, "cut", false, false, NULL, false, &ETKT::cutCommandInternal},
+    {Command::FEED, "feed", false, false, NULL, false,
+     &ETKT::feedCommandInternal},
+    {Command::REEL, "reel", false, false, NULL, false,
+     &ETKT::reelCommandInternal},
     // Align only. This test presses at the minimum force by design -- see
     // testCommandInternal -- so a force in the body is ignored, not refused,
     // which keeps a stale cached script.js working.
-    {Command::TEST_ALIGN, "testalign", true, false, NULL,
+    {Command::TEST_ALIGN, "testalign", true, false, NULL, false,
      &ETKT::testCommandInternal},
-    {Command::TEST_FULL, "testfull", true, true, NULL,
+    {Command::TEST_FULL, "testfull", true, true, NULL, false,
      &ETKT::testCommandFullInternal},
-    {Command::SAVE, "save", true, true, NULL, &ETKT::saveCommandInternal},
-    {Command::TAG, "tag", false, false, "tag", &ETKT::tagCommandInternal},
-    {Command::HOME, "home", false, false, NULL, &ETKT::homeCommandInternal},
-    {Command::MOVE, "move", false, false, "character",
+    {Command::SAVE, "save", true, true, NULL, false,
+     &ETKT::saveCommandInternal},
+    {Command::TAG, "tag", false, false, "tag", true, &ETKT::tagCommandInternal},
+    {Command::HOME, "home", false, false, NULL, false,
+     &ETKT::homeCommandInternal},
+    {Command::MOVE, "move", false, false, "character", false,
      &ETKT::moveCommandInternal},
     // IDLE is a status, not a job: no handler, and no route is registered for
     // it. It keeps a name because /api/status reports one.
-    {Command::IDLE, "idle", false, false, NULL, NULL},
+    {Command::IDLE, "idle", false, false, NULL, false, NULL},
 };
 
 const size_t ETKT::COMMAND_COUNT =
@@ -194,7 +198,15 @@ void ETKT::cutAt(int force) {
   }
   // moves to a specific char (*) then presses label three times (more
   // vigorously)
-  this->daisywheel->move("*", this->settings->getAlignFactor());
+  if (!this->daisywheel->move(CUT_CHARACTER,
+                              this->settings->getAlignFactor())) {
+    // move() cuts the coil current when it refuses, so the wheel is now both
+    // unreferenced and free to turn. Pressing three times at full force into
+    // whatever slot it stopped at would emboss a letter where the cut mark
+    // belongs, and leave the tape uncut anyway.
+    this->logger->warn("Skipped the cut: the wheel would not reach the mark");
+    return;
+  }
   for (int i = 0; i < 3; i++) {
     this->press->press(true, force, false);
   }
@@ -309,7 +321,9 @@ void ETKT::testCommandInternal() {
   display->render(Screen::TESTING);
   ledFinish->off();
 
-  this->daisywheel->move("M", this->command->align);
+  if (!this->daisywheel->move("M", this->command->align)) {
+    return;
+  }
   // Deliberately the minimum force, matching docs/diy/calibration.md: this
   // button "will slowly and lightly press the daisy wheel letter" to check
   // that the press lands centred on the character. Force is calibrated
@@ -331,11 +345,11 @@ void ETKT::testCommandFullInternal() {
   for (int i = 0; i < label.length(); i++) {
     auto character = label.substring(i, i + 1);
     this->feeder->feed();
-    this->daisywheel->move(character, this->command->align);
-    this->press->press(false, this->command->force, false);
+    if (this->daisywheel->move(character, this->command->align)) {
+      this->press->press(false, this->command->force, false);
+    }
   }
   this->feeder->feed();
-  this->daisywheel->move("*", this->command->align);
   this->cutAt(this->command->force);
 }
 
@@ -391,8 +405,13 @@ void ETKT::tagCommandInternal() {
 
   for (int i = 0; i < labelLength; i++) {
     auto character = Utility::utf8CharAt(label, i);
-    if (character != " ") {
-      this->daisywheel->move(character, this->settings->getAlignFactor());
+    // Only press what the wheel actually reached. move() logs the character
+    // it could not find and cuts the coil current, which leaves the wheel
+    // unreferenced and free to turn; pressing anyway embosses whichever slot
+    // it stopped at. readCommandOptions() refuses such a label at the door,
+    // so reaching here means a caller inside the device asked for it.
+    if (character != " " &&
+        this->daisywheel->move(character, this->settings->getAlignFactor())) {
       this->press->press(false, this->settings->getForceFactor(), false);
     }
 

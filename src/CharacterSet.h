@@ -44,3 +44,23 @@ extern const std::map<String, String> CHARACTER_ALIASES;
  * four separate and disagreeing copies of this set used to be.
  */
 String printableCharacters();
+
+/**
+ * @brief The first character of `label` that a label may not contain, or ""
+ * when every one of them is printable.
+ *
+ * The rule is printableCharacters(): a space, or a character with a slot on
+ * the wheel that is not the cut mark. Checked on an upper-cased copy, because
+ * that is what the machine prints -- the webapp sends what was typed and
+ * ETKT::tagCommandInternal upper-cases it on the way to the press.
+ *
+ * Steps the label by UTF-8 code point, so the character it hands back is a
+ * whole one and can be quoted straight into an error message.
+ *
+ * This is the device's own answer, not the webapp's. Until it existed only
+ * the webapp asked, so a label POSTed straight at /api/tag walked characters
+ * the wheel does not carry: DaisyWheel::move() refused each one and cut the
+ * coil current, and the press came down regardless, on whichever slot the
+ * wheel had stopped at.
+ */
+String unprintableCharacter(const String& label);

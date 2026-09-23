@@ -22,7 +22,11 @@ class DaisyWheel {
   Characters* characters;
   const int stepsPerRevolution = CHAR_STEP_COUNT * CHAR_MICROSTEPS;
   float stepsPerChar = 0;
-  int currentChar;
+  // -1 is "no slot under the press", which is what deenergize() leaves
+  // behind and what move() treats as "nowhere to count from, home first".
+  // Every sibling here carries a starting value; this one did not, so
+  // before home() ran it held whatever the allocation had in it.
+  int currentChar = -1;
   bool homed = false;
 
  public:

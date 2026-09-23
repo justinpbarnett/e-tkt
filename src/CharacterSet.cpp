@@ -4,6 +4,8 @@
 
 #include <map>
 
+#include "Utility.h"
+
 // One copy, in one translation unit. These used to live in Characters.h, and
 // a const map at namespace scope in a header is a separate object in every
 // file that includes it -- eight of them here, each built again at startup.
@@ -18,14 +20,41 @@ const std::map<String, int> CHARACTERS = {
 
 const std::map<String, String> CHARACTER_ALIASES = {{"0", "O"}, {"1", "I"}};
 
+// The one rule, so that the list served to the webapp and the check the
+// device runs on an incoming label cannot drift apart. A space earns its
+// place here rather than in CHARACTERS: it is the feeder advancing with
+// nothing pressed into it, so it has no slot to sit in.
+static bool isPrintableCharacter(const String& character) {
+  if (character == " ") {
+    return true;
+  }
+  if (character == CUT_CHARACTER) {
+    return false;
+  }
+  return CHARACTERS.find(character) != CHARACTERS.end();
+}
+
 String printableCharacters() {
   String printable = " ";
   for (std::map<String, int>::const_iterator it = CHARACTERS.begin();
        it != CHARACTERS.end(); ++it) {
-    if (it->first == CUT_CHARACTER) {
+    if (!isPrintableCharacter(it->first)) {
       continue;
     }
     printable += it->first;
   }
   return printable;
+}
+
+String unprintableCharacter(const String& label) {
+  String printed = label;
+  printed.toUpperCase();
+  const int length = Utility::utf8Length(printed);
+  for (int i = 0; i < length; i++) {
+    const String character = Utility::utf8CharAt(printed, i);
+    if (!isPrintableCharacter(character)) {
+      return character;
+    }
+  }
+  return "";
 }

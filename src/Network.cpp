@@ -17,6 +17,7 @@
 #include "Logger.h"
 #include "PressGeometry.h"
 #include "SPIFFS.h"
+#include "Utility.h"
 #include "esp_heap_caps.h"
 #include "esp_wifi.h"
 
@@ -237,6 +238,27 @@ static bool readCommandOptions(const CommandSpec *spec,
       return false;
     }
     options->label = request_data[spec->labelField].as<String>();
+
+    // Only for a field that is text to emboss. A move's field names a slot on
+    // the wheel instead, and DaisyWheel::move() is the one that knows which
+    // slots exist.
+    if (spec->labelIsText) {
+      const int length = Utility::utf8Length(options->label);
+      if (length > MAX_LABEL_CHARACTERS) {
+        response_data->getRoot()["error"] =
+            String("A ") + spec->labelField + " may be at most " +
+            MAX_LABEL_CHARACTERS + " characters, got " + length;
+        response_data->setCode(400);
+        return false;
+      }
+      const String unprintable = unprintableCharacter(options->label);
+      if (unprintable.length() > 0) {
+        response_data->getRoot()["error"] =
+            String("The daisy wheel cannot print '") + unprintable + "'";
+        response_data->setCode(400);
+        return false;
+      }
+    }
   }
   return true;
 }
@@ -340,6 +362,7 @@ void Network::capabilitiesGetHandler(AsyncWebServerRequest *request) {
   // device does not have to, which is what keeps short labels centred.
   const JsonObject label = root.createNestedObject("label");
   label["minimum"] = MIN_LABEL_CHARACTERS;
+  label["maximum"] = MAX_LABEL_CHARACTERS;
 
   // Every command that can actually be asked for -- the same rows that got a
   // route registered above. The panel keeps its own wording for the busy

@@ -141,6 +141,43 @@ void test_every_wheel_symbol_survives_a_round_trip(void) {
   }
 }
 
+// --- what a whole label may say ------------------------------------------
+// Until this existed only the webapp checked, so a label POSTed straight to
+// /api/tag walked characters the wheel does not carry. DaisyWheel::move()
+// refused those and deenergized, and the press came down anyway on whichever
+// slot the wheel had stopped at.
+
+void test_a_label_of_printable_characters_has_no_unprintable_one(void) {
+  TEST_ASSERT_EQUAL_STRING("", unprintableCharacter("HELLO WORLD").c_str());
+  TEST_ASSERT_EQUAL_STRING("", unprintableCharacter("$-.0123456789").c_str());
+  TEST_ASSERT_EQUAL_STRING("", unprintableCharacter("@♡☆♪€").c_str());
+}
+
+void test_an_empty_label_has_no_unprintable_character(void) {
+  TEST_ASSERT_EQUAL_STRING("", unprintableCharacter("").c_str());
+}
+
+void test_the_first_character_the_wheel_lacks_comes_back(void) {
+  TEST_ASSERT_EQUAL_STRING("?", unprintableCharacter("HI?").c_str());
+  TEST_ASSERT_EQUAL_STRING("!", unprintableCharacter("!?").c_str());
+}
+
+void test_a_multi_byte_character_the_wheel_lacks_comes_back_whole(void) {
+  TEST_ASSERT_EQUAL_STRING("É", unprintableCharacter("CAFÉ").c_str());
+}
+
+// Labels arrive from the webapp in lower case and tagCommandInternal upper-
+// cases them before printing. Checking the typed case would refuse every
+// label the panel sends.
+void test_lower_case_letters_are_printable(void) {
+  TEST_ASSERT_EQUAL_STRING("", unprintableCharacter("hello world").c_str());
+}
+
+// The cut mark is a position on the wheel, not something a label says.
+void test_the_cut_mark_is_not_allowed_in_a_label(void) {
+  TEST_ASSERT_EQUAL_STRING(CUT_CHARACTER, unprintableCharacter("A*B").c_str());
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_a_space_is_printable);
@@ -159,5 +196,11 @@ int main(int, char**) {
   RUN_TEST(test_a_label_of_symbols_and_letters_counts_right);
   RUN_TEST(test_a_symbol_comes_back_whole);
   RUN_TEST(test_every_wheel_symbol_survives_a_round_trip);
+  RUN_TEST(test_a_label_of_printable_characters_has_no_unprintable_one);
+  RUN_TEST(test_an_empty_label_has_no_unprintable_character);
+  RUN_TEST(test_the_first_character_the_wheel_lacks_comes_back);
+  RUN_TEST(test_a_multi_byte_character_the_wheel_lacks_comes_back_whole);
+  RUN_TEST(test_lower_case_letters_are_printable);
+  RUN_TEST(test_the_cut_mark_is_not_allowed_in_a_label);
   return UNITY_END();
 }

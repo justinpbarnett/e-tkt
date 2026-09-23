@@ -72,6 +72,14 @@ struct CommandSpec {
   // whole label, a move is a single character.
   const char* labelField;
 
+  // Whether that field is text to emboss, in which case every character of it
+  // has to be one a label may contain and the request is refused when one is
+  // not. The alternative is DaisyWheel::move() refusing the character on its
+  // own and the press coming down regardless, on whichever slot the wheel
+  // last stopped at. A move's field is not text: it names a slot on the
+  // wheel, the cut mark included, and no label may say that.
+  bool labelIsText;
+
   // The handler ETKT::loop() runs for this command. NULL means there is
   // nothing to run: IDLE is a status, not a job.
   void (ETKT::*run)();
