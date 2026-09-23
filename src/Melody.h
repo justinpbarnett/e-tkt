@@ -1,6 +1,6 @@
 #pragma once
 
-#include <Arduino.h>
+#include <string.h>
 
 // The one definition of how long a note in a melody lasts.
 //
@@ -17,11 +17,12 @@ constexpr int MELODY_WHOLE_NOTE_MS = 2000;
 /**
  * @brief How long the note at `index` lasts, in milliseconds.
  *
- * @param durations one digit per note, in the order the notes are played.
- *        Each digit is how many of that note fill MELODY_WHOLE_NOTE_MS, so
- *        "8" is an eighth note and "4" a quarter. ASCII only: the caller
- *        counts notes in UTF-8 code points, and this index only lines up with
- *        that count while every duration is one byte.
+ * @param durations one digit per note, in the order the notes are played,
+ *        NUL-terminated. Each digit is how many of that note fill
+ *        MELODY_WHOLE_NOTE_MS, so "8" is an eighth note and "4" a quarter.
+ *        ASCII only: the caller counts notes in UTF-8 code points, and this
+ *        index only lines up with that count while every duration is one
+ *        byte. A null pointer is the same as an empty string.
  * @param index which note, counting from 0.
  *
  * Returns the whole note for anything that is not a digit 1-9, and for an
@@ -30,8 +31,8 @@ constexpr int MELODY_WHOLE_NOTE_MS = 2000;
  * a two-second note says so audibly. The one thing it will not do is divide
  * by zero.
  */
-inline int melodyNoteMs(const String& durations, int index) {
-  if (index < 0 || index >= (int)durations.length()) {
+inline int melodyNoteMs(const char* durations, int index) {
+  if (durations == nullptr || index < 0 || index >= (int)strlen(durations)) {
     return MELODY_WHOLE_NOTE_MS;
   }
   const int notesPerWhole = durations[index] - '0';

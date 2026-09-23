@@ -67,18 +67,22 @@ struct CommandSpec {
   bool usesAlign;
   bool usesForce;
 
-  // The body field this command's label arrives in, or NULL if it takes no
-  // label. Two commands take one and they disagree on the name: a tag is a
-  // whole label, a move is a single character.
+  // The body field this command's text arrives in, or NULL if it takes none.
+  // Two commands take one and they disagree on the name: a tag is a whole
+  // label, a move is a single character.
   const char* labelField;
 
-  // Whether that field is text to emboss, in which case every character of it
-  // has to be one a label may contain and the request is refused when one is
-  // not. The alternative is DaisyWheel::move() refusing the character on its
-  // own and the press coming down regardless, on whichever slot the wheel
-  // last stopped at. A move's field is not text: it names a slot on the
-  // wheel, the cut mark included, and no label may say that.
-  bool labelIsText;
+  // Whether what arrives in that field is a label -- text to emboss -- rather
+  // than the name of a slot on the wheel. A label is checked character by
+  // character against what a label may contain, and the request is refused
+  // when one of them is not. Without that check DaisyWheel::move() refuses
+  // the character on its own and the press comes down regardless, on
+  // whichever slot the wheel last stopped at.
+  //
+  // A move's field is not a label: it names a slot, the cut mark included,
+  // and no label may say that. So the two commands that carry text need the
+  // two answers, which is why this cannot be read off labelField.
+  bool fieldIsLabel;
 
   // The handler ETKT::loop() runs for this command. NULL means there is
   // nothing to run: IDLE is a status, not a job.

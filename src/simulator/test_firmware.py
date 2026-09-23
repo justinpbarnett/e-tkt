@@ -56,13 +56,13 @@ class LoadFirmware(unittest.TestCase):
         self.assertEqual("character", self.fw.command("move").label_field)
         self.assertIsNone(self.fw.command("cut").label_field)
 
-    def test_a_tag_is_text_to_emboss_and_a_move_is_not(self):
+    def test_a_tag_carries_a_label_and_a_move_names_a_slot(self):
         # The column that decides whether the field is checked against what
         # the wheel carries. A move names a slot on the wheel instead, the
         # cut mark included, so it is left to DaisyWheel::move().
-        self.assertTrue(self.fw.command("tag").label_is_text)
-        self.assertFalse(self.fw.command("move").label_is_text)
-        self.assertFalse(self.fw.command("cut").label_is_text)
+        self.assertTrue(self.fw.command("tag").field_is_label)
+        self.assertFalse(self.fw.command("move").field_is_label)
+        self.assertFalse(self.fw.command("cut").field_is_label)
 
     def test_save_reads_both_calibration_fields(self):
         save = self.fw.command("save")
@@ -158,9 +158,10 @@ class LoadFirmware(unittest.TestCase):
         self.assertEqual(6, self.fw.min_label_characters)
 
     def test_maximum_label_length_comes_from_the_firmware(self):
-        # The same number the panel already enforces as maxlength on the tag
-        # field, now said by the device as well.
-        self.assertEqual(247, self.fw.max_label_characters)
+        # What the device will accept in a request, which is two more than
+        # the longest thing anyone can type: the panel centres a label by
+        # padding a space onto each side before it sends it.
+        self.assertEqual(249, self.fw.max_label_characters)
 
     def test_the_panel_knows_every_command_the_device_offers(self):
         # api/capabilities serves this list and data/script.js checks its

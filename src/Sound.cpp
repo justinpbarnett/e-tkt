@@ -63,6 +63,6 @@ void Sound::playMelody(String notes, String durations) {
     if (frequency == 0) {
       continue;
     }
-    this->play(frequency, melodyNoteMs(durations, i));
+    this->play(frequency, melodyNoteMs(durations.c_str(), i));
   }
 }

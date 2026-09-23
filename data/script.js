@@ -76,6 +76,7 @@ let printableCharacters = null;
 let characterAliases = null;
 let calibrationRange = null;
 let minLabelCharacters = null;
+let maxLabelCharacters = null;
 
 window.onload = startupRoutine;
 
@@ -130,10 +131,15 @@ async function retrieveCapabilities() {
     if (!label || !Number.isInteger(label.minimum)) {
       throw new Error("api/capabilities served no minimum label length");
     }
+    if (!Number.isInteger(label.maximum)) {
+      throw new Error("api/capabilities served no maximum label length");
+    }
     printableCharacters = response.printable;
     characterAliases = response.aliases || {};
     calibrationRange = range;
     minLabelCharacters = label.minimum;
+    maxLabelCharacters = label.maximum;
+    applyTypedLengthLimit();
 
     // Not fatal: an unknown command already falls back to UNKNOWN_BUSY_LABEL
     // and the panel keeps working. Worth saying out loud, though, because
@@ -267,10 +273,10 @@ function calculateLength() {
     label.textContent = "??mm";
     label.style.opacity = 0.2;
   } else {
-    const target = paddedLabelTarget();
-    const characters =
-      target !== null && treatedLabel.length < target ? target : treatedLabel.length;
-    label.textContent = characters * 4 + "mm";
+    // No floor of its own: buildTreatedLabel() has already padded to the
+    // minimum, and a second statement of that rule is what let this line
+    // quote a length the device was never going to receive.
+    label.textContent = treatedLabel.length * 4 + "mm";
     label.style.opacity = 1;
   }
 }
@@ -293,6 +299,24 @@ async function labelCommand() {
 // api/capabilities -- three places here used to write it as a bare 7 while
 // the device called it 6, and two of them kept saying 7 after the third
 // started asking.
+// The widest margin buildTreatedLabel() adds to a label that is already long
+// enough on its own, per side. Short labels get more, to reach the minimum,
+// but a label near the maximum never does.
+const WIDEST_MARGIN = 1;
+
+// Caps the input at what the device will actually take, less the margin this
+// panel is about to add to it. The number used to be maxlength="247" written
+// into data/index.html, which is the panel deciding for itself what the
+// device accepts -- and it decided wrong, because the margin pushed a full
+// 247 characters to 249 and the device refused the label on arrival.
+function applyTypedLengthLimit() {
+  if (maxLabelCharacters === null) {
+    return;
+  }
+  const input = document.getElementById("text-input");
+  input.maxLength = maxLabelCharacters - WIDEST_MARGIN * 2;
+}
+
 function paddedLabelTarget() {
   return minLabelCharacters === null ? null : minLabelCharacters + 1;
 }
@@ -323,7 +347,11 @@ function buildTreatedLabel() {
   if (target !== null) {
     const printLength = fieldValue.length + multiplier * 2;
     if (printLength < target) {
-      multiplier = Math.ceil((target - printLength) / 2);
+      // Added to the margin the mode already asked for, not put in its place.
+      // Assigning here discarded the loose mode's own space on each side, so
+      // every short label in that mode went out two characters under the
+      // minimum the device had just asked for.
+      multiplier += Math.ceil((target - printLength) / 2);
     }
   }
   return " ".repeat(multiplier) + fieldValue + " ".repeat(multiplier);

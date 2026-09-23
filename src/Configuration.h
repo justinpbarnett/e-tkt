@@ -113,12 +113,17 @@
 // trailing feeds, which pushes the text off centre.
 constexpr int MIN_LABEL_CHARACTERS = 6;
 
-// The longest label the device will print. The number is the one the panel
-// already enforces, as maxlength="247" on the tag field in data/index.html;
-// this is the device saying it too, so a label POSTed straight at /api/tag
-// cannot run the feeder until the tape is spent. Served to the panel in
-// api/capabilities beside the minimum.
-constexpr int MAX_LABEL_CHARACTERS = 247;
+// The longest label the device will print, so a label POSTed straight at
+// /api/tag cannot run the feeder until the tape is spent.
+//
+// This counts what arrives in the request, not what somebody typed. The
+// panel centres a label by padding it with a space on each side, so the
+// longest thing it can send is two characters longer than the longest thing
+// it lets anyone type. Reading this as the typed length is what made the
+// first version of this bound 247 and refuse the panel's own longest label.
+// Served to the panel in api/capabilities beside the minimum, and the panel
+// subtracts its own margin from it to cap the input.
+constexpr int MAX_LABEL_CHARACTERS = 249;
 
 // Which character sits under the press once the hall sensor has found home.
 // The wheel is keyed to the hub, so this is the same on every build; the

@@ -36,7 +36,7 @@ static const int FINISH_FADE_MS = 3225;
 // case, and the route list in Network.cpp -- and home and move had already
 // fallen out of the webapp's copy.
 const CommandSpec ETKT::COMMANDS[] = {
-    //            name       align  force  label field  text  handler
+    //            name       align  force  label field  label  handler
     {Command::CUT, "cut", false, false, NULL, false, &ETKT::cutCommandInternal},
     {Command::FEED, "feed", false, false, NULL, false,
      &ETKT::feedCommandInternal},
@@ -365,7 +365,14 @@ void ETKT::homeCommandInternal() {
 void ETKT::moveCommandInternal() {
   this->press->rest();
   delay(500);
-  this->daisywheel->move(this->command->label, this->settings->getAlignFactor());
+  // Nothing presses after this one, so a refused move costs no tape -- but it
+  // leaves the wheel parked somewhere other than the slot that was asked for,
+  // and saying so is the difference between a stuck wheel and a quiet one.
+  if (!this->daisywheel->move(this->command->label,
+                              this->settings->getAlignFactor())) {
+    this->logger->warn(String("The wheel would not reach '") +
+                       this->command->label + "'");
+  }
 }
 
 void ETKT::tagCommandInternal() {

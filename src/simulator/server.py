@@ -85,7 +85,7 @@ class Server:
         self.align = device.default_align
         self.force = device.default_force
         self.command = None
-        self.running = None
+        self.running_task = None
         self.label = ""
         self.progress = 0
         self.log = deque(maxlen=LOG_LINES)
@@ -193,7 +193,7 @@ class Server:
             # Only for a field that is text to emboss. A move's field names a
             # slot on the wheel instead, cut mark included, and the device
             # leaves that one to DaisyWheel::move().
-            if spec.label_is_text:
+            if spec.field_is_label:
                 if len(label) > self.device.max_label_characters:
                     return self.refuse(
                         "A %s may be at most %d characters, got %d"
@@ -225,7 +225,7 @@ class Server:
         # Held, not dropped. asyncio keeps only a weak reference to a task, so
         # a create_task() whose result nobody stores can be collected part way
         # through a label.
-        self.running = asyncio.create_task(self.run(spec))
+        self.running_task = asyncio.create_task(self.run(spec))
         return web.json_response({'result': 'success'})
 
     def read_calibration(self, wanted, body, field, missing):
@@ -264,7 +264,7 @@ class Server:
         # Both together, as ETKT::loop() does when it clears the command:
         # leaving progress behind reports an idle printer stuck at 99%.
         self.command = None
-        self.running = None
+        self.running_task = None
         self.progress = 0
 
     async def print_label(self):

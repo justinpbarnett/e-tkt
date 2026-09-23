@@ -239,10 +239,10 @@ static bool readCommandOptions(const CommandSpec *spec,
     }
     options->label = request_data[spec->labelField].as<String>();
 
-    // Only for a field that is text to emboss. A move's field names a slot on
+    // Only for a field that carries a label. A move's field names a slot on
     // the wheel instead, and DaisyWheel::move() is the one that knows which
     // slots exist.
-    if (spec->labelIsText) {
+    if (spec->fieldIsLabel) {
       const int length = Utility::utf8Length(options->label);
       if (length > MAX_LABEL_CHARACTERS) {
         response_data->getRoot()["error"] =

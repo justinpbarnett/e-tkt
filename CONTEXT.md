@@ -62,6 +62,15 @@ wheel character except the cut mark. `printableCharacters()`. Served from
 `/api/capabilities` so the panel does not keep its own list, which it used to
 and which disagreed.
 
+**Typed length vs sent length** - not the same number, and the difference is
+two. The panel centres a label by padding a space onto each side before it
+posts it, so a label is two characters longer on the wire than it was in the
+box. `MIN_LABEL_CHARACTERS` and `MAX_LABEL_CHARACTERS` are both bounds on the
+sent length, because that is what the device receives and checks; the panel
+subtracts its own margin from the maximum to cap what anyone can type. Reading
+the maximum as a typed length is what first made it 247 and made the device
+refuse the longest label the panel could produce.
+
 **Character set vs Characters** - two modules with names a letter apart.
 `CharacterSet` is what the *wheel* carries and what a label may say: a map,
 the aliases, the printable set, and no Arduino display code, so the host

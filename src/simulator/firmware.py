@@ -30,12 +30,12 @@ class Command:
     """
 
     def __init__(self, name, uses_align, uses_force, label_field,
-                 label_is_text, runnable):
+                 field_is_label, runnable):
         self.name = name
         self.uses_align = uses_align
         self.uses_force = uses_force
         self.label_field = label_field
-        self.label_is_text = label_is_text
+        self.field_is_label = field_is_label
         self.runnable = runnable
 
     def __repr__(self):
@@ -147,14 +147,14 @@ def parse_commands(source):
     body = _initializer(source, r"const\s+CommandSpec\s+ETKT::COMMANDS\[\]",
                         "ETKT::COMMANDS")
     commands = []
-    for name, align, force, label, is_text, handler in _COMMAND_ROW.findall(
+    for name, align, force, label, is_label, handler in _COMMAND_ROW.findall(
             body):
         commands.append(Command(
             name=name,
             uses_align=align == "true",
             uses_force=force == "true",
             label_field=None if label == "NULL" else label.strip('"'),
-            label_is_text=is_text == "true",
+            field_is_label=is_label == "true",
             runnable=handler != "NULL",
         ))
 
