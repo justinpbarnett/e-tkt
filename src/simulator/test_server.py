@@ -399,6 +399,18 @@ class Panel(RelayTestCase):
         with open(os.path.join(ROOT, "data", "style.css"), "rb") as sheet:
             self.assertEqual(sheet.read(), await response.read())
 
+    async def test_an_edit_to_data_shows_on_the_next_reload(self):
+        # A browser keeps a file it can date for a while without asking for
+        # it again, and the page it builds from them is then the one from
+        # before the edit. The device sends no date to keep one by.
+        for path in ["/", "/style.css"]:
+            response = await self.client.get(path)
+            self.assertEqual("no-cache", response.headers.get("Cache-Control"))
+
+    async def test_the_apis_replies_are_left_as_the_firmware_sent_them(self):
+        response = await self.client.get("/api/status")
+        self.assertNotIn("Cache-Control", response.headers)
+
     async def test_the_panel_tests_use_the_capabilities_the_firmware_serves(
             self):
         # test/panel/ holds every decision the panel makes to the reply in

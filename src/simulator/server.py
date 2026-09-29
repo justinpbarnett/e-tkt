@@ -128,6 +128,17 @@ async def read_body(request):
     return bytes(kept)
 
 
+async def ask_again(request, response):
+    """Has a browser ask for each of the panel's files again before it
+    uses it. aiohttp dates the files it serves, and a browser keeps a dated
+    file for a while without asking, so a reload after an edit to data/
+    showed the page from before it. The device dates nothing, so a browser
+    asks it every time. The api's replies are the firmware's, and are left
+    as it sent them."""
+    if not request.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-cache"
+
+
 class Server:
     """The firmware, and the webserver in front of it."""
 
@@ -188,6 +199,7 @@ class Server:
             web.get("/", self.index),
             web.static("/", DATA),
         ])
+        app.on_response_prepare.append(ask_again)
         return app
 
     async def listen(self, port):
