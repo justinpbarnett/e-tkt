@@ -99,18 +99,13 @@ void OledDisplay::clear(int color) {
   // 16384 calls into U8G2 to fill a buffer that drawBox fills in one.
   this->u8g2->setDrawColor(color);
   this->u8g2->drawBox(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
-  // Kept from the original. It cannot matter to the buffer, which is in RAM
-  // and is not sent until sendBuffer(), but the only machine that could show
-  // otherwise is on a bench nobody is watching right now.
-  delay(100);
   this->u8g2->setDrawColor(color == 0 ? 1 : 0);
   this->u8g2->setFont(u8g2_font_6x13_te);
 }
 
 void OledDisplay::playSplashScreen() {
-  // initial start screen
-
-  this->initialize();
+  // initial start screen. The screen is already running: ETKT::initialize()
+  // started it, and a second begin() only blanks it again.
 
   // invert colors
   this->clear(1);
@@ -358,7 +353,6 @@ void OledDisplay::renderIdle(bool stopped) {
     }
   }
   this->u8g2->sendBuffer();
-  delay(1000);
 }
 
 void OledDisplay::renderProgress(int charactersDone, const String& label,

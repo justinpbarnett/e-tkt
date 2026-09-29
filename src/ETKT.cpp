@@ -326,18 +326,15 @@ void ETKT::loop() {
     this->logger->log(String("Stopped ") + commandName(running));
   }
 
-  // Park the machine before the command slot is released. Everything below
-  // talks to hardware -- three motors, then a full OLED redraw with a QR code
-  // on it -- and it used to run with the lock held, which stalled every
-  // status poll from the web task for as long as that took. Parking first
-  // also closes a gap: submit() goes on refusing new work until the
-  // slot is genuinely clear, so nothing can begin against a machine that is
-  // still being put away. The motors go before the screen, so a stop lets go
-  // of the tape as soon as it can rather than a redraw later.
+  // Park the motors before the command slot is released, and outside the
+  // lock, which used to be held through all of this and stalled every status
+  // poll from the web task for as long as it took. Parking before the release
+  // closes a gap: submit() goes on refusing new work until the slot is
+  // genuinely clear, so nothing can begin against a machine that is still
+  // being put away.
   this->daisywheel->deenergize();
   this->press->rest();
   this->feeder->deenergize();
-  this->display->renderIdle(stopped);
 
   this->lock.lock();
   if (stopped) {
@@ -362,6 +359,12 @@ void ETKT::loop() {
   // Down again before the slot opens, so no stop outlives its command.
   this->stopSignal->clear();
   this->lock.unlock();
+
+  // The idle screen comes after the release, not before it. It is a full
+  // redraw with a QR code on it, and a job posted while it draws is one a
+  // parked machine can take. Only this task draws, so the next job's first
+  // screen still waits for this one.
+  this->display->renderIdle(stopped);
 }
 
 void ETKT::feedCommandInternal() {
@@ -408,7 +411,6 @@ void ETKT::cutCommandInternal() {
 void ETKT::saveCommandInternal() {
   this->logger->log("saving settings");
 
-  display->initialize();
   display->renderSaved(this->command->align, this->command->force);
   // The waits used to live inside the two renderers. They are the caller's
   // business: how long a confirmation stays up is a decision about this

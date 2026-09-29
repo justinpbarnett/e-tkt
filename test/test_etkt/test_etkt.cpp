@@ -260,6 +260,47 @@ void test_a_second_job_is_refused_while_one_is_queued(void) {
   etkt->loop();
 }
 
+// Putting the machine away ends with a full redraw of the idle screen, QR
+// code and all. By then the motors are parked and the job is over, so a job
+// posted while it draws is one the machine can take. A 409 then would be the
+// panel told the machine is busy when all it is doing is drawing.
+void test_a_job_posted_while_the_idle_screen_draws_is_taken(void) {
+  submit(Command::FEED);
+  static bool refusedWhileIdleDrew;
+  refusedWhileIdleDrew = true;
+  display->onCall = [](const DisplayCall& call) {
+    if (call.kind == DisplayCall::RENDER_IDLE) {
+      refusedWhileIdleDrew = refused(Command::CUT);
+    }
+  };
+
+  etkt->loop();
+
+  TEST_ASSERT_FALSE(refusedWhileIdleDrew);
+  display->onCall = nullptr;
+  etkt->loop();
+}
+
+// The OLED is started once, at boot. Starting it again partway through a
+// job blanks the glass and sets its contrast back, and the save
+// confirmation used to do that on its way up.
+void test_no_job_starts_the_screen_again(void) {
+  for (size_t i = 0; i < ETKT::COMMAND_COUNT; i++) {
+    if (ETKT::COMMANDS[i].run == NULL) {
+      continue;
+    }
+    CommandOptions options;
+    options.command = ETKT::COMMANDS[i].command;
+    options.label = "A";
+    options.align = 5;
+    options.force = 5;
+    etkt->submit(options);
+    etkt->loop();
+  }
+
+  TEST_ASSERT_EQUAL_INT(0, display->countOf(DisplayCall::INITIALIZE));
+}
+
 // --- stopping -------------------------------------------------------------
 
 // A tap on stop can race the end of the job it was meant for. Arriving to
@@ -426,6 +467,8 @@ int main(int, char**) {
   RUN_TEST(test_a_reel_without_a_length_takes_the_last_roll_length);
   RUN_TEST(test_saving_stores_the_calibration_and_reboots);
   RUN_TEST(test_a_second_job_is_refused_while_one_is_queued);
+  RUN_TEST(test_a_job_posted_while_the_idle_screen_draws_is_taken);
+  RUN_TEST(test_no_job_starts_the_screen_again);
   RUN_TEST(test_a_stop_with_nothing_running_stops_nothing_later);
   RUN_TEST(test_saving_cannot_be_stopped);
   RUN_TEST(test_only_a_run_of_labels_can_stop_after_a_label);

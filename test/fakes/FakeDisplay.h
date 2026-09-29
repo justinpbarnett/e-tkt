@@ -7,6 +7,7 @@
 // test/stubs/Arduino.h, so a test can say what an operator standing at the
 // machine would have seen, and when.
 
+#include <functional>
 #include <vector>
 
 #include "Arduino.h"
@@ -27,6 +28,7 @@ struct DisplayCall {
     RENDER_PROGRESS,
     RENDER_SAVED
   };
+  explicit DisplayCall(Kind kind) : kind(kind) {}
   Kind kind;
   Screen screen = Screen::WIFI_SETUP;  // RENDER
   bool stopped = false;                // RENDER_IDLE
@@ -43,46 +45,64 @@ struct DisplayCall {
 
 class FakeDisplay : public Display {
  private:
-  DisplayCall& record(DisplayCall::Kind kind) {
-    DisplayCall c;
-    c.kind = kind;
-    c.atMs = millis();
-    this->calls.push_back(c);
-    return this->calls.back();
+  void record(DisplayCall call) {
+    call.atMs = millis();
+    this->calls.push_back(call);
+    // The copy, not the entry in calls: a hook that makes the job runner draw
+    // again grows the vector underneath any reference into it.
+    if (this->onCall) {
+      this->onCall(call);
+    }
   }
 
  public:
   std::vector<DisplayCall> calls;
 
-  void initialize() override { this->record(DisplayCall::INITIALIZE); }
+  /**
+   * @brief Called with each call as it is recorded, for a test that has to
+   * act at the moment the screen changes -- to post a job while the idle
+   * screen draws, say.
+   */
+  std::function<void(const DisplayCall&)> onCall;
+
+  void initialize() override {
+    this->record(DisplayCall(DisplayCall::INITIALIZE));
+  }
 
   void render(Screen screen) override {
-    this->record(DisplayCall::RENDER).screen = screen;
+    DisplayCall c(DisplayCall::RENDER);
+    c.screen = screen;
+    this->record(c);
   }
 
   void renderIdle(bool stopped) override {
-    this->record(DisplayCall::RENDER_IDLE).stopped = stopped;
+    DisplayCall c(DisplayCall::RENDER_IDLE);
+    c.stopped = stopped;
+    this->record(c);
   }
 
   void setConnectionInfo(const String& ip, const String& ssid) override {
-    DisplayCall& c = this->record(DisplayCall::CONNECTION_INFO);
+    DisplayCall c(DisplayCall::CONNECTION_INFO);
     c.ip = ip;
     c.ssid = ssid;
+    this->record(c);
   }
 
   void renderProgress(int charactersDone, const String& label, int copy,
                       int copies) override {
-    DisplayCall& c = this->record(DisplayCall::RENDER_PROGRESS);
+    DisplayCall c(DisplayCall::RENDER_PROGRESS);
     c.charactersDone = charactersDone;
     c.label = label;
     c.copy = copy;
     c.copies = copies;
+    this->record(c);
   }
 
   void renderSaved(int align, int force) override {
-    DisplayCall& c = this->record(DisplayCall::RENDER_SAVED);
+    DisplayCall c(DisplayCall::RENDER_SAVED);
     c.align = align;
     c.force = force;
+    this->record(c);
   }
 
   // --- helpers the tests read the recording through ------------------------

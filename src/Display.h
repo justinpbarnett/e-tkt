@@ -39,6 +39,11 @@ enum class Screen {
  * adapters sit behind it: OledDisplay, which draws on the 128x64 OLED the
  * machine carries, and FakeDisplay in test/fakes, which records what it was
  * asked to show.
+ *
+ * Every method draws and returns. None of them waits: how long a screen
+ * stays up is its caller's decision. The idle screen used to wait a second
+ * and every screen a tenth of one more, which the job runner spent holding
+ * the machine after it was parked.
  */
 class Display {
  public:
@@ -46,6 +51,9 @@ class Display {
 
   /**
    * @brief Starts the screen and blanks it.
+   *
+   * Once, at boot. Starting it again blanks the glass and sets its contrast
+   * back, so no job does.
    */
   virtual void initialize() = 0;
 

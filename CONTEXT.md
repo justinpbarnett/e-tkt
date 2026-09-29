@@ -69,6 +69,7 @@ One table in `OledDisplay.cpp` says what each one draws, rather than one method 
 **Display** - what the machine shows on its own screen, told in terms of the job rather than of pixels: a screen, the idle screen, a label's progress, a saved calibration.
 `Display` is an interface with two adapters.
 `OledDisplay` draws on the 128x64 OLED, and `FakeDisplay` in `test/fakes` records what the job runner asked for, and when.
+A display draws and returns: how long a screen stays up is for its caller to say, and the screen is started once, at boot.
 
 **Progress** - how far through a label the machine is, 0 to 99.
 It stops at 99 rather than 100 because feeding the tail and cutting still have to happen after the last character is pressed.
@@ -118,7 +119,7 @@ It is the single statement of what the commands are: the HTTP routes, the dispat
 A command is added by adding an enumerator and a row.
 
 **Job runner** - `ETKT`, which takes one command at a time and runs it.
-The web server's task hands it a command with `submit()`, into a single slot, and the command loop takes it from there in `loop()`: it runs the command, parks the motors, and empties the slot.
+The web server's task hands it a command with `submit()`, into a single slot, and the command loop takes it from there in `loop()`: it runs the command, parks the motors, empties the slot, and then draws the idle screen, so a job posted while that draws is taken.
 Every stop rule lives here: what can be stopped, what a stop leaves on the tape, and what the panel is told afterwards.
 It builds and runs on a host against fakes, so `test/test_etkt` checks those rules without a machine or a roll of tape.
 
