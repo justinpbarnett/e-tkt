@@ -375,16 +375,63 @@ void test_saving_cannot_be_stopped(void) {
   TEST_ASSERT_EQUAL_INT(1, stubRestarts());
 }
 
-// Only a run of labels has a label to stop after. A feed asked to stop
-// after its label would otherwise say "stopping" and then do nothing.
+// The panel offers the stop button by what the table says, so the table
+// has to say what stop() does: anything but a save stops. A save moves
+// nothing and ends in a reboot, so there is nothing to stop.
+void test_every_command_but_saving_can_be_stopped(void) {
+  for (size_t i = 0; i < ETKT::COMMAND_COUNT; i++) {
+    const CommandSpec& spec = ETKT::COMMANDS[i];
+    if (spec.run == NULL) {
+      continue;
+    }
+    const bool expected = spec.command != Command::SAVE;
+    TEST_ASSERT_EQUAL_INT_MESSAGE((int)expected, (int)spec.stoppable,
+                                  spec.name);
+    CommandOptions options;
+    options.command = spec.command;
+    options.label = "A";
+    options.align = 5;
+    options.force = 5;
+    etkt->submit(options);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(
+        (int)(expected ? StopResult::STOPPING : StopResult::UNSTOPPABLE),
+        (int)etkt->stop(), spec.name);
+    etkt->loop();
+  }
+}
+
+// Only a run of labels has a label to stop after, and only a run says how
+// many labels it has. A feed asked to stop after its label would otherwise
+// say "stopping" and then do nothing. The panel offers the stop after this
+// label, and counts the labels, by what the table says.
 void test_only_a_run_of_labels_can_stop_after_a_label(void) {
-  submit(Command::FEED);
+  for (size_t i = 0; i < ETKT::COMMAND_COUNT; i++) {
+    const CommandSpec& spec = ETKT::COMMANDS[i];
+    if (spec.run == NULL) {
+      continue;
+    }
+    const bool expected = spec.command == Command::TAG;
+    TEST_ASSERT_EQUAL_INT_MESSAGE((int)expected, (int)spec.printsRun,
+                                  spec.name);
+    CommandOptions options;
+    options.command = spec.command;
+    options.label = "A";
+    options.copies = 2;
+    options.align = 5;
+    options.force = 5;
+    etkt->submit(options);
 
-  TEST_ASSERT_EQUAL_INT((int)StopResult::UNSTOPPABLE,
-                        (int)etkt->stopAfterLabel());
-  TEST_ASSERT_EQUAL_INT((int)PendingStop::NONE, (int)etkt->createStatus().stop);
-
-  etkt->loop();
+    TEST_ASSERT_EQUAL_INT_MESSAGE(
+        (int)(expected ? StopResult::STOPPING : StopResult::UNSTOPPABLE),
+        (int)etkt->stopAfterLabel(), spec.name);
+    const StatusUpdate status = etkt->createStatus();
+    TEST_ASSERT_EQUAL_INT_MESSAGE(
+        (int)(expected ? PendingStop::AFTER_LABEL : PendingStop::NONE),
+        (int)status.stop, spec.name);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(expected ? 2 : 0, status.copies, spec.name);
+    etkt->loop();
+  }
 }
 
 // The emergency stop. It lands between two steps of the wheel, partway into
@@ -414,6 +461,41 @@ void test_a_run_stopped_partway_through_a_label_leaves_it_on_the_tape(void) {
   // never reached.
   TEST_ASSERT_EQUAL_INT(REST_ANGLE, pressServo->minAngle());
   TEST_ASSERT_TRUE(display->last(DisplayCall::RENDER_IDLE)->stopped);
+}
+
+// A stop leaves a label on the tape only if the command was pressing one.
+// A reel feeds tape too, but nothing is pressed into it, and sending the
+// operator to cut off a label that is not there has them cut good tape off
+// a new roll. Each command here is stopped once its tape has moved.
+void test_only_a_command_that_presses_a_label_leaves_one_unfinished(void) {
+  static long fedBefore;
+  feedStepper->afterStep = [] {
+    if (feeder->feeds() > fedBefore) {
+      etkt->stop();
+    }
+  };
+  const Command commands[] = {Command::REEL, Command::TEST_FULL, Command::TAG};
+  const bool pressesLabel[] = {false, true, true};
+
+  for (size_t i = 0; i < sizeof(commands) / sizeof(commands[0]); i++) {
+    const CommandSpec* spec = commandSpec(commands[i]);
+    TEST_ASSERT_EQUAL_INT_MESSAGE((int)pressesLabel[i], (int)spec->pressesLabel,
+                                  spec->name);
+    fedBefore = feeder->feeds();
+    CommandOptions options;
+    options.command = commands[i];
+    options.label = "AB";
+    options.align = 5;
+    options.force = 5;
+    etkt->submit(options);
+    etkt->loop();
+
+    const StatusUpdate status = etkt->createStatus();
+    TEST_ASSERT_EQUAL_INT_MESSAGE((int)commands[i], (int)status.stopped.command,
+                                  spec->name);
+    TEST_ASSERT_EQUAL_INT_MESSAGE((int)pressesLabel[i],
+                                  (int)status.stopped.unfinished, spec->name);
+  }
 }
 
 // A wheel that turned without finding its magnet ends the run the way the
@@ -554,8 +636,10 @@ int main(int, char**) {
   RUN_TEST(test_the_full_test_cuts_at_the_align_it_is_testing);
   RUN_TEST(test_a_stop_with_nothing_running_stops_nothing_later);
   RUN_TEST(test_saving_cannot_be_stopped);
+  RUN_TEST(test_every_command_but_saving_can_be_stopped);
   RUN_TEST(test_only_a_run_of_labels_can_stop_after_a_label);
   RUN_TEST(test_a_run_stopped_partway_through_a_label_leaves_it_on_the_tape);
+  RUN_TEST(test_only_a_command_that_presses_a_label_leaves_one_unfinished);
   RUN_TEST(test_a_lost_wheel_ends_the_run_and_says_why);
   RUN_TEST(test_each_stop_is_told_apart_from_the_last);
   RUN_TEST(test_a_stop_now_overtakes_a_stop_after_the_label);

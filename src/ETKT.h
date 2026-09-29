@@ -43,13 +43,64 @@ enum Command {
 class ETKT;
 
 /**
+ * @brief One fact a row of ETKT::COMMANDS can state about its command.
+ *
+ * A row names the facts that hold for its command and leaves the rest out,
+ * so it reads as what is true of that command. Seven booleans in a row could
+ * only be read by counting. Each fact sets the CommandSpec field of the same
+ * name, which says what it means.
+ */
+enum class CommandFact : unsigned {
+  NONE = 0,
+  USES_ALIGN = 1u << 0,
+  USES_FORCE = 1u << 1,
+  FIELD_IS_LABEL = 1u << 2,
+  PRINTS_RUN = 1u << 3,
+  USES_ROLL_LENGTH = 1u << 4,
+  STOPPABLE = 1u << 5,
+  PRESSES_LABEL = 1u << 6,
+};
+
+/**
+ * @brief Both sets of facts, which is how a row names more than one.
+ */
+constexpr CommandFact operator|(CommandFact a, CommandFact b) {
+  return static_cast<CommandFact>(static_cast<unsigned>(a) |
+                                  static_cast<unsigned>(b));
+}
+
+/**
+ * @brief Returns whether `fact` is one of `facts`.
+ */
+constexpr bool holds(CommandFact facts, CommandFact fact) {
+  return (static_cast<unsigned>(facts) & static_cast<unsigned>(fact)) != 0;
+}
+
+/**
  * @brief Everything outside the ETKT needs to know about one command.
  *
  * One row per enumerator, in ETKT::COMMANDS. The device used to restate this
  * list in four places -- a name switch, a factory method per command, a
  * dispatch switch, and the route table in Network.cpp -- and they drifted.
+ * Code outside the table asks a row about its command rather than comparing
+ * the command against a name, so a new command is a row and nothing else.
  */
 struct CommandSpec {
+  constexpr CommandSpec(Command command, const char* name,
+                        const char* labelField, CommandFact facts,
+                        void (ETKT::*run)())
+      : command(command),
+        name(name),
+        usesAlign(holds(facts, CommandFact::USES_ALIGN)),
+        usesForce(holds(facts, CommandFact::USES_FORCE)),
+        labelField(labelField),
+        fieldIsLabel(holds(facts, CommandFact::FIELD_IS_LABEL)),
+        printsRun(holds(facts, CommandFact::PRINTS_RUN)),
+        usesRollLength(holds(facts, CommandFact::USES_ROLL_LENGTH)),
+        stoppable(holds(facts, CommandFact::STOPPABLE)),
+        pressesLabel(holds(facts, CommandFact::PRESSES_LABEL)),
+        run(run) {}
+
   Command command;
 
   // The name the command answers to outside the device: the string
@@ -80,15 +131,30 @@ struct CommandSpec {
   // two answers, which is why this cannot be read off labelField.
   bool fieldIsLabel;
 
-  // Whether the body may say how many labels to print, in "copies". Unlike
-  // the fields above this one is optional: a body without it prints one
-  // label, which is all a body could ask for before the field existed.
-  bool usesCopies;
+  // Whether this command prints a run of labels: the same label pressed
+  // "copies" times, each cut before the next. The body may say how many.
+  // Unlike the fields above that one is optional: a body without it prints
+  // one label, which is all a body could ask for before the field existed.
+  // Only a run reports which of its labels it is on, has a label to stop
+  // after, and says how many it finished when it is stopped.
+  bool printsRun;
 
   // Whether the body may declare how long a newly loaded roll is, in
   // "length_mm". Also optional: without it the new roll is taken to be as
   // long as the last one was.
   bool usesRollLength;
+
+  // Whether ETKT::stop() stops this command. Everything that moves can be
+  // stopped. A save moves nothing and ends in a reboot, and one cut off
+  // partway would leave half a calibration behind. The panel offers its stop
+  // button by this, so it never offers one the device would refuse.
+  bool stoppable;
+
+  // Whether this command presses a label into the tape, which a stop can
+  // leave there unfinished: fed and pressed, and not yet cut off. A tag and
+  // the full test press one. A reel and a feed move tape with nothing pressed
+  // into it, so stopping one of them leaves nothing to cut off.
+  bool pressesLabel;
 
   // The handler ETKT::loop() runs for this command. NULL means there is
   // nothing to run: IDLE is a status, not a job.
@@ -213,8 +279,9 @@ enum class StopResult {
   // Nothing was running. Not an error: the job may have finished between the
   // tap and the request arriving.
   IDLE,
-  // What is running cannot be stopped that way: saving cannot be stopped at
-  // all, and only a run of labels has a label to stop after.
+  // What is running cannot be stopped that way. Its row in ETKT::COMMANDS
+  // says whether it can be stopped at all, and whether it prints a run of
+  // labels, which is the only thing with a label to stop after.
   UNSTOPPABLE,
 };
 
@@ -362,8 +429,9 @@ class ETKT {
    * held against the wheel. Then every motor lets go, and whatever was being
    * pressed is left on the tape as far as it got, uncut.
    *
-   * Anything but saving can be stopped. Saving moves nothing and ends in a
-   * reboot, so there is nothing to stop.
+   * A command stops if its row says it is stoppable, which is anything but
+   * saving. Saving moves nothing and ends in a reboot, so there is nothing to
+   * stop.
    *
    * Safe to call from the webserver's task while the command loop runs: it
    * only raises the StopSignal, which the loop obeys.
@@ -375,19 +443,19 @@ class ETKT {
    *
    * For a run that is going fine and is longer than it needs to be: no tape
    * is spent on a label nobody finishes, and the cut is what separates the
-   * last label from the next. Only a run of labels has a label to stop
-   * after. Safe to call from the webserver's task while the command loop
-   * prints -- the loop reads the request between labels.
+   * last label from the next. Only a command whose row says it prints a run
+   * of labels has a label to stop after. Safe to call from the webserver's task
+   * while the command loop prints -- the loop reads the request between labels.
    */
   StopResult stopAfterLabel();
 
   /**
    * @brief One row per Command: the firmware's only list of what exists.
    *
-   * Public because the webserver registers its routes from it and reports
-   * command names out of it. The order is not meaningful and the index is
-   * not the enumerator, so reach rows through commandSpec() or
-   * commandSpecByName() rather than by subscript.
+   * Public because the webserver registers its routes from it and serves
+   * every row's facts to the panel. The rows are in enum order, which
+   * commandSpec() relies on and checks, so reach rows through commandSpec()
+   * or commandSpecByName() rather than by subscript.
    */
   static const CommandSpec COMMANDS[];
   static const size_t COMMAND_COUNT;

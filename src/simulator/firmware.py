@@ -29,15 +29,16 @@ class Command:
     handler: IDLE is a status rather than a job, and gets no route.
     """
 
-    def __init__(self, name, uses_align, uses_force, label_field,
-                 field_is_label, uses_copies, uses_roll_length, runnable):
+    def __init__(self, name, label_field, facts, runnable):
         self.name = name
-        self.uses_align = uses_align
-        self.uses_force = uses_force
         self.label_field = label_field
-        self.field_is_label = field_is_label
-        self.uses_copies = uses_copies
-        self.uses_roll_length = uses_roll_length
+        self.uses_align = "USES_ALIGN" in facts
+        self.uses_force = "USES_FORCE" in facts
+        self.field_is_label = "FIELD_IS_LABEL" in facts
+        self.prints_run = "PRINTS_RUN" in facts
+        self.uses_roll_length = "USES_ROLL_LENGTH" in facts
+        self.stoppable = "STOPPABLE" in facts
+        self.presses_label = "PRESSES_LABEL" in facts
         self.runnable = runnable
 
     def __repr__(self):
@@ -192,20 +193,21 @@ def load(src_dir=None):
     )
 
 
-# One row of the table: enumerator, wire name, the two calibration flags, the
-# label field or NULL, whether that field is text to emboss, whether copies
-# and a roll length may be given, and the handler or NULL. Whitespace between
-# fields may be a line break, because clang-format wraps the longer rows.
+# One row of the table: enumerator, wire name, the label field or NULL, the
+# facts that hold for the command joined by |, and the handler or NULL.
+# Whitespace between fields may be a line break, because clang-format wraps
+# the longer rows.
 _COMMAND_ROW = re.compile(
     r'\{\s*Command::\w+\s*,'
     r'\s*"([^"]*)"\s*,'
-    r'\s*(true|false)\s*,'
-    r'\s*(true|false)\s*,'
     r'\s*(NULL|"[^"]*")\s*,'
-    r'\s*(true|false)\s*,'
-    r'\s*(true|false)\s*,'
-    r'\s*(true|false)\s*,'
+    r'\s*(CommandFact::\w+(?:\s*\|\s*CommandFact::\w+)*)\s*,'
     r'\s*(NULL|&ETKT::\w+)\s*,?\s*\}', re.S)
+
+# Every fact a row can state, as CommandFact spells it in src/ETKT.h. NONE is
+# a row with no facts, which IDLE is.
+_FACTS = ("NONE", "USES_ALIGN", "USES_FORCE", "FIELD_IS_LABEL", "PRINTS_RUN",
+          "USES_ROLL_LENGTH", "STOPPABLE", "PRESSES_LABEL")
 
 
 def parse_commands(source):
@@ -213,16 +215,19 @@ def parse_commands(source):
     body = _initializer(source, r"const\s+CommandSpec\s+ETKT::COMMANDS\[\]",
                         "ETKT::COMMANDS")
     commands = []
-    for (name, align, force, label, is_label, copies, roll,
-         handler) in _COMMAND_ROW.findall(body):
+    for name, label, facts, handler in _COMMAND_ROW.findall(body):
+        stated = re.findall(r"CommandFact::(\w+)", facts)
+        # A fact this list does not know would otherwise read as false, and a
+        # command the device can stop would be one the simulator cannot.
+        unknown = [fact for fact in stated if fact not in _FACTS]
+        if unknown:
+            raise FirmwareParseError(
+                "ETKT::COMMANDS row %s states CommandFact::%s, which the "
+                "simulator does not know" % (name, unknown[0]))
         commands.append(Command(
             name=name,
-            uses_align=align == "true",
-            uses_force=force == "true",
             label_field=None if label == "NULL" else label.strip('"'),
-            field_is_label=is_label == "true",
-            uses_copies=copies == "true",
-            uses_roll_length=roll == "true",
+            facts=stated,
             runnable=handler != "NULL",
         ))
 

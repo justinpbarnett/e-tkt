@@ -54,12 +54,6 @@ CELEBRATION_SECONDS = 4
 # goes on saying it is busy, with the stop, until it has.
 STOPPING_SECONDS = 0.5
 
-# The one command that walks a label character by character, which makes it
-# the only one with progress worth reporting and the only one whose label
-# /api/status hands back. Network.cpp special-cases it the same way. The
-# table can say a command takes a label; it cannot say what that means.
-PRINTING_COMMAND = "tag"
-
 # The one command whose effect outlives it. Which command that is, is
 # behaviour rather than a row in the table: the table says save reads align
 # and force, not that save is the only one that keeps them.
@@ -79,17 +73,13 @@ COMMAND_FEEDS = {
     "testfull": 1 + len("E-TKT") + 1,
 }
 
-# The two commands that press a label, and so the only two a stop can leave
-# one on the tape for. See StoppedCommand::unfinished.
-LABEL_COMMANDS = (PRINTING_COMMAND, "testfull")
-
 # Word for word what PrinterBusyException says in src/ETKT.h.
 BUSY_MESSAGE = "The printer is already busy executing a command."
 
 # Word for word what Network::stopPostHandler() answers.
 STOP_AFTER_MESSAGE = ("Please provide after=label to stop once the label "
                       "being pressed is cut, or leave it out to stop now")
-UNSTOPPABLE_SAVE_MESSAGE = "Saving cannot be stopped"
+UNSTOPPABLE_MESSAGE = "The command running now cannot be stopped"
 UNSTOPPABLE_AFTER_LABEL_MESSAGE = "Only a run of labels can stop after a label"
 
 # As deep as the device's Logger. Nothing depends on the two agreeing.
@@ -210,7 +200,7 @@ class Server:
             'align': self.align,
             'force': self.force,
         }
-        if running is not None and running.name == PRINTING_COMMAND:
+        if running is not None and running.prints_run:
             body['current_label'] = self.label
             body['copy'] = self.copy
             body['copies'] = self.copies
@@ -247,13 +237,13 @@ class Server:
         if after is None:
             # Saving writes the settings and reboots, and a stop partway
             # through that would leave the device neither one way nor the
-            # other.
-            if self.command.name == SAVE_COMMAND:
-                return self.refuse(UNSTOPPABLE_SAVE_MESSAGE, status=409)
+            # other. Its row says so.
+            if not self.command.stoppable:
+                return self.refuse(UNSTOPPABLE_MESSAGE, status=409)
             self.stop_now.set()
             self.record("INFO", "Stopping now")
         else:
-            if self.command.name != PRINTING_COMMAND:
+            if not self.command.prints_run:
                 return self.refuse(UNSTOPPABLE_AFTER_LABEL_MESSAGE,
                                    status=409)
             self.stopping_after_label = True
@@ -285,7 +275,18 @@ class Server:
                 'length_um': self.device.feed_length_um,
                 'lead': self.device.lead_feeds,
             },
-            'commands': [spec.name for spec in self.device.routes()],
+            # Every row with a route, keyed by name, as Network.cpp serves
+            # them. The panel offers a stop, and counts a run, by these.
+            'commands': {spec.name: {
+                'uses_align': spec.uses_align,
+                'uses_force': spec.uses_force,
+                'label_field': spec.label_field,
+                'field_is_label': spec.field_is_label,
+                'prints_run': spec.prints_run,
+                'uses_roll_length': spec.uses_roll_length,
+                'stoppable': spec.stoppable,
+                'presses_label': spec.presses_label,
+            } for spec in self.device.routes()},
         })
 
     async def recent_log(self, request):
@@ -346,7 +347,7 @@ class Server:
         # what every body asked for before they existed -- one label, and a
         # new roll as long as the last.
         copies = 1
-        if spec.uses_copies and "copies" in body:
+        if spec.prints_run and "copies" in body:
             copies = _as_int(body["copies"])
             if not self.device.valid_copies(copies):
                 return self.refuse(
@@ -415,7 +416,7 @@ class Server:
         # The commands that press labels count from here, as they do on the
         # device, so tape fed before them is not taken for theirs.
         self.feeds_at_last_cut = self.feeds_used
-        if spec.name == PRINTING_COMMAND:
+        if spec.prints_run:
             await self.print_labels()
         elif spec.name == REEL_COMMAND:
             await self.reel()
@@ -436,11 +437,11 @@ class Server:
             self.last_stop_id += 1
             stopped = {'id': self.last_stop_id, 'command': spec.name,
                        'cause': 'operator'}
-            if spec.name == PRINTING_COMMAND:
+            if spec.prints_run:
                 stopped['printed'] = self.printed
                 stopped['copies'] = self.copies
             # Tape fed since the last cut is a label nothing has cut off.
-            stopped['unfinished'] = (spec.name in LABEL_COMMANDS and
+            stopped['unfinished'] = (spec.presses_label and
                                      self.feeds_used > self.feeds_at_last_cut)
             self.stopped = stopped
         # All together, as ETKT::loop() does when it clears the command:

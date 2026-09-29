@@ -159,6 +159,19 @@ class Requests(SimulatorTestCase):
                           "default_mm": 3000}, body["roll"])
         self.assertEqual({"length_um": 4000, "lead": 1}, body["feed"])
 
+    async def test_capabilities_state_every_fact_about_a_command(self):
+        # The panel decides whether to offer a stop, and whether a status
+        # counts a run, from these rows and never from a command's name.
+        response = await self.client.get("/api/capabilities")
+        commands = (await response.json())["commands"]
+        self.assertEqual({"uses_align": False, "uses_force": False,
+                          "label_field": "tag", "field_is_label": True,
+                          "prints_run": True, "uses_roll_length": False,
+                          "stoppable": True, "presses_label": True},
+                         commands["tag"])
+        self.assertFalse(commands["save"]["stoppable"])
+        self.assertNotIn("idle", commands)
+
 
 class Roll(SimulatorTestCase):
     async def test_a_fresh_device_has_a_full_default_roll(self):
@@ -459,7 +472,8 @@ class Stops(SimulatorTestCase):
         await self.post("/api/save", {"align": 5, "force": 5})
         status, body = await self.post("/api/stop")
         self.assertEqual(409, status)
-        self.assertEqual("Saving cannot be stopped", body["error"])
+        self.assertEqual("The command running now cannot be stopped",
+                         body["error"])
         self.assertNotIn("stop", await self.status())
 
     async def test_what_it_stopped_is_forgotten_once_a_job_is_accepted(self):

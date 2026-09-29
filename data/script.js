@@ -42,8 +42,9 @@
 // to say so.
 //
 // A stopLabel is what the stop button says while that command runs, and
-// only the commands with one are offered a stop. The device stops anything
-// but a save, but a cut or a feed is over before a finger could get there.
+// only the commands with one are offered a stop. Which commands the device
+// can stop is its own to say, in api/capabilities, but a cut or a feed is
+// over before a finger could get there.
 //
 // One entry to a line: src/simulator/test_firmware.py reads the names out of
 // this table to hold them to the firmware's.
@@ -62,11 +63,6 @@ const COMMAND_LABELS = {
 // Shown when the device reports a command this copy of the panel has never
 // heard of, which means a cached script.js is talking to newer firmware.
 const UNKNOWN_BUSY_LABEL = "Working…";
-
-// The commands setup starts, each of which says so on its own button while
-// it runs. Anything else running while setup is open is named by the stop
-// it gets, or if it cannot be stopped, by a line of its own.
-const SETUP_COMMANDS = ["reel", "testalign", "testfull"];
 
 // How often /api/status is asked, and how often while the page is in the
 // background: still often enough that a run finishing is noticed on the way
@@ -511,6 +507,16 @@ function readCapabilities(response) {
   );
   const feed = response.feed;
   need(feed && Number.isInteger(feed.length_um) && feed.length_um > 0 && Number.isInteger(feed.lead), "feed length");
+  const commands = response.commands;
+  need(
+    commands !== null &&
+      typeof commands === "object" &&
+      !Array.isArray(commands) &&
+      Object.values(commands).every(
+        (facts) => facts !== null && typeof facts.stoppable === "boolean" && typeof facts.prints_run === "boolean",
+      ),
+    "command facts",
+  );
 
   return {
     printable: response.printable,
@@ -520,7 +526,7 @@ function readCapabilities(response) {
     copies: copies,
     roll: roll,
     feed: feed,
-    commands: Array.isArray(response.commands) ? response.commands : null,
+    commands: new Map(Object.entries(commands)),
   };
 }
 
@@ -528,10 +534,8 @@ function readCapabilities(response) {
 // the panel keeps working. Worth saying out loud, though, because the usual
 // cause is a cached script.js talking to newer firmware, and that is
 // invisible from the bench.
-function warnAboutCommandList(offered) {
-  if (offered === null) {
-    return;
-  }
+function warnAboutCommandList(commands) {
+  const offered = [...commands.keys()];
   const missing = offered.filter((name) => !(name in COMMAND_LABELS));
   const extra = Object.keys(COMMAND_LABELS).filter((name) => !offered.includes(name));
   if (missing.length > 0 || extra.length > 0) {
@@ -1687,9 +1691,27 @@ function busyLabel(command) {
   return spec ? spec.busyLabel : UNKNOWN_BUSY_LABEL;
 }
 
+// What the device says is true of a command, as api/capabilities serves it,
+// or null before that has come in or for a command it does not list.
+function commandFacts(command) {
+  return device !== null && device.commands.has(command) ? device.commands.get(command) : null;
+}
+
+// Whether the command prints a run of labels, which is the only kind that
+// counts its labels, and so the only kind a stop can let finish a label.
+function printsRun(command) {
+  const facts = commandFacts(command);
+  return facts !== null && facts.prints_run;
+}
+
 // What the stop says while the command runs, or null if it is not offered
-// one.
+// one. Never one the device says it would refuse. Before the device has said
+// anything the stop is offered anyway: it must not wait on a fetch.
 function stopLabel(command) {
+  const facts = commandFacts(command);
+  if (facts !== null && !facts.stoppable) {
+    return null;
+  }
   const spec = COMMAND_LABELS[command];
   return spec && spec.stopLabel ? spec.stopLabel : null;
 }
@@ -1726,7 +1748,7 @@ function render() {
 
 function renderPrintView(command, busy, offline, focused) {
   const status = state.status;
-  const run = status !== null && status.busy && status.command === "tag" ? status : null;
+  const run = status !== null && status.busy && printsRun(status.command) ? status : null;
 
   const wasPrinting = document.body.dataset.printing === "true";
   document.body.dataset.printing = run !== null ? "true" : "false";
@@ -1828,9 +1850,9 @@ function renderStops(command, run, stopText, offline) {
   // A run of labels can instead be let finish the label it is on. How many
   // labels it has comes from the device once a poll has it, and until then
   // from what this page asked for, so the stops come up the right size.
-  const copies = run !== null ? run.copies : command === "tag" ? state.sentCopies : null;
+  const copies = run !== null ? run.copies : printsRun(command) ? state.sentCopies : null;
   const gentle = stop === "after_label";
-  el.stopButton.hidden = !(command === "tag" && Number.isInteger(copies) && copies > 1);
+  el.stopButton.hidden = !(printsRun(command) && Number.isInteger(copies) && copies > 1);
   setText(el.stopButton, gentle ? "Stopping after this label…" : "Stop after this label");
   el.stopButton.disabled = stop !== null || offline || (run !== null && run.copy >= run.copies);
   el.stopButton.toggleAttribute("data-running", gentle);
@@ -1840,7 +1862,7 @@ function renderActivity(command, run) {
   const stop = pendingStop();
   let text = busyLabel(command);
   let percentage = null;
-  if (command === "tag" && run !== null) {
+  if (printsRun(command) && run !== null) {
     percentage = printPercentage(run);
     if (Number.isInteger(run.copies) && Number.isInteger(run.copy) && run.copies > 1) {
       // Kept together when a narrow screen puts the words over two lines.
@@ -1910,7 +1932,9 @@ function renderSetupView(command, busy, offline, focused) {
   if (focused === el.setupStopButton && (el.setupRunActions.hidden || el.setupStopButton.disabled)) {
     el.setupView.focus({ preventScroll: true });
   }
-  setText(el.setupStatus, busy && stopText === null && !SETUP_COMMANDS.includes(command) ? busyLabel(command) : "");
+  // Named by a line of its own when it has no stop to name it. Setup's own
+  // commands all have one, and say so on their buttons as well.
+  setText(el.setupStatus, busy && stopText === null ? busyLabel(command) : "");
 }
 
 // A setup button says what its command is doing while it runs. The page

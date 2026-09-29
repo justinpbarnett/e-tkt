@@ -29,43 +29,50 @@ static const int FINISH_BLINK_TIMES = 5;
 static const int FINISH_BLINK_MS = 100;
 static const int FINISH_FADE_MS = 3225;
 
-// The one statement of what commands this device has. Columns, in order:
-// the enumerator, the name it answers to on the wire and in /api/<name>,
-// whether it reads align, force and label, whether it may be given a number
-// of copies and a roll length, and the handler loop() runs.
+// The one statement of what commands this device has. A row gives the
+// enumerator, the name it answers to on the wire and in /api/<name>, the
+// body field its text arrives in or NULL, the facts that hold for it, and
+// the handler loop() runs. See CommandSpec for what each one means.
 //
 // Before this table the same nine commands were written out four times over
 // -- a name switch, a factory method each, a dispatch switch with no default
 // case, and the route list in Network.cpp -- and home and move had already
 // fallen out of the webapp's copy.
 const CommandSpec ETKT::COMMANDS[] = {
-    // name  align  force  label field  label  copies  roll  handler
-    {Command::CUT, "cut", false, false, NULL, false, false, false,
+    {Command::CUT, "cut", NULL, CommandFact::STOPPABLE,
      &ETKT::cutCommandInternal},
-    {Command::FEED, "feed", false, false, NULL, false, false, false,
+    {Command::FEED, "feed", NULL, CommandFact::STOPPABLE,
      &ETKT::feedCommandInternal},
     // A reel is a new roll going in, so it is where the roll's length is
     // declared.
-    {Command::REEL, "reel", false, false, NULL, false, false, true,
+    {Command::REEL, "reel", NULL,
+     CommandFact::USES_ROLL_LENGTH | CommandFact::STOPPABLE,
      &ETKT::reelCommandInternal},
     // Align only. This test presses at the minimum force by design -- see
     // Printhead::testPress() -- so a force in the body is ignored, not
     // refused, which keeps a stale cached script.js working.
-    {Command::TEST_ALIGN, "testalign", true, false, NULL, false, false, false,
+    {Command::TEST_ALIGN, "testalign", NULL,
+     CommandFact::USES_ALIGN | CommandFact::STOPPABLE,
      &ETKT::testCommandInternal},
-    {Command::TEST_FULL, "testfull", true, true, NULL, false, false, false,
+    {Command::TEST_FULL, "testfull", NULL,
+     CommandFact::USES_ALIGN | CommandFact::USES_FORCE |
+         CommandFact::STOPPABLE | CommandFact::PRESSES_LABEL,
      &ETKT::testCommandFullInternal},
-    {Command::SAVE, "save", true, true, NULL, false, false, false,
+    // The one command that cannot be stopped: see CommandSpec::stoppable.
+    {Command::SAVE, "save", NULL,
+     CommandFact::USES_ALIGN | CommandFact::USES_FORCE,
      &ETKT::saveCommandInternal},
-    {Command::TAG, "tag", false, false, "tag", true, true, false,
+    {Command::TAG, "tag", "tag",
+     CommandFact::FIELD_IS_LABEL | CommandFact::PRINTS_RUN |
+         CommandFact::STOPPABLE | CommandFact::PRESSES_LABEL,
      &ETKT::tagCommandInternal},
-    {Command::HOME, "home", false, false, NULL, false, false, false,
+    {Command::HOME, "home", NULL, CommandFact::STOPPABLE,
      &ETKT::homeCommandInternal},
-    {Command::MOVE, "move", false, false, "character", false, false, false,
+    {Command::MOVE, "move", "character", CommandFact::STOPPABLE,
      &ETKT::moveCommandInternal},
     // IDLE is a status, not a job: no handler, and no route is registered for
     // it. It keeps a name because /api/status reports one.
-    {Command::IDLE, "idle", false, false, NULL, false, false, false, NULL},
+    {Command::IDLE, "idle", NULL, CommandFact::NONE, NULL},
 };
 
 const size_t ETKT::COMMAND_COUNT =
@@ -181,7 +188,8 @@ StatusUpdate ETKT::createStatus() {
     status.currentCommand = this->command->command;
     status.currentLabel = this->command->label;
     status.progress = this->progress;
-    if (this->command->command == Command::TAG) {
+    const CommandSpec* spec = commandSpec(this->command->command);
+    if (spec != NULL && spec->printsRun) {
       status.copy = this->copy;
       status.copies = this->command->copies;
     }
@@ -224,7 +232,10 @@ StopResult ETKT::stop() {
     this->lock.unlock();
     return StopResult::IDLE;
   }
-  if (this->command->command == Command::SAVE) {
+  // A command with no row cannot have been refused a stop by one, and a
+  // stop refused is the worse mistake of the two.
+  const CommandSpec* spec = commandSpec(this->command->command);
+  if (spec != NULL && !spec->stoppable) {
     this->lock.unlock();
     return StopResult::UNSTOPPABLE;
   }
@@ -243,7 +254,8 @@ StopResult ETKT::stopAfterLabel() {
     this->lock.unlock();
     return StopResult::IDLE;
   }
-  if (this->command->command != Command::TAG) {
+  const CommandSpec* spec = commandSpec(this->command->command);
+  if (spec == NULL || !spec->printsRun) {
     this->lock.unlock();
     return StopResult::UNSTOPPABLE;
   }
@@ -327,11 +339,11 @@ void ETKT::loop() {
     record.id = ++this->lastStopId;
     record.command = running;
     record.cause = this->stopSignal->cause();
-    if (running == Command::TAG) {
+    if (spec != NULL && spec->printsRun) {
       record.printed = this->printed;
       record.copies = this->command->copies;
     }
-    if (running == Command::TAG || running == Command::TEST_FULL) {
+    if (spec != NULL && spec->pressesLabel) {
       // Tape fed since the last cut is a label nothing has cut off.
       record.unfinished = this->feeder->feeds() > this->feedsAtLastCut;
     }

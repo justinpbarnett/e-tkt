@@ -129,9 +129,19 @@ Rounded down, because a label that would run off the end of the tape is not one 
 Plus `idle`, which is a status rather than a job.
 
 **Descriptor table** - `ETKT::COMMANDS` in `ETKT.cpp`, one row per command.
-A row carries the name the command answers to on the wire, which body fields it reads, and the handler that runs it.
+A row carries the name the command answers to on the wire, the body field its text arrives in, the **command facts** that hold for it, and the handler that runs it.
 It is the single statement of what the commands are: the HTTP routes, the dispatch, the name `/api/status` reports and the simulator's endpoints are all read from it rather than restated.
+`/api/capabilities` serves every row with a handler, keyed by name, so the panel reads what a command is from the device as well.
+No code outside the table compares a command against a name to decide what it does: it asks the command's row.
 A command is added by adding an enumerator and a row.
+
+**Command fact** - one thing a row of the **descriptor table** says is true of its command, from `CommandFact` in `ETKT.h`.
+Which calibration fields the body carries, whether its text is a label, whether it prints a **run**, whether it takes a roll length, whether it is **stoppable**, and whether it presses a label into the tape.
+A row names the facts that hold and leaves the rest out.
+
+**Stoppable** - a **command fact**: `ETKT::stop()` stops the command.
+Every command that moves is stoppable; a save is not.
+The panel never offers a stop for a command the device says is not stoppable.
 
 **Job runner** - `ETKT`, which takes one command at a time and runs it.
 The web server's task hands it a command with `submit()`, into a single slot, and the command loop takes it from there in `loop()`: it runs the command, parks the motors, empties the slot, and then draws the idle screen, so a job posted while that draws is taken.
@@ -143,6 +153,7 @@ It builds and runs on a host against fakes, so `test/test_etkt` checks those rul
 The machine runs one at a time, and a second request is refused with a 409: the request was fine, the machine was not.
 
 **Run** - one `tag` request for more than one label: the same label pressed `copies` times, one after another, each cut before the next begins.
+Whether a command prints one is a **command fact**, and `tag` is the only command it holds for.
 `copies` is 1 to `MAX_COPIES`, and a request without it prints one.
 `/api/status` reports the label being pressed as `copy` of `copies`, and the roll is charged after each one, so the tape left moves label by label.
 
@@ -153,7 +164,7 @@ Max is the labels that fit, capped at `MAX_COPIES`, worked out in the panel and 
 The motors halt within a step and a tune within a note.
 The press is the exception: once it is on its way down it finishes the stroke and comes back up, because a servo stopped partway is a press held against the wheel.
 Whatever was being pressed is left on the tape as far as it got, uncut.
-Anything but a save can be stopped, since a save moves nothing and ends in a reboot.
+A command can be stopped when its row says it is **stoppable**, which is anything but a save, since a save moves nothing and ends in a reboot.
 The panel offers it, as the red stop button, for printing, the two tests and loading a roll; a feed or a cut is over before a finger could get there.
 It is not a command: it does not wait its turn, because it is about the command that is running.
 A stop with nothing running is not an error, since the job may have just ended.

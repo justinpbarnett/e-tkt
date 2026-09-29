@@ -81,18 +81,31 @@ class LoadFirmware(unittest.TestCase):
         self.assertFalse(cut.uses_align)
         self.assertFalse(cut.uses_force)
         self.assertIsNone(cut.label_field)
-        self.assertFalse(cut.uses_copies)
+        self.assertFalse(cut.prints_run)
         self.assertFalse(cut.uses_roll_length)
 
     def test_only_a_tag_may_be_asked_for_more_than_one(self):
         # A run of any other command would be the same thing done again with
         # nothing to show for it.
         self.assertEqual(["tag"], [c.name for c in self.fw.commands
-                                   if c.uses_copies])
+                                   if c.prints_run])
 
     def test_a_roll_length_is_declared_by_loading_a_new_roll(self):
         self.assertEqual(["reel"], [c.name for c in self.fw.commands
                                     if c.uses_roll_length])
+
+    def test_every_command_but_saving_can_be_stopped(self):
+        # A save moves nothing and ends in a reboot. The panel reads this
+        # column to decide whether to offer its stop button at all.
+        self.assertEqual(["save"], [c.name for c in self.fw.routes()
+                                    if not c.stoppable])
+
+    def test_a_tag_and_the_full_test_press_a_label(self):
+        # The two a stop can leave a pressed label behind for, which the
+        # stopped report then says is on the tape and not cut off.
+        self.assertEqual({"tag", "testfull"},
+                         {c.name for c in self.fw.commands
+                          if c.presses_label})
 
     def test_an_unknown_command_has_no_row(self):
         # commandSpecByName() returns NULL for one; so does this.
@@ -277,14 +290,25 @@ class Failures(unittest.TestCase):
         # Not eight commands and a shrug: a route quietly going missing is
         # the drift this module exists to catch.
         table = ('const CommandSpec ETKT::COMMANDS[] = {\n'
-                 '    {Command::CUT, "cut", false, false, NULL, false,\n'
-                 '     false, false, &ETKT::cut},\n'
-                 '    {Command::FEED, "feed", false, false, NULL, false,\n'
-                 '     false, 7, &f},\n'
+                 '    {Command::CUT, "cut", NULL, CommandFact::STOPPABLE,\n'
+                 '     &ETKT::cut},\n'
+                 '    {Command::FEED, "feed", NULL, true, &f},\n'
                  '};')
         with self.assertRaises(firmware.FirmwareParseError) as caught:
             firmware.parse_commands(table)
         self.assertIn("2 commands but only 1", str(caught.exception))
+
+    def test_a_fact_the_simulator_does_not_know_fails_the_table(self):
+        # Read as false it would quietly be a command that, say, cannot be
+        # stopped here while the device stops it.
+        table = ('const CommandSpec ETKT::COMMANDS[] = {\n'
+                 '    {Command::CUT, "cut", NULL,\n'
+                 '     CommandFact::STOPPABLE | CommandFact::GLOWS,\n'
+                 '     &ETKT::cut},\n'
+                 '};')
+        with self.assertRaises(firmware.FirmwareParseError) as caught:
+            firmware.parse_commands(table)
+        self.assertIn("CommandFact::GLOWS", str(caught.exception))
 
 
 if __name__ == "__main__":

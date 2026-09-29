@@ -24,11 +24,16 @@
 
 Network* Network::instance = NULL;
 
-// Room for a status or capabilities reply. ArduinoJson drops a field that
-// does not fit without a word, and at the library's default of 1024 bytes a
-// status carrying the longest label of symbols -- three bytes each -- has
-// room for two more fields.
-static const size_t REPLY_JSON_BYTES = 2048;
+// Room for a status reply. ArduinoJson drops a field that does not fit
+// without a word, and at the library's default of 1024 bytes a status
+// carrying the longest label of symbols -- three bytes each -- has room for
+// two more fields.
+static const size_t STATUS_JSON_BYTES = 2048;
+
+// Room for a capabilities reply, which lists every command with each of its
+// facts: about a hundred values to a status's thirty, and near 1.7 KB on the
+// board once the descriptor table is in it.
+static const size_t CAPABILITIES_JSON_BYTES = 4096;
 
 Network::Network(Logger* logger, Display* display, ETKT* etkt,
                  uint8_t resetPin) {
@@ -276,7 +281,7 @@ static bool readCommandOptions(const CommandSpec* spec,
   // Optional, unlike the fields above: a body without them asks for what every
   // body asked for before they existed -- one label, and a new roll as long as
   // the last.
-  if (spec->usesCopies && request_data.containsKey("copies")) {
+  if (spec->printsRun && request_data.containsKey("copies")) {
     const int copies = request_data["copies"].as<int>();
     if (!isValidCopies(copies)) {
       response_data->getRoot()["error"] =
@@ -339,7 +344,7 @@ void Network::commandPostHandler(const CommandSpec* spec,
 }
 
 void Network::statusGetHandler(AsyncWebServerRequest* request) {
-  AsyncJsonResponse* response = new AsyncJsonResponse(false, REPLY_JSON_BYTES);
+  AsyncJsonResponse* response = new AsyncJsonResponse(false, STATUS_JSON_BYTES);
   const JsonObject& root = response->getRoot();
 
   const StatusUpdate status = this->etkt->createStatus();
@@ -354,7 +359,8 @@ void Network::statusGetHandler(AsyncWebServerRequest* request) {
   root["force"] = status.force;
 
   // Return the current label, if relevant, and where the run of them is.
-  if (status.currentCommand == Command::TAG) {
+  const CommandSpec* running = commandSpec(status.currentCommand);
+  if (running != NULL && running->printsRun) {
     root["current_label"] = status.currentLabel;
     root["copy"] = status.copy;
     root["copies"] = status.copies;
@@ -375,7 +381,8 @@ void Network::statusGetHandler(AsyncWebServerRequest* request) {
     stopped["command"] = commandName(status.stopped.command);
     stopped["cause"] =
         status.stopped.cause == StopCause::HOMING ? "homing" : "operator";
-    if (status.stopped.command == Command::TAG) {
+    const CommandSpec* cutShort = commandSpec(status.stopped.command);
+    if (cutShort != NULL && cutShort->printsRun) {
       stopped["printed"] = status.stopped.printed;
       stopped["copies"] = status.stopped.copies;
     }
@@ -424,7 +431,7 @@ void Network::stopPostHandler(AsyncWebServerRequest* request) {
       break;
     case StopResult::UNSTOPPABLE:
       root["error"] = afterLabel ? "Only a run of labels can stop after a label"
-                                 : "Saving cannot be stopped";
+                                 : "The command running now cannot be stopped";
       response->setCode(409);
       break;
   }
@@ -447,7 +454,8 @@ void Network::stopPostHandler(AsyncWebServerRequest* request) {
 // that actually refuses a bad value, so the other three were a promise the
 // panel made on the device's behalf.
 void Network::capabilitiesGetHandler(AsyncWebServerRequest* request) {
-  AsyncJsonResponse* response = new AsyncJsonResponse(false, REPLY_JSON_BYTES);
+  AsyncJsonResponse* response =
+      new AsyncJsonResponse(false, CAPABILITIES_JSON_BYTES);
   const JsonObject& root = response->getRoot();
 
   root["printable"] = printableCharacters();
@@ -493,14 +501,26 @@ void Network::capabilitiesGetHandler(AsyncWebServerRequest* request) {
   feed["lead"] = LEAD_FEEDS;
 
   // Every command that can actually be asked for -- the same rows that got a
-  // route registered above. The panel keeps its own wording for the busy
-  // button, which is copy rather than protocol, but it no longer keeps its
-  // own list of what the device can do.
-  const JsonArray commands = root.createNestedArray("commands");
+  // route registered above -- by name, with everything its row says. The
+  // panel keeps its own wording for each, which is copy rather than
+  // protocol, but it keeps no list of its own of what the device can do or
+  // of which command does what: it offers a stop, and counts a run, by this.
+  const JsonObject commands = root.createNestedObject("commands");
   for (size_t i = 0; i < ETKT::COMMAND_COUNT; i++) {
-    if (ETKT::COMMANDS[i].run != NULL) {
-      commands.add(ETKT::COMMANDS[i].name);
+    const CommandSpec& spec = ETKT::COMMANDS[i];
+    if (spec.run == NULL) {
+      continue;
     }
+    const JsonObject row = commands.createNestedObject(spec.name);
+    row["uses_align"] = spec.usesAlign;
+    row["uses_force"] = spec.usesForce;
+    // Null for a command that takes no text, so every row has every field.
+    row["label_field"] = spec.labelField;
+    row["field_is_label"] = spec.fieldIsLabel;
+    row["prints_run"] = spec.printsRun;
+    row["uses_roll_length"] = spec.usesRollLength;
+    row["stoppable"] = spec.stoppable;
+    row["presses_label"] = spec.pressesLabel;
   }
 
   response->setLength();
