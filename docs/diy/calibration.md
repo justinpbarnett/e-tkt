@@ -46,10 +46,9 @@ Also, when turning the machine on, the press angle should be at 2mm from the I_n
 
 In the app, click on "SETUP".
 
-You will see a xray of the machine, and now we will proceed to the first part of the calibration: the alignment (magenta).
+The "Calibration" card holds the two settings, each with a test of its own, and we will start with the first: the alignment.
 
-![app_setup](https://user-images.githubusercontent.com/15098003/196290055-2d9a4bc8-38c7-4383-bb4e-e9379078b7d9.png)
-
+<img src="../assets/app/setup.png" width="50%" alt="The Setup view, with the align and force settings under Calibration">
 
 ### Alignment
 
@@ -57,8 +56,8 @@ You will see a xray of the machine, and now we will proceed to the first part of
 *The image above shows the exact moment the press is moved to the tooth.*
 
 - the align values ranges from 1 to 9, having 5 as a default (middle).
-- now click the "TEST" button to the right side of "align";
-- the machine will slowly and lightly press the daisy wheel letter;
+- now click the "TEST ALIGN" button to the right side of "align";
+- the machine will slowly and lightly press the daisy wheel letter, an "M";
 - the goal is to have the press to be fully aligned with the character, that should also be right in the middle of the character window;
 - adjust the values and test to make sure it is alright;
 
@@ -69,12 +68,12 @@ You will see a xray of the machine, and now we will proceed to the first part of
 
 - now we will adjust the peak servo angle, that will determine if the letter will be lightly or heavily pressed against the tape;
 - the default value is 1 in a scale from 1 to 9;
-- increase it one at a time and hit the big test button;
+- increase it one at a time and hit the "TEST PRINT" button, which prints and cuts an "E-TKT" label;
 - take the opportunity to see if the alignment is correct, and if not adjust it too;
 
 ---
 
-### 🕐 when you are happy with the result, click save and wait for the machine to reboot.
+### 🕐 when you are happy with the result, click "SAVE", then "SAVE AND RESTART", and wait for the machine to reboot.
 <br>
 
 # 🎉 **you are now ready to label around!** 🎉

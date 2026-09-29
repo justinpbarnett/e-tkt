@@ -21,7 +21,8 @@ The whole process of connecting the E-TKT machine to a local network and then la
 
 ### Commands
 
-The ***web app*** provides instant text validation, buttons for special characters, a preview of the physical size of the tape, an option to select the desired lateral margins and also real time feedback during the printing process (also present on the device screen). There are specific commands for manually feeding and cutting the tape, and a setup menu where the user can feed a new tape reel and calibrate the machine by adjust the letters alignment and pressure force applied to the daisy wheel.
+The ***web app*** provides instant text validation, buttons for special characters, a preview of the physical size of the tape, an option to select the desired lateral margins and also real time feedback during the printing process (also present on the device screen). There are specific commands for manually feeding and cutting the tape, and a setup menu where the user can feed a new tape reel and calibrate the machine by adjusting the letters alignment and pressure force applied to the daisy wheel.
+A label can be printed once, several times, or as many times as fit on what is left of the roll, which the app estimates from the tape fed since the reel went in.
 
 ### Embossing
 

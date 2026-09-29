@@ -25,9 +25,14 @@ The E-TKT uses generic 9mm DYMO-compatible label reel. They are cheap and come i
 ### 3. make sure the tape is touching the cog and the metal bearings
 ![_DSC0694](https://user-images.githubusercontent.com/15098003/196272462-82975dcc-011a-4393-a01f-a3d33e115fdb.jpg)
 
-### 4. in the app, go to "SETUP" and the press "+ REEL", then reassure the step 3, confirm and wait
+### 4. in the app, go to "SETUP" and press "LOAD NEW ROLL", check step 3 again, then press "FEED TAPE THROUGH" and wait
 
-<img src="https://user-images.githubusercontent.com/15098003/196284059-7a92dbf8-ee4a-46af-bb03-b13ca54971f4.png" width="50%"><img src="https://user-images.githubusercontent.com/15098003/196284589-e2325ea7-1b4a-430c-b9c8-4d5745488ea7.png" width="50%">
+<img src="../assets/app/setup.png" width="50%" alt="The Setup view, with the tape left on the roll above the calibration"><img src="../assets/app/reel.png" width="50%" alt="The Load a new roll dialog, asking for the roll length">
+
+The machine can't see the tape, so the app counts what is left on the roll: the roll length you give here, minus the tape fed since.
+The length starts at the last roll's, and a new roll is usually 3 m.
+If yours is a different length, or you are putting back a part-used roll, set its length before feeding it through.
+"MAX", in the quantity of labels to print, is as many as that count says will fit.
 
 ----
 

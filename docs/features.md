@@ -22,11 +22,14 @@ description: "E-TKT"
 - Dynamic check for character validity;
 - Estimate of the resulting label dimensions;
 - Automatic text centering;
-- Margin modes: tight, margin (1 space on each side) or full (maximum input length);
+- Margin: none or 1 space on each side;
 - Buttons for special characters: ♡  ☆  ♪  $ @
-- "+ REEL" function to install a new tape reel;
+- Quantity: one label, several (up to 500) or as many as fit on the rest of the roll, and a stop after the label being printed;
+- Estimate of the tape left on the roll, counted from what the machine has fed since the roll went in;
+- "LOAD NEW ROLL" function to install a new tape reel, of 3 m or any length from 0.5 to 10 m;
 - Manual commands: feed & cut;
-- Calibration setup for fine tuning the character alignment and pressing force.
+- Calibration setup for fine tuning the character alignment and pressing force;
+- Light and dark themes.
 
 <br>
 

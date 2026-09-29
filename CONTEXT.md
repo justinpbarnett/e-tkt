@@ -9,7 +9,7 @@ Where a concept has one module, the module is named; where it does not, that is 
 ## The machine
 
 **Tape** - the plastic strip a label is pressed into.
-Loaded from a **reel**, advanced by the **feeder**, and cut off at the end.
+Loaded from a **roll**, advanced by the **feeder**, and cut off at the end.
 
 **Daisy wheel** - the disc carrying one raised character per slot, which rotates to bring the wanted character in front of the press.
 `DaisyWheel`.
@@ -70,6 +70,39 @@ One table says what each one draws, rather than one method each.
 It stops at 99 rather than 100 because feeding the tail and cutting still have to happen after the last character is pressed.
 `Progress.h`.
 
+## The roll
+
+**Feed** - one step of the tape: an eighth of a turn of the feed motor, which pulls `FEED_LENGTH_UM` of tape through.
+What a job uses is counted in feeds, and turned into millimetres only to be shown or taken off a roll's length.
+`Feeder::feed()`, and `Feeder::feeds()` for the count so far.
+
+**Roll** - the tape in the machine, and the two things known about it: the length it was declared at when it went in, and the feeds taken from it since.
+Neither is measured, because the machine cannot see the tape.
+The panel says roll, and `reel`, the command that loads one, is the older word for the same thing.
+`Roll` keeps both numbers in EEPROM, so a reboot does not refill the roll.
+
+**Loading a roll** - the `reel` command.
+Whatever was fed before it is charged to the old roll, the count starts again at the declared length, and `REEL_FEEDS` then pull the new tape through from the cog to past the cutter, charged to the new one.
+A length is `ROLL_LENGTH_MIN_MM` to `ROLL_LENGTH_MAX_MM`.
+A request without one keeps the last roll's, and a device that has never been told one starts at `DEFAULT_ROLL_LENGTH_MM`, 3 m.
+
+**Lead** - the blank feed ahead of a label's first character, `LEAD_FEEDS`.
+It leaves a margin ahead of the text for the cut at the end of the label before.
+
+**Top-up** - the blank feeds after a short label's last character that bring it up to `MIN_LABEL_CHARACTERS`, so there is something to hold when it is cut.
+A one-character label is left short on purpose.
+The panel pads its own labels past the minimum, so a top-up is what a label posted some other way gets.
+`topUpFeeds()`.
+
+**Tape left** - what the roll's two numbers leave: the declared length less the feeds times `FEED_LENGTH_UM`, and never less than nothing.
+It is an estimate, only as good as `FEED_LENGTH_UM` and the length somebody typed in.
+So the panel warns when a print looks like more than is left, but does not refuse it: the tape on the spool is the better judge.
+`remainingMm()` in `Tape.h`, reported by `/api/status` whether or not anything is running.
+
+**Labels that fit** - how many of a label the tape left holds, each one taking the lead, a feed per character and the top-up, and the cut taking none.
+Rounded down, because a label that would run off the end of the tape is not one that fits.
+`labelsThatFit()` in `Tape.h`, restated in `script.js`, which is where it is used.
+
 ## Commands
 
 **Command** - one job the machine can be asked to do: cut, feed, reel, testalign, testfull, save, tag, home, move.
@@ -82,6 +115,18 @@ A command is added by adding an enumerator and a row.
 
 **Busy** - a command is running.
 The machine runs one at a time, and a second request is refused with a 409: the request was fine, the machine was not.
+
+**Run** - one `tag` request for more than one label: the same label pressed `copies` times, one after another, each cut before the next begins.
+`copies` is 1 to `MAX_COPIES`, and a request without it prints one.
+`/api/status` reports the label being pressed as `copy` of `copies`, and the roll is charged after each one, so the tape left moves label by label.
+
+**Quantity** - the panel's way of asking for a run: one, multiple (2 up to `MAX_COPIES`), or max.
+Max is the labels that fit, capped at `MAX_COPIES`, worked out in the panel and sent as a number; the device has no idea of the end of the roll.
+
+**Stop** - `POST /api/stop`, which ends a run once the label being pressed is cut, and never partway through one.
+It is not a command: it does not wait its turn, because it is about the command that is running.
+Anything but printing is over in seconds and cannot be stopped, and a stop with nothing running is not an error, since the run may have just ended.
+`ETKT::stop()`.
 
 ## Where the parts meet
 
@@ -98,11 +143,13 @@ Lifted into `BenchRigs` so the device's own code does not carry them.
 They come out once the last machine is built.
 
 **Simulator** - `src/simulator`, a Python stand-in that serves the panel without a machine.
-It reads the descriptor table, the character set and the calibration range out of `src/` rather than restating them, because when it restated them it drifted and every button returned a 404.
+It reads the descriptor table, the character set, the calibration range and the tape's numbers out of `src/` rather than restating them, because when it restated them it drifted and every button returned a 404.
+Its copy of the tape sums is checked against the same values the native tests check `Tape.h` against.
 
 ## Reading the machine
 
 **Log** - the last 32 lines the device said, kept in memory and served as plain text from `/api/log`, because the machine is on a bench on wifi and a serial cable is not always the answer.
 
 **Panel** - the web UI in `data/`, served from SPIFFS.
-It asks the device what it will accept at startup (`/api/capabilities`) instead of deciding for itself, and polls `/api/status` while a command runs.
+It asks the device what it will accept at startup (`/api/capabilities`) instead of deciding for itself.
+It polls `/api/status` every second, and every five while the page is hidden, so the tape left and a label sent from another phone show without a reload.
