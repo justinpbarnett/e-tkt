@@ -279,7 +279,7 @@
             <p class="note">
               The label maker can’t see the tape, so this is counted from the tape it has fed since the roll went in.
             </p>
-            <button type="button" class="btn btn-secondary btn-stacked" id="reel-button">
+            <button type="button" class="btn btn-secondary btn-stacked" id="reel-button" data-command="reel">
               <span class="idle-text">Load new roll</span>
               <span class="running-text">Loading…</span>
             </button>
@@ -304,7 +304,12 @@
                     </svg>
                   </button>
                 </div>
-                <button type="button" class="btn btn-secondary btn-compact btn-stacked" id="test-align-button">
+                <button
+                  type="button"
+                  class="btn btn-secondary btn-compact btn-stacked"
+                  id="test-align-button"
+                  data-command="testalign"
+                >
                   <span class="idle-text">Test align</span>
                   <span class="running-text">Testing…</span>
                 </button>
@@ -331,7 +336,12 @@
                     </svg>
                   </button>
                 </div>
-                <button type="button" class="btn btn-secondary btn-compact btn-stacked" id="test-full-button">
+                <button
+                  type="button"
+                  class="btn btn-secondary btn-compact btn-stacked"
+                  id="test-full-button"
+                  data-command="testfull"
+                >
                   <span class="idle-text">Test print</span>
                   <span class="running-text">Printing…</span>
                 </button>
@@ -344,7 +354,7 @@
           </div>
 
           <!-- What the machine is doing, when it is something none of the
-               buttons above started and nothing here can stop: a feed from
+               buttons above started and nothing here can stop: a save from
                another phone, say. Anything that can be stopped, from here
                or from anywhere else, gets the stop instead. -->
           <p class="note setup-status" id="setup-status" role="status"></p>

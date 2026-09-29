@@ -134,6 +134,7 @@ A row carries the name the command answers to on the wire, the body field its te
 It is the single statement of what the commands are: the HTTP routes, the dispatch and the name `/api/status` reports are all read from it rather than restated.
 `/api/capabilities` serves every row with a handler, keyed by name, so the panel reads what a command is from the device as well.
 No code outside the table compares a command against a name to decide what it does: it asks the command's row.
+The panel keys only its wording by name, and decides the rest by the facts `/api/capabilities` serves.
 A command is added by adding an enumerator and a row.
 
 **Command fact** - one thing a row of the **descriptor table** says is true of its command, from `CommandFact` in `ETKT.h`.
@@ -142,7 +143,7 @@ A row names the facts that hold and leaves the rest out.
 
 **Stoppable** - a **command fact**: `ETKT::stop()` stops the command.
 Every command that moves is stoppable; a save is not.
-The panel never offers a stop for a command the device says is not stoppable.
+The panel offers the red stop for every command the device says is stoppable, and never for one it says is not.
 
 **Job runner** - `ETKT`, which takes one command at a time and runs it.
 The web server's task hands it a command with `submit()`, into a single slot, and the command loop takes it from there in `loop()`: it runs the command, parks the motors, empties the slot, and then draws the idle screen, so a job posted while that draws is taken.

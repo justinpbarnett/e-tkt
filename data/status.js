@@ -46,7 +46,8 @@ export function readCapabilities(response) {
           typeof facts.stoppable === "boolean" &&
           typeof facts.prints_run === "boolean" &&
           typeof facts.uses_align === "boolean" &&
-          typeof facts.uses_force === "boolean",
+          typeof facts.uses_force === "boolean" &&
+          typeof facts.presses_label === "boolean",
       ),
     "command facts",
   );
@@ -63,14 +64,16 @@ export function readCapabilities(response) {
   };
 }
 
-// What the panel says while each command runs, keyed by the name the device
-// answers to. That name is also the path this panel posts to, api/<name>,
-// and the string /api/status reports back while the command runs.
+// What the panel says of each command, keyed by the name the device answers
+// to. That name is also the path this panel posts to, api/<name>, and the
+// string /api/status reports back while the command runs.
 //
-// Wording only. Which commands exist is the device's to say, and it says so
-// in api/capabilities; this table is checked against that list at startup
-// and a disagreement is reported rather than guessed at. The same check runs
-// in test/panel/status.test.js, where a disagreement fails.
+// Wording only. Which commands exist, and what each one does, is the
+// device's to say, in api/capabilities: whether it can be stopped, whether
+// it prints a run of labels, whether it presses a label into the tape. This
+// table is checked against the device's list at startup and a disagreement
+// is reported rather than guessed at. The same check runs in
+// test/panel/status.test.js, where a disagreement fails.
 //
 // The wording used to be spread across the panel's senders and the status
 // switch in handleData(), and home and move had already fallen out of both:
@@ -79,35 +82,49 @@ export function readCapabilities(response) {
 // because the device can still be running one, and the panel has to be able
 // to say so.
 //
-// A stopLabel is what the stop button says while that command runs, and
-// only the commands with one are offered a stop. Which commands the device
-// can stop is its own to say, in api/capabilities, but a cut or a feed is
-// over before a finger could get there.
-const COMMAND_LABELS = {
-  cut: { busyLabel: "Cutting…" },
-  feed: { busyLabel: "Feeding…" },
-  reel: { busyLabel: "Loading the new roll…", stopLabel: "Stop loading" },
-  testalign: { busyLabel: "Testing the alignment…", stopLabel: "Stop test" },
-  testfull: { busyLabel: "Printing a test label…", stopLabel: "Stop test print" },
-  save: { busyLabel: "Saving…" },
-  tag: { busyLabel: "Printing…", stopLabel: "Stop printing" },
-  home: { busyLabel: "Finding home…" },
-  move: { busyLabel: "Moving the wheel…" },
+//   busy     what the page says while the command runs
+//   stop     what the red stop says while it runs, for a command the
+//            device can stop
+//   pressed  what the label is called, for a command that presses one
+//   stopped  what the page says once a stop has ended the command, for one
+//            that presses no label
+const COMMAND_WORDING = {
+  cut: {
+    busy: "Cutting…",
+    stop: "Stop cutting",
+    stopped: "Stopped the cut before it was through. Cut again to finish.",
+  },
+  feed: { busy: "Feeding…", stop: "Stop feeding", stopped: "Stopped the feed." },
+  reel: {
+    busy: "Loading the new roll…",
+    stop: "Stop loading",
+    stopped: "Stopped loading the new roll before the tape was all the way through. Load it again to finish.",
+  },
+  testalign: { busy: "Testing the alignment…", stop: "Stop test", stopped: "Stopped the alignment test." },
+  testfull: { busy: "Printing a test label…", stop: "Stop test print", pressed: "test label" },
+  save: { busy: "Saving…" },
+  tag: { busy: "Printing…", stop: "Stop printing", pressed: "label" },
+  home: { busy: "Finding home…", stop: "Stop the wheel", stopped: "Stopped the wheel." },
+  move: { busy: "Moving the wheel…", stop: "Stop the wheel", stopped: "Stopped the wheel." },
 };
 
-// Said while the device runs a command this copy of the panel has never
-// heard of, which means a cached copy of the panel is talking to newer
-// firmware.
-const UNKNOWN_BUSY_LABEL = "Working…";
+// Said of a command this copy of the panel has never heard of, which means a
+// cached copy of the panel is talking to newer firmware.
+const UNKNOWN_COMMAND = { busy: "Working…", stop: "Stop", pressed: "label", stopped: "The label maker was stopped." };
 
-// Not fatal: an unknown command already falls back to UNKNOWN_BUSY_LABEL and
+// The wording for a command, the words for one it has none of filled in.
+function wordingFor(command) {
+  return { ...UNKNOWN_COMMAND, ...COMMAND_WORDING[command] };
+}
+
+// Not fatal: an unknown command already falls back to UNKNOWN_COMMAND and
 // the panel keeps working. Worth saying out loud, though, because the usual
 // cause is a cached copy of the panel talking to newer firmware, and that is
 // invisible from the bench. What to say, or null when the two agree.
 export function commandListDisagreement(device) {
   const offered = [...device.commands.keys()];
-  const missing = offered.filter((name) => !(name in COMMAND_LABELS));
-  const extra = Object.keys(COMMAND_LABELS).filter((name) => !offered.includes(name));
+  const missing = offered.filter((name) => !(name in COMMAND_WORDING));
+  const extra = Object.keys(COMMAND_WORDING).filter((name) => !offered.includes(name));
   if (missing.length === 0 && extra.length === 0) {
     return null;
   }
@@ -119,9 +136,8 @@ export function commandListDisagreement(device) {
 }
 
 // What the page says while the command runs.
-export function busyLabel(command) {
-  const spec = COMMAND_LABELS[command];
-  return spec ? spec.busyLabel : UNKNOWN_BUSY_LABEL;
+export function busyText(command) {
+  return wordingFor(command).busy;
 }
 
 // What the device says is true of a command, as api/capabilities serves it,
@@ -135,6 +151,13 @@ function commandFacts(command, device) {
 function printsRun(command, device) {
   const facts = commandFacts(command, device);
   return facts !== null && facts.prints_run;
+}
+
+// Whether the command presses a label into the tape, which a stop can leave
+// there half pressed.
+function pressesLabel(command, device) {
+  const facts = commandFacts(command, device);
+  return facts !== null && facts.presses_label;
 }
 
 // The status, while it reports a run of labels being printed, or null.
@@ -156,7 +179,7 @@ export function printingRun(status, device) {
 // is as a whole percentage, or null while there is no number to show.
 export function activity(running, device) {
   const run = printingRun(running.status, device);
-  let text = busyLabel(running.command);
+  let text = busyText(running.command);
   let percentage = null;
   if (printsRun(running.command, device) && run !== null) {
     percentage = printPercentage(run);
@@ -186,9 +209,9 @@ export function printPercentage(status) {
 }
 
 // The stops the page offers while a command runs, or null when it offers
-// none: never one the device says it would refuse, and before the device has
-// said anything the stop is offered anyway, because it must not wait on a
-// fetch.
+// none: one for everything the device says it can stop, and never one it
+// says it would refuse. Before the device has said anything the stop is
+// offered anyway, because it must not wait on a fetch.
 //
 //   now         the red stop: what it says, and whether it is stopping
 //   afterLabel  the stop that lets a run of labels finish the label it is
@@ -197,14 +220,16 @@ export function printPercentage(status) {
 //               label.
 export function stopOffer(running, device) {
   const facts = commandFacts(running.command, device);
-  const spec = COMMAND_LABELS[running.command];
-  if ((facts !== null && !facts.stoppable) || !(spec && spec.stopLabel)) {
+  if (facts !== null && !facts.stoppable) {
     return null;
   }
   // The stop now is never held back for the page being out of touch: the tap
   // may still get through, and if it does not, the page says what else to do.
   const now = running.stop === "now";
-  const offer = { now: { text: now ? "Stopping…" : spec.stopLabel, stopping: now }, afterLabel: null };
+  const offer = {
+    now: { text: now ? "Stopping…" : wordingFor(running.command).stop, stopping: now },
+    afterLabel: null,
+  };
 
   // A run of labels can instead be let finish the label it is on. How many
   // labels it has comes from the device once a poll has it, and until then
@@ -220,6 +245,44 @@ export function stopOffer(running, device) {
     };
   }
   return offer;
+}
+
+// What a stop cut short, from the device's record of it, and why when it
+// was not the stop button: the operator who pressed that knows why.
+export function stoppedText(stopped, device) {
+  const lost =
+    stopped.cause === "lost_wheel"
+      ? " The daisy wheel could not find its home. Check the magnet on the wheel and the hall sensor."
+      : "";
+  return stoppedWhat(stopped, device) + lost;
+}
+
+// Tape fed for a label that was then not finished is still in the machine,
+// and comes out on the front of the next label unless it is cut off first.
+function stoppedWhat(stopped, device) {
+  const words = wordingFor(stopped.command);
+  const unfinished = stopped.unfinished === true;
+  const cutFirst = " Cut it off before printing again.";
+  const { printed, copies } = stopped;
+  if (printsRun(stopped.command, device) && Number.isInteger(printed) && Number.isInteger(copies) && copies > 1) {
+    if (unfinished) {
+      return "Stopped partway through label " + (printed + 1) + " of " + copies + "." + cutFirst;
+    }
+    if (printed === 0) {
+      return "Stopped before label 1 of " + copies + " was started.";
+    }
+    return "Stopped after " + printed + " of " + copies + " labels.";
+  }
+  // A single label, a record without the count, and anything else that
+  // presses one. The record says whether a label was left, whatever the
+  // command.
+  if (unfinished) {
+    return "Stopped partway through the " + words.pressed + "." + cutFirst;
+  }
+  if (pressesLabel(stopped.command, device)) {
+    return "Stopped before the " + words.pressed + " was started.";
+  }
+  return words.stopped;
 }
 
 function clamp(value, min, max) {

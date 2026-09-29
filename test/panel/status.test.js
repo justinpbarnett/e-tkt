@@ -3,7 +3,7 @@ import { test } from "node:test";
 
 import {
   activity,
-  busyLabel,
+  busyText,
   commandListDisagreement,
   printPercentage,
   printingRun,
@@ -42,7 +42,7 @@ test("capabilities from older firmware are refused, naming what is missing", () 
     message: "api/capabilities served no command facts",
   });
 
-  for (const fact of ["uses_align", "uses_force"]) {
+  for (const fact of ["uses_align", "uses_force", "presses_label"]) {
     const unsaid = capabilitiesReply();
     delete unsaid.commands.save[fact];
     assert.throws(() => readCapabilities(unsaid), {
@@ -88,8 +88,8 @@ test("a disagreement about the command list names what each side has that the ot
 test("a command the panel has no words for is still said to be working", () => {
   // Newer firmware can run a command this copy of the panel has never heard
   // of, and the page still has to say something while it runs.
-  assert.equal(busyLabel("dance"), "Working…");
-  assert.equal(busyLabel("reel"), "Loading the new roll…");
+  assert.equal(busyText("dance"), "Working…");
+  assert.equal(busyText("reel"), "Loading the new roll…");
 });
 
 test("a status is a run being printed only while the device prints one", () => {
@@ -213,13 +213,45 @@ test("a stop now says only that it is stopping, whatever was running", () => {
   });
 });
 
-test("a feed, a cut or a save is offered no stop", () => {
-  // The device can stop a cut or a feed, but either is over before a finger
-  // could get there. A save it cannot stop at all.
+test("a save is offered no stop", () => {
+  // The device cannot stop one: a save moves nothing and ends in a restart,
+  // and one cut off partway would leave half a calibration behind.
+  const saving = running({ command: "save", status: { busy: true, command: "save" } });
+  assert.equal(stopOffer(saving, labelMaker()), null);
+});
+
+test("anything the device can stop is offered the red stop, however quick it is", () => {
+  // What can be stopped is the device's to say, and it can stop everything
+  // that moves. A cut turns the wheel to the cut mark and presses three
+  // times, which is long enough to want it stopped.
   const device = labelMaker();
-  assert.equal(stopOffer(running(), device), null);
-  assert.equal(stopOffer(running({ command: "feed", status: { busy: true, command: "feed" } }), device), null);
-  assert.equal(stopOffer(running({ command: "save", status: { busy: true, command: "save" } }), device), null);
+  assert.deepEqual(stopOffer(running(), device), { now: { text: "Stop cutting", stopping: false }, afterLabel: null });
+  const feeding = running({ command: "feed", status: { busy: true, command: "feed" } });
+  assert.deepEqual(stopOffer(feeding, device), { now: { text: "Stop feeding", stopping: false }, afterLabel: null });
+});
+
+test("every command the device can stop has words of its own for the red stop", () => {
+  // The red stop says what it stops. A plain "Stop" is for a command this
+  // copy of the panel has never heard of.
+  const device = labelMaker();
+  for (const [command, facts] of device.commands) {
+    if (facts.stoppable) {
+      const offer = stopOffer(running({ command: command, status: { busy: true, command: command } }), device);
+      assert.notEqual(offer.now.text, "Stop", command);
+    }
+  }
+});
+
+test("a command the panel has no words for is still offered a stop", () => {
+  // Newer firmware can run a command this copy of the panel has never heard
+  // of, and if the device says it can stop it, the page offers the stop.
+  const reply = capabilitiesReply();
+  reply.commands.dance = { ...reply.commands.cut };
+  const dancing = running({ command: "dance", status: { busy: true, command: "dance" } });
+  assert.deepEqual(stopOffer(dancing, readCapabilities(reply)), {
+    now: { text: "Stop", stopping: false },
+    afterLabel: null,
+  });
 });
 
 test("a command that can be stopped is offered the red stop, in words of its own", () => {

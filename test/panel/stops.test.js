@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import { readCapabilities } from "../../data/status.js";
 import { Stops } from "../../data/stops.js";
+import { capabilitiesReply, labelMaker } from "./device.js";
+
+// What the label maker says of its commands, which is what a stop's notice
+// is told by.
+const device = labelMaker();
 
 // What api/status says with nothing running and no stop on record.
 const IDLE = { busy: false, command: "idle" };
@@ -204,7 +210,7 @@ test("a stop now that the device took, and that left no record, came too late", 
 test("a stop that cut a run of labels short says how far it got", () => {
   // A label left unfinished is tape fed for it, still in the machine, and
   // it comes out on the front of the next label unless it is cut off first.
-  const notice = (stopped) => new Stops().notice(stoppedBy({ command: "tag", ...stopped }));
+  const notice = (stopped) => new Stops().notice(stoppedBy({ command: "tag", ...stopped }), device);
   assert.deepEqual(notice({ printed: 2, copies: 5, unfinished: true }), {
     text: "Stopped partway through label 3 of 5. Cut it off before printing again.",
     unfinished: true,
@@ -225,7 +231,7 @@ test("a stop that cut a run of labels short says how far it got", () => {
 test("a stop that cut a test or a new roll short says what it left", () => {
   // The test label is tape fed like any other. A roll stopped partway is
   // not through to the cutter yet.
-  const notice = (stopped) => new Stops().notice(stoppedBy(stopped));
+  const notice = (stopped) => new Stops().notice(stoppedBy(stopped), device);
   assert.deepEqual(notice({ command: "testfull", unfinished: true }), {
     text: "Stopped partway through the test label. Cut it off before printing again.",
     unfinished: true,
@@ -236,22 +242,51 @@ test("a stop that cut a test or a new roll short says what it left", () => {
     notice({ command: "reel" }).text,
     "Stopped loading the new roll before the tape was all the way through. Load it again to finish.",
   );
-  assert.equal(notice({ command: "home" }).text, "The label maker was stopped.");
   // A record that does not say whether it left a label unfinished left
   // none, rather than one the page cannot say yes or no to.
   assert.equal(notice({ command: "testfull", unfinished: undefined }).unfinished, false);
 });
 
+test("a stop that cut a cut, a feed or a turn of the wheel short says so", () => {
+  // A cut stopped partway can leave the tape half cut through, and the way
+  // to finish it is to cut again. The others leave nothing to do.
+  const notice = (stopped) => new Stops().notice(stoppedBy(stopped), device);
+  assert.equal(notice({ command: "cut" }).text, "Stopped the cut before it was through. Cut again to finish.");
+  assert.equal(notice({ command: "feed" }).text, "Stopped the feed.");
+  assert.equal(notice({ command: "home" }).text, "Stopped the wheel.");
+  assert.equal(notice({ command: "move" }).text, "Stopped the wheel.");
+});
+
+test("what a stop left is told by what the device says of the command it stopped", () => {
+  // Not by its name: newer firmware can stop a command this copy of the
+  // panel has never heard of, and what the device says of it is all the page
+  // knows. One that prints a run is counted, one that presses a label says
+  // whether it got that far, and one that does neither only that it stopped.
+  const reply = capabilitiesReply();
+  reply.commands.dance = { ...reply.commands.tag };
+  reply.commands.twirl = { ...reply.commands.testfull };
+  reply.commands.spin = { ...reply.commands.cut };
+  const newer = readCapabilities(reply);
+  const notice = (stopped) => new Stops().notice(stoppedBy(stopped), newer);
+  assert.equal(notice({ command: "dance", printed: 2, copies: 5 }).text, "Stopped after 2 of 5 labels.");
+  assert.equal(notice({ command: "twirl" }).text, "Stopped before the label was started.");
+  assert.equal(
+    notice({ command: "twirl", unfinished: true }).text,
+    "Stopped partway through the label. Cut it off before printing again.",
+  );
+  assert.equal(notice({ command: "spin" }).text, "The label maker was stopped.");
+});
+
 test("a stop by a lost wheel says what to check", () => {
   // Whoever pressed the stop button knows why they did. A job that found
   // the wheel lost stopped itself, and the notice is all there is to say so.
-  const notice = new Stops().notice(stoppedBy({ command: "testalign", cause: "lost_wheel" }));
+  const notice = new Stops().notice(stoppedBy({ command: "testalign", cause: "lost_wheel" }), device);
   assert.equal(
     notice.text,
     "Stopped the alignment test. The daisy wheel could not find its home. Check the magnet on the wheel and the hall sensor.",
   );
   // A record that does not say what stopped it is taken for the stop button.
-  const unsaid = new Stops().notice(stoppedBy({ command: "testalign", cause: undefined }));
+  const unsaid = new Stops().notice(stoppedBy({ command: "testalign", cause: undefined }), device);
   assert.equal(unsaid.text, "Stopped the alignment test.");
 });
 
@@ -262,8 +297,8 @@ test("a dismissed notice stays dismissed, and the next stop's still shows", () =
   const stops = new Stops();
   const first = stoppedBy({ command: "testalign", id: 7 });
   stops.dismiss(first);
-  assert.equal(stops.notice(first), null);
-  assert.equal(stops.notice(stoppedBy({ command: "testalign", id: 8 })).text, "Stopped the alignment test.");
+  assert.equal(stops.notice(first, device), null);
+  assert.equal(stops.notice(stoppedBy({ command: "testalign", id: 8 }), device).text, "Stopped the alignment test.");
 });
 
 test("stops from a device that numbers none are told apart by what they say", () => {
@@ -271,12 +306,12 @@ test("stops from a device that numbers none are told apart by what they say", ()
   const unnumbered = (stopped) => ({ ...IDLE, stopped: { command: "tag", unfinished: false, ...stopped } });
   const stops = new Stops();
   stops.dismiss(unnumbered({ printed: 2, copies: 5 }));
-  assert.equal(stops.notice(unnumbered({ printed: 2, copies: 5 })), null);
-  assert.equal(stops.notice(unnumbered({ printed: 3, copies: 5 })).text, "Stopped after 3 of 5 labels.");
-  assert.equal(stops.notice(unnumbered({ printed: 2, copies: 6 })).text, "Stopped after 2 of 6 labels.");
+  assert.equal(stops.notice(unnumbered({ printed: 2, copies: 5 }), device), null);
+  assert.equal(stops.notice(unnumbered({ printed: 3, copies: 5 }), device).text, "Stopped after 3 of 5 labels.");
+  assert.equal(stops.notice(unnumbered({ printed: 2, copies: 6 }), device).text, "Stopped after 2 of 6 labels.");
   const otherCommand = unnumbered({ command: "testfull", printed: 2, copies: 5 });
-  assert.equal(stops.notice(otherCommand).text, "Stopped before the test label was started.");
-  assert.equal(stops.notice(unnumbered({ printed: 2, copies: 5, unfinished: true })).unfinished, true);
+  assert.equal(stops.notice(otherCommand, device).text, "Stopped before the test label was started.");
+  assert.equal(stops.notice(unnumbered({ printed: 2, copies: 5, unfinished: true }), device).unfinished, true);
 });
 
 test("a dismissal lasts as long as the device keeps that record", () => {
@@ -286,9 +321,9 @@ test("a dismissal lasts as long as the device keeps that record", () => {
   const record = { ...IDLE, stopped: { command: "testalign", unfinished: false } };
   stops.dismiss(record);
   stops.statusArrived(record, 1000);
-  assert.equal(stops.notice(record), null);
+  assert.equal(stops.notice(record, device), null);
   stops.statusArrived({ busy: true, command: "testalign" }, 2000);
-  assert.equal(stops.notice(record).text, "Stopped the alignment test.");
+  assert.equal(stops.notice(record, device).text, "Stopped the alignment test.");
 });
 
 test("the too-late note stays until it is dismissed", () => {

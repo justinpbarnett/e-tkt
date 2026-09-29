@@ -7,6 +7,8 @@
 // never left jammed in the tape. After the label is once the label being
 // pressed has been cut, so nothing is cut short.
 
+import { stoppedText } from "./status.js";
+
 // What the page says when a stop reaches the device after the command it
 // was meant for has finished.
 const TOO_LATE_TO_STOP = "Too late to stop: the label maker had already finished.";
@@ -126,14 +128,16 @@ export class Stops {
   }
 
   // What to say once a stop has ended a command, or null: the device's
-  // record, or without one a note of this page's own.
-  notice(status) {
+  // record, told by what the device says of the command it stopped, or
+  // without a record a note of this page's own. The words for a record are
+  // stoppedText() in status.js, with the rest of each command's wording.
+  notice(status, device) {
     const stopped = lastStop(status);
     if (stopped !== null) {
       if (stopKey(stopped) === this.#dismissed) {
         return null;
       }
-      return { text: stoppedText(stopped), unfinished: stopped.unfinished === true };
+      return { text: stoppedText(stopped, device), unfinished: stopped.unfinished === true };
     }
     return this.#note === null ? null : { text: this.#note, unfinished: false };
   }
@@ -164,46 +168,4 @@ function stopKey(stopped) {
     return String(stopped.id);
   }
   return [stopped.command, stopped.printed, stopped.copies, stopped.unfinished].join();
-}
-
-// What a stop cut short, and why when it was not the stop button: the
-// operator who pressed that knows why.
-function stoppedText(stopped) {
-  const lost =
-    stopped.cause === "lost_wheel"
-      ? " The daisy wheel could not find its home. Check the magnet on the wheel and the hall sensor."
-      : "";
-  return stoppedWhat(stopped) + lost;
-}
-
-// Tape fed for a label that was then not finished is still in the machine,
-// and comes out on the front of the next label unless it is cut off first.
-function stoppedWhat(stopped) {
-  const unfinished = stopped.unfinished === true;
-  const cutFirst = " Cut it off before printing again.";
-  switch (stopped.command) {
-    case "tag": {
-      const { printed, copies } = stopped;
-      if (!Number.isInteger(printed) || !Number.isInteger(copies) || copies <= 1) {
-        return unfinished ? "Stopped partway through the label." + cutFirst : "Stopped before the label was started.";
-      }
-      if (unfinished) {
-        return "Stopped partway through label " + (printed + 1) + " of " + copies + "." + cutFirst;
-      }
-      if (printed === 0) {
-        return "Stopped before label 1 of " + copies + " was started.";
-      }
-      return "Stopped after " + printed + " of " + copies + " labels.";
-    }
-    case "testfull":
-      return unfinished
-        ? "Stopped partway through the test label." + cutFirst
-        : "Stopped before the test label was started.";
-    case "testalign":
-      return "Stopped the alignment test.";
-    case "reel":
-      return "Stopped loading the new roll before the tape was all the way through. Load it again to finish.";
-    default:
-      return "The label maker was stopped.";
-  }
 }

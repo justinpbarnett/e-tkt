@@ -147,7 +147,8 @@ struct CommandSpec {
   // Whether ETKT::stop() stops this command. Everything that moves can be
   // stopped. A save moves nothing and ends in a reboot, and one cut off
   // partway would leave half a calibration behind. The panel offers its stop
-  // button by this, so it never offers one the device would refuse.
+  // button by this alone: for every command it holds for, and never for one
+  // the device would refuse.
   bool stoppable;
 
   // Whether this command presses a label into the tape, which a stop can

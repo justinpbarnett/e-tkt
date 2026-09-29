@@ -435,7 +435,8 @@ Reply Api::capabilities() {
   // answers a post for -- by name, with everything its row says. The panel
   // keeps its own wording for each, which is copy rather than protocol, but
   // it keeps no list of its own of what the device can do or of which
-  // command does what: it offers a stop, and counts a run, by this.
+  // command does what: it offers a stop, counts a run, and says what a stop
+  // left behind, by this.
   const JsonObject commands = doc.createNestedObject("commands");
   for (size_t i = 0; i < ETKT::COMMAND_COUNT; i++) {
     const CommandSpec& spec = ETKT::COMMANDS[i];

@@ -41,7 +41,7 @@ import {
 import { plural, quantity, settledCopies, steppedCopies } from "./quantity.js";
 import {
   activity,
-  busyLabel,
+  busyText,
   CapabilitiesMismatch,
   commandListDisagreement,
   printingRun,
@@ -303,8 +303,9 @@ function wireEvents() {
   for (const button of el.stepButtons) {
     button.addEventListener("click", () => stepSetting(button.dataset.setting, Number(button.dataset.step)));
   }
-  el.testAlignButton.addEventListener("click", testAlignCommand);
-  el.testFullButton.addEventListener("click", testFullCommand);
+  for (const button of [el.testAlignButton, el.testFullButton]) {
+    button.addEventListener("click", () => testCommand(button));
+  }
   el.cancelButton.addEventListener("click", leaveSetup);
   el.saveButton.addEventListener("click", confirmSave);
 
@@ -330,7 +331,11 @@ function wireEvents() {
   });
   el.reelDialog.addEventListener("close", async () => {
     const lengthMm = typedRollLength();
-    if (el.reelDialog.returnValue === "reel" && lengthMm !== null && (await send("reel", { length_mm: lengthMm }))) {
+    if (
+      el.reelDialog.returnValue === "reel" &&
+      lengthMm !== null &&
+      (await send(el.reelButton.dataset.command, { length_mm: lengthMm }))
+    ) {
       scrollStopsIntoPlace(el.setupRunActions, el.reelButton);
     }
   });
@@ -865,29 +870,20 @@ function markStuck() {
   }
 }
 
-// Each test is sent the calibration fields the device says it uses, in
-// api/capabilities. The alignment test uses align alone: it always presses
-// at the minimum force, slowly and lightly, so the alignment can be checked
-// without embossing anything.
-async function testAlignCommand() {
-  const fields = state.calibration.fieldsFor("testalign", device);
+// Runs the test a setup button names in data-command. Each test is sent the
+// calibration fields the device says it uses, in api/capabilities. The
+// alignment test uses align alone: it always presses at the minimum force,
+// slowly and lightly, so the alignment can be checked without embossing
+// anything.
+async function testCommand(button) {
+  const command = button.dataset.command;
+  const fields = state.calibration.fieldsFor(command, device);
   if (fields === null) {
-    console.error("Cannot run the alignment test: align not loaded from the device yet");
+    console.error("Cannot run " + command + ": the calibration it uses is not loaded from the device yet");
     return;
   }
-  if (await send("testalign", fields)) {
-    scrollStopsIntoPlace(el.setupRunActions, el.testAlignButton);
-  }
-}
-
-async function testFullCommand() {
-  const fields = state.calibration.fieldsFor("testfull", device);
-  if (fields === null) {
-    console.error("Cannot run the full test: align/force not loaded from the device yet");
-    return;
-  }
-  if (await send("testfull", fields)) {
-    scrollStopsIntoPlace(el.setupRunActions, el.testFullButton);
+  if (await send(command, fields)) {
+    scrollStopsIntoPlace(el.setupRunActions, button);
   }
 }
 
@@ -1243,7 +1239,6 @@ function renderSetupView(running, offer, focused) {
     el.rollMeter.style.width = "0";
   }
   el.reelButton.disabled = busy || offline || device === null;
-  showRunning(el.reelButton, command === "reel");
 
   const calibration = state.calibration;
   const shown = calibration.shown;
@@ -1254,10 +1249,14 @@ function renderSetupView(running, offer, focused) {
     // is testing.
     button.disabled = busy || !calibration.canStep(button.dataset.setting, Number(button.dataset.step), device);
   }
-  el.testAlignButton.disabled = busy || offline || calibration.fieldsFor("testalign", device) === null;
-  showRunning(el.testAlignButton, command === "testalign");
-  el.testFullButton.disabled = busy || offline || calibration.fieldsFor("testfull", device) === null;
-  showRunning(el.testFullButton, command === "testfull");
+  for (const button of [el.testAlignButton, el.testFullButton]) {
+    button.disabled = busy || offline || calibration.fieldsFor(button.dataset.command, device) === null;
+  }
+  // Whoever started it: the command a button names in data-command is the
+  // one it says is running.
+  for (const button of [el.reelButton, el.testAlignButton, el.testFullButton]) {
+    showRunning(button, command === button.dataset.command);
+  }
   // Saving restarts the label maker, which is not worth doing for the
   // numbers it already has.
   el.saveButton.disabled =
@@ -1274,9 +1273,10 @@ function renderSetupView(running, offer, focused) {
   if (focused === el.setupStopButton && (el.setupRunActions.hidden || el.setupStopButton.disabled)) {
     el.setupView.focus({ preventScroll: true });
   }
-  // Named by a line of its own when it has no stop to name it. Setup's own
-  // commands all have one, and say so on their buttons as well.
-  setText(el.setupStatus, busy && offer === null ? busyLabel(command) : "");
+  // Named by a line of its own when it has no stop to name it, which leaves
+  // a save: the device can stop everything else, and setup's own tests and
+  // the new roll say so on their buttons as well.
+  setText(el.setupStatus, busy && offer === null ? busyText(command) : "");
 }
 
 // A setup button says what its command is doing while it runs. The page
@@ -1288,7 +1288,7 @@ function showRunning(button, running) {
 // What the last stop left behind, in whichever view is open, once the
 // machine is done with it.
 function renderStopNotices(busy, offline, focused) {
-  const notice = busy ? null : state.stops.notice(state.status);
+  const notice = busy ? null : state.stops.notice(state.status, device);
   for (const box of el.stopNotices) {
     const view = box.closest(".view") === el.setupView ? "setup" : "print";
     if (notice !== null) {
