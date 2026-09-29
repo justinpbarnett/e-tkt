@@ -188,10 +188,13 @@ html {
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
   /* A notice long enough to make the page scroll brought up a scrollbar,
-     and the column moved sideways to make room for it. The room is kept
-     from the start, and on both sides, so the column stays centered.
-     Scrollbars that float over the page, as on a phone, take none. */
-  scrollbar-gutter: stable both-edges;
+     and the column moved sideways to make room for it. 100vw counts the
+     scrollbar and 100% does not, so the left gives up as much room as the
+     scrollbar takes on the right and the column stays centered. Keeping
+     the room from the start, with scrollbar-gutter, left a strip down each
+     side that a dialog's backdrop did not darken. Scrollbars that float
+     over the page, as on a phone, take no room, so this is nothing there. */
+  margin-left: calc(100vw - 100%);
 }
 
 body {
