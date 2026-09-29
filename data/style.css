@@ -187,6 +187,11 @@
 html {
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
+  /* A notice long enough to make the page scroll brought up a scrollbar,
+     and the column moved sideways to make room for it. The room is kept
+     from the start, and on both sides, so the column stays centered.
+     Scrollbars that float over the page, as on a phone, take none. */
+  scrollbar-gutter: stable both-edges;
 }
 
 body {
