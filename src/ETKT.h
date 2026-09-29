@@ -318,8 +318,8 @@ class ETKT {
   std::mutex lock;
 
   // What loop() waits on for a command, under the lock above. submit()
-  // notifies it as it fills the slot.
-  std::condition_variable queued;
+  // notifies it as it hands one over.
+  std::condition_variable submitted;
 
   // Raised by stop() and obeyed all the way down, in the wheel, the feeder
   // and the tune. It keeps its own synchronisation, but it is raised and
@@ -408,13 +408,14 @@ class ETKT {
   void loop();
 
   /**
-   * @brief Queues a command, or refuses it if one is already running.
+   * @brief Hands the job runner a command, or refuses it while the machine
+   * is busy.
    *
    * The caller fills in whichever of align, force, label, copies and roll
    * length the command's row in COMMANDS says it reads; anything else in
    * `options` is ignored.
    * Throws PrinterBusyException if a command is already in flight, and
-   * queues nothing in that case.
+   * takes nothing in that case.
    *
    * The device takes a copy, so the caller keeps what it passed in either
    * way.

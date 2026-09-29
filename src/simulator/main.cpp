@@ -299,9 +299,10 @@ class Simulator {
   }
 
   /**
-   * @brief Whether a command is waiting for the job runner, or running.
+   * @brief Whether the machine is busy: a command is waiting for the job
+   * runner to take it, or running.
    */
-  bool queued() {
+  bool busy() {
     return this->machine->etkt.createStatus().currentCommand != Command::IDLE;
   }
 
@@ -402,9 +403,9 @@ class Simulator {
     this->boot();
     std::string line;
     while (true) {
-      // loop() waits on the wall clock for a command when none is queued, so
-      // it is only called with one.
-      while (this->queued()) {
+      // loop() waits on the wall clock for a command when none is submitted,
+      // so it is only called with one.
+      while (this->busy()) {
         this->machine->etkt.loop();
         this->afterJob();
       }

@@ -146,7 +146,7 @@ Every command that moves is stoppable; a save is not.
 The panel offers the red stop for every command the device says is stoppable, and never for one it says is not.
 
 **Job runner** - `ETKT`, which takes one command at a time and runs it.
-The web server's task hands it a command with `submit()`, into a single slot, and the command loop takes it from there in `loop()`: it runs the command, parks the motors, empties the slot, and then draws the idle screen, so a job posted while that draws is taken.
+The web server's task hands it a command with `submit()`, which holds one at a time, and the command loop takes it from there in `loop()`: it runs the command, parks the motors, lets the command go, and then draws the idle screen, so a job posted while that draws is taken.
 Every stop rule lives here: what can be stopped, what a stop leaves on the tape, and what the panel is told afterwards.
 Everything it presses goes through the **printhead**, at the job's one **calibration**.
 It builds and runs on a host against fakes, so `test/test_etkt` checks those rules without a machine or a roll of tape.

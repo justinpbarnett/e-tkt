@@ -6,7 +6,7 @@
 // carries. Until these tests none of that could be checked without a board
 // on wifi. The machine behind the Api is the real one, built by HostMachine
 // with fakes where it meets the hardware, so a command the Api accepts is one
-// the job runner really queued.
+// the job runner really took.
 //
 // Run with:  pio test -e native
 #include <unity.h>
@@ -148,7 +148,7 @@ void test_a_method_nothing_answers_to_is_told_the_one_that_is(void) {
 
 // A command the machine can take is handed to the job runner, which has it by
 // the time the reply says so.
-void test_a_command_is_queued_for_the_job_runner(void) {
+void test_a_command_is_handed_to_the_job_runner(void) {
   const Reply reply = post("/api/cut", "{}");
 
   TEST_ASSERT_EQUAL_INT(200, reply.code);
@@ -225,7 +225,7 @@ void test_a_label_without_its_text_is_refused(void) {
 }
 
 // The text in the body is the label the job runner prints.
-void test_a_label_is_queued_with_its_text(void) {
+void test_a_label_is_submitted_with_its_text(void) {
   TEST_ASSERT_EQUAL_INT(200, post("/api/tag", "{\"tag\":\"HELLO\"}").code);
 
   const StatusUpdate status = machine->etkt.createStatus();
@@ -308,7 +308,7 @@ void test_a_run_of_no_labels_is_refused(void) {
 }
 
 // A run's length in the body is the one the job runner counts to.
-void test_a_run_of_labels_is_queued_with_its_length(void) {
+void test_a_run_of_labels_is_submitted_with_its_length(void) {
   TEST_ASSERT_EQUAL_INT(200,
                         post("/api/tag", "{\"tag\":\"HI\",\"copies\":3}").code);
 
@@ -911,21 +911,21 @@ int main(int, char**) {
   RUN_TEST(test_idle_is_not_a_command_anyone_can_post);
   RUN_TEST(test_a_command_asked_for_with_get_is_told_to_post);
   RUN_TEST(test_a_method_nothing_answers_to_is_told_the_one_that_is);
-  RUN_TEST(test_a_command_is_queued_for_the_job_runner);
+  RUN_TEST(test_a_command_is_handed_to_the_job_runner);
   RUN_TEST(test_a_command_while_another_runs_is_refused_as_a_conflict);
   RUN_TEST(test_a_command_that_trials_an_align_needs_one);
   RUN_TEST(test_an_align_out_of_range_is_refused_not_clamped);
   RUN_TEST(test_a_command_that_trials_a_force_needs_one);
   RUN_TEST(test_a_calibration_in_the_body_is_the_one_the_job_gets);
   RUN_TEST(test_a_label_without_its_text_is_refused);
-  RUN_TEST(test_a_label_is_queued_with_its_text);
+  RUN_TEST(test_a_label_is_submitted_with_its_text);
   RUN_TEST(test_a_label_that_is_not_text_is_refused);
   RUN_TEST(test_a_label_too_long_to_print_is_refused);
   RUN_TEST(test_the_longest_label_of_symbols_is_accepted);
   RUN_TEST(test_a_label_the_wheel_cannot_print_is_refused);
   RUN_TEST(test_a_move_may_name_the_cut_mark);
   RUN_TEST(test_a_run_of_no_labels_is_refused);
-  RUN_TEST(test_a_run_of_labels_is_queued_with_its_length);
+  RUN_TEST(test_a_run_of_labels_is_submitted_with_its_length);
   RUN_TEST(test_copies_are_ignored_by_a_command_that_prints_no_labels);
   RUN_TEST(test_a_roll_too_short_to_be_one_is_refused);
   RUN_TEST(test_a_new_roll_is_declared_at_its_length);

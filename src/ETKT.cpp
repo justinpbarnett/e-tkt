@@ -211,18 +211,18 @@ void ETKT::submit(const CommandOptions& options) {
   // task's stack and the device needs them to outlive the request, but who
   // owns what should not be part of the interface: a refused command leaves
   // the caller's copy exactly as it found it.
-  CommandOptions* queued = new CommandOptions(options);
+  CommandOptions* incoming = new CommandOptions(options);
 
   this->lock.lock();
   if (this->command != NULL) {
     this->lock.unlock();
-    delete queued;
+    delete incoming;
     throw PrinterBusyException();
   }
-  this->command = queued;
+  this->command = incoming;
   // A new job, so the last one's stop is old news.
   this->lastStopped = StoppedCommand();
-  this->queued.notify_one();
+  this->submitted.notify_one();
   this->lock.unlock();
 }
 
@@ -276,16 +276,16 @@ void ETKT::accountForTape() {
 
 void ETKT::loop() {
   // Wait for a command, with a timeout of 500 ms just in case. The wait
-  // checks the slot before it sleeps, so a command queued before loop() got
+  // looks for one before it sleeps, so a command submitted before loop() got
   // here is taken at once rather than half a second late.
   std::unique_lock<std::mutex> guard(this->lock);
-  this->queued.wait_for(guard, std::chrono::milliseconds(500),
-                        [this] { return this->command != NULL; });
+  this->submitted.wait_for(guard, std::chrono::milliseconds(500),
+                           [this] { return this->command != NULL; });
 
   // Take a copy of which command it is while the lock is held. Only this
-  // function ever clears the slot, so reading it again after the unlock
+  // function ever lets a command go, so reading it again after the unlock
   // would in fact be safe today -- but that is a fact about the rest of the
-  // class, not about this code, and the next writer to the slot would
+  // class, not about this code, and the next code to set this->command would
   // silently break it. The enum is two bytes; copy it out.
   if (this->command == NULL) {
     return;
@@ -314,7 +314,7 @@ void ETKT::loop() {
   }
 
   // Four commands feed, and every feed is tape off the roll. Charged before
-  // the slot is released, so the first idle status already shows it.
+  // the command is let go, so the first idle status already shows it.
   this->accountForTape();
 
   // Whether a stop cut this command short, as against arriving while it was
@@ -324,12 +324,12 @@ void ETKT::loop() {
     this->logger->log(String("Stopped ") + commandName(running));
   }
 
-  // Park the motors before the command slot is released, and outside the
-  // lock, which used to be held through all of this and stalled every status
-  // poll from the web task for as long as it took. Parking before the release
-  // closes a gap: submit() goes on refusing new work until the slot is
-  // genuinely clear, so nothing can begin against a machine that is still
-  // being put away.
+  // Park the motors before the command is let go, and outside the lock,
+  // which used to be held through all of this and stalled every status poll
+  // from the web task for as long as it took. Parking first closes a gap:
+  // submit() goes on refusing new work until the machine is genuinely no
+  // longer busy, so nothing can begin against a machine that is still being
+  // put away.
   this->printhead->park();
   this->feeder->deenergize();
 
@@ -355,7 +355,8 @@ void ETKT::loop() {
   this->copy = 0;
   this->printed = 0;
   this->stoppingAfterLabel = false;
-  // Down again before the slot opens, so no stop outlives its command.
+  // Down again before the next command can be submitted, so no stop
+  // outlives its command.
   this->stopSignal->clear();
   this->lock.unlock();
 

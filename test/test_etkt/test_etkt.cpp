@@ -210,7 +210,7 @@ void test_saving_stores_the_calibration_and_reboots(void) {
 
 // A job is one at a time. A second tap while the first job waits its turn
 // must not replace it: the first tap is the one the operator is watching.
-void test_a_second_job_is_refused_while_one_is_queued(void) {
+void test_a_second_job_is_refused_while_the_first_waits_its_turn(void) {
   submit(Command::FEED);
 
   TEST_ASSERT_TRUE(refused(Command::CUT));
@@ -577,7 +577,7 @@ int main(int, char**) {
   RUN_TEST(test_a_reel_loads_a_roll_of_the_declared_length);
   RUN_TEST(test_a_reel_without_a_length_takes_the_last_roll_length);
   RUN_TEST(test_saving_stores_the_calibration_and_reboots);
-  RUN_TEST(test_a_second_job_is_refused_while_one_is_queued);
+  RUN_TEST(test_a_second_job_is_refused_while_the_first_waits_its_turn);
   RUN_TEST(test_a_job_posted_while_the_idle_screen_draws_is_taken);
   RUN_TEST(test_no_job_starts_the_screen_again);
   RUN_TEST(test_the_full_test_cuts_at_the_align_it_is_testing);
