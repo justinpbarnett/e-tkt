@@ -1,7 +1,8 @@
 // How much tape a label takes, and what that leaves on the roll.
 //
 // The same sums as src/Tape.h, over the numbers api/capabilities serves, so
-// the page can say how many labels fit before the roll runs out. The machine
+// the page can say how many labels fit before the roll runs out. The worked
+// cases in test/vectors/tape.json hold both to the same answers. The machine
 // cannot see the tape: every length here is a count of feeds, and an
 // estimate. Each function takes those numbers as `device`, the capabilities
 // as readCapabilities() in status.js returns them.

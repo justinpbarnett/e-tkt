@@ -6,43 +6,84 @@
 // label early or runs one off the end. Run with:  pio test -e native
 #include <unity.h>
 
+#include <fstream>
+#include <iterator>
+#include <string>
+
+#include "ArduinoJson.h"
 #include "Configuration.h"
 #include "Tape.h"
 
 void setUp(void) {}
 void tearDown(void) {}
 
-// --- one label -------------------------------------------------------------
+// --- the cases the panel is held to as well ---------------------------------
+//
+// data/tape.js restates these sums for the panel, and test/panel/tape.test.js
+// holds it to the same cases as this file, from test/vectors/tape.json. A
+// case added there is checked in both languages.
 
-void test_a_label_is_a_lead_then_a_feed_per_character(void) {
-  // The panel pads every label to one past the minimum, so this is the
-  // shortest thing it sends: one lead feed and seven characters.
-  TEST_ASSERT_EQUAL_INT(8, labelFeeds(7));
-  TEST_ASSERT_EQUAL_INT(LEAD_FEEDS + 30, labelFeeds(30));
-  TEST_ASSERT_EQUAL_INT(LEAD_FEEDS + MAX_LABEL_CHARACTERS,
-                        labelFeeds(MAX_LABEL_CHARACTERS));
+// The cases, parsed. pio test runs the program from the project directory.
+// What it returns is good until the next call.
+static JsonObject vectors(void) {
+  static DynamicJsonDocument doc(16384);
+  std::ifstream file("test/vectors/tape.json");
+  TEST_ASSERT_TRUE_MESSAGE(file.is_open(),
+                           "cannot open test/vectors/tape.json");
+  const std::string text((std::istreambuf_iterator<char>(file)),
+                         std::istreambuf_iterator<char>());
+  const DeserializationError error = deserializeJson(doc, text);
+  TEST_ASSERT_EQUAL_STRING("Ok", error.c_str());
+  return doc.as<JsonObject>();
 }
 
-void test_a_short_label_is_topped_up_to_the_minimum(void) {
-  TEST_ASSERT_EQUAL_INT(MIN_LABEL_CHARACTERS - 3, topUpFeeds(3));
-  TEST_ASSERT_EQUAL_INT(LEAD_FEEDS + MIN_LABEL_CHARACTERS, labelFeeds(3));
-  TEST_ASSERT_EQUAL_INT(1, topUpFeeds(MIN_LABEL_CHARACTERS - 1));
+// The cases under one key. Never empty: a list that is missing would
+// otherwise pass, having no case in it to fail.
+static JsonArray cases(const char* key) {
+  const JsonArray list = vectors()[key];
+  TEST_ASSERT_TRUE_MESSAGE(list.size() > 0, key);
+  return list;
 }
 
-void test_a_label_at_the_minimum_needs_no_top_up(void) {
-  TEST_ASSERT_EQUAL_INT(0, topUpFeeds(MIN_LABEL_CHARACTERS));
-  TEST_ASSERT_EQUAL_INT(0, topUpFeeds(MIN_LABEL_CHARACTERS + 1));
+// One of a case's numbers. A key that is missing or misspelt fails, rather
+// than reading as the zero a case may well expect.
+static int number(JsonObject item, const char* key) {
+  TEST_ASSERT_TRUE_MESSAGE(item[key].is<int>(), key);
+  return item[key].as<int>();
 }
 
-void test_a_single_letter_is_left_short(void) {
-  // The one exception the tag handler has always made.
-  TEST_ASSERT_EQUAL_INT(0, topUpFeeds(1));
-  TEST_ASSERT_EQUAL_INT(LEAD_FEEDS + 1, labelFeeds(1));
+void test_the_cases_are_worked_for_this_machine(void) {
+  // As /api/capabilities serves it to the panel. A change to one of these
+  // has to be worked through the cases by hand, not just made here.
+  const JsonObject device = vectors()["device"];
+  TEST_ASSERT_EQUAL_INT(number(device["label"], "minimum"),
+                        MIN_LABEL_CHARACTERS);
+  TEST_ASSERT_EQUAL_INT(number(device["label"], "maximum"),
+                        MAX_LABEL_CHARACTERS);
+  TEST_ASSERT_EQUAL_INT(number(device["feed"], "lead"), LEAD_FEEDS);
+  TEST_ASSERT_EQUAL_INT(number(device["feed"], "length_um"), FEED_LENGTH_UM);
 }
 
-void test_an_empty_label_still_feeds_a_whole_minimum(void) {
-  TEST_ASSERT_EQUAL_INT(LEAD_FEEDS + MIN_LABEL_CHARACTERS, labelFeeds(0));
-  TEST_ASSERT_EQUAL_INT(labelFeeds(0), labelFeeds(-4));
+void test_each_label_takes_the_feeds_the_cases_say(void) {
+  for (JsonObject label : cases("labels")) {
+    const char* why = label["case"];
+    const int characters = number(label, "characters");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(number(label, "top_up"),
+                                  topUpFeeds(characters), why);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(number(label, "feeds"),
+                                  labelFeeds(characters), why);
+    TEST_ASSERT_EQUAL_INT64_MESSAGE(number(label, "mm"),
+                                    tapeUsedMm(labelFeeds(characters)), why);
+  }
+}
+
+void test_the_tape_left_fits_the_labels_the_cases_say(void) {
+  for (JsonObject fit : cases("fit")) {
+    const char* why = fit["case"];
+    TEST_ASSERT_EQUAL_INT64_MESSAGE(
+        number(fit, "labels"),
+        labelsThatFit(number(fit, "left_mm"), number(fit, "characters")), why);
+  }
 }
 
 // --- the roll ----------------------------------------------------------------
@@ -78,25 +119,6 @@ void test_an_overrun_roll_reads_empty_not_negative(void) {
 
 // --- printing to the end of the roll ----------------------------------------
 
-void test_labels_that_fit_rounds_down(void) {
-  // 3 m at 32 mm a label is 93.75 labels. The 94th runs off the end.
-  TEST_ASSERT_EQUAL_INT64(
-      DEFAULT_ROLL_LENGTH_MM * 1000LL / (labelFeeds(7) * FEED_LENGTH_UM),
-      labelsThatFit(DEFAULT_ROLL_LENGTH_MM, 7));
-  TEST_ASSERT_EQUAL_INT64(93, labelsThatFit(3000, 7));
-}
-
-void test_exactly_one_label_left_fits_one(void) {
-  const long long oneLabelMm = labelFeeds(7) * FEED_LENGTH_UM / 1000;
-  TEST_ASSERT_EQUAL_INT64(1, labelsThatFit(oneLabelMm, 7));
-  TEST_ASSERT_EQUAL_INT64(0, labelsThatFit(oneLabelMm - 1, 7));
-}
-
-void test_an_empty_roll_fits_nothing(void) {
-  TEST_ASSERT_EQUAL_INT64(0, labelsThatFit(0, 7));
-  TEST_ASSERT_EQUAL_INT64(0, labelsThatFit(-10, 7));
-}
-
 void test_the_copy_limit_never_cuts_a_roll_short(void) {
   // The cap exists to stop a request running for days, not to shorten a
   // print-to-the-end. The longest roll of the panel's shortest label has to
@@ -130,19 +152,14 @@ void test_copies_are_bounded(void) {
 
 int main(int, char**) {
   UNITY_BEGIN();
-  RUN_TEST(test_a_label_is_a_lead_then_a_feed_per_character);
-  RUN_TEST(test_a_short_label_is_topped_up_to_the_minimum);
-  RUN_TEST(test_a_label_at_the_minimum_needs_no_top_up);
-  RUN_TEST(test_a_single_letter_is_left_short);
-  RUN_TEST(test_an_empty_label_still_feeds_a_whole_minimum);
+  RUN_TEST(test_the_cases_are_worked_for_this_machine);
+  RUN_TEST(test_each_label_takes_the_feeds_the_cases_say);
+  RUN_TEST(test_the_tape_left_fits_the_labels_the_cases_say);
   RUN_TEST(test_each_feed_uses_the_configured_length);
   RUN_TEST(test_negative_feeds_use_nothing);
   RUN_TEST(test_a_long_count_does_not_overflow);
   RUN_TEST(test_what_is_left_is_the_roll_less_what_was_fed);
   RUN_TEST(test_an_overrun_roll_reads_empty_not_negative);
-  RUN_TEST(test_labels_that_fit_rounds_down);
-  RUN_TEST(test_exactly_one_label_left_fits_one);
-  RUN_TEST(test_an_empty_roll_fits_nothing);
   RUN_TEST(test_the_copy_limit_never_cuts_a_roll_short);
   RUN_TEST(test_roll_lengths_are_bounded);
   RUN_TEST(test_the_default_roll_is_one_a_request_may_declare);

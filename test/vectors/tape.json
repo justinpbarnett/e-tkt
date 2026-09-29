@@ -1,0 +1,25 @@
+{
+  "about": "How much tape a label takes, worked by hand for the label maker in device, as /api/capabilities serves it. The firmware and the panel each do these sums, in src/Tape.h and data/tape.js, and test/test_tape/test_tape.cpp and test/panel/tape.test.js hold both to these cases.",
+  "device": { "label": { "minimum": 6, "maximum": 249 }, "feed": { "lead": 1, "length_um": 4000 } },
+  "labels": [
+    { "case": "the shortest label the panel sends", "characters": 7, "top_up": 0, "feeds": 8, "mm": 32 },
+    { "case": "a label is the lead and a feed per character", "characters": 30, "top_up": 0, "feeds": 31, "mm": 124 },
+    { "case": "the longest label a request may carry", "characters": 249, "top_up": 0, "feeds": 250, "mm": 1000 },
+    { "case": "a short label is topped up to the minimum", "characters": 3, "top_up": 3, "feeds": 7, "mm": 28 },
+    { "case": "a label one short of the minimum", "characters": 5, "top_up": 1, "feeds": 7, "mm": 28 },
+    { "case": "a label at the minimum needs no top-up", "characters": 6, "top_up": 0, "feeds": 7, "mm": 28 },
+    { "case": "a single letter is left short", "characters": 1, "top_up": 0, "feeds": 2, "mm": 8 },
+    { "case": "an empty label still feeds a whole minimum", "characters": 0, "top_up": 6, "feeds": 7, "mm": 28 },
+    { "case": "a negative length feeds as an empty label", "characters": -4, "top_up": 6, "feeds": 7, "mm": 28 }
+  ],
+  "fit": [
+    { "case": "3 m holds 93.75 of the panel's shortest label, not 94", "left_mm": 3000, "characters": 7, "labels": 93 },
+    { "case": "3 m of short labels, each topped up to the minimum", "left_mm": 3000, "characters": 3, "labels": 107 },
+    { "case": "3 m of single letters, each left short", "left_mm": 3000, "characters": 1, "labels": 375 },
+    { "case": "10 m holds 312.5 of the panel's shortest label", "left_mm": 10000, "characters": 7, "labels": 312 },
+    { "case": "exactly one label left fits one", "left_mm": 32, "characters": 7, "labels": 1 },
+    { "case": "a millimetre short of one label fits none", "left_mm": 31, "characters": 7, "labels": 0 },
+    { "case": "an empty roll fits nothing", "left_mm": 0, "characters": 7, "labels": 0 },
+    { "case": "less than nothing left fits nothing", "left_mm": -10, "characters": 7, "labels": 0 }
+  ]
+}

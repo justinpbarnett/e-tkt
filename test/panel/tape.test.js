@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
 import {
@@ -14,24 +15,45 @@ import {
 } from "../../data/tape.js";
 import { labelMaker } from "./device.js";
 
-test("labels that fit count the lead, a feed per character and the top-up", () => {
-  // The same sums as labelsThatFit() in Tape.h. Seven characters take eight
-  // feeds of 4 mm, so 3 m holds 93 of them and not the 94 that would run off
-  // the end. Three characters are topped up to six and take seven feeds.
+// The tape cases, worked by hand. test/test_tape/test_tape.cpp holds the
+// firmware's own sums in src/Tape.h to the same file, so the page and the
+// device cannot come to disagree about how much tape a label takes.
+const vectors = JSON.parse(readFileSync(new URL("../vectors/tape.json", import.meta.url), "utf8"));
+
+// The cases under one key. Never empty: a list that is missing would
+// otherwise pass, having no case in it to fail.
+function cases(key) {
+  const list = vectors[key];
+  assert.ok(Array.isArray(list) && list.length > 0, key);
+  return list;
+}
+
+test("the shared tape cases are worked for this label maker", () => {
+  // As api/capabilities serves it. A change to one of these has to be worked
+  // through the cases by hand.
   const device = labelMaker();
-  assert.equal(labelsThatFit(3000, 7, device), 93);
-  assert.equal(labelsThatFit(3000, 3, device), 107);
-  assert.equal(labelsThatFit(3000, 1, device), 375);
-  assert.equal(labelsThatFit(31, 7, device), 0);
-  assert.equal(labelsThatFit(0, 7, device), 0);
+  assert.deepEqual(
+    {
+      label: { minimum: device.label.minimum, maximum: device.label.maximum },
+      feed: { lead: device.feed.lead, length_um: device.feed.length_um },
+    },
+    vectors.device,
+  );
 });
 
-test("a label is as long on the tape as the feeds it takes", () => {
-  // What the line under the tape says the label will come out at. A short
-  // label comes out as long as the minimum, because of its top-up.
+test("a label is as long on the tape as the feeds the shared cases say it takes", async (t) => {
+  // What the line under the tape says the label will come out at.
   const device = labelMaker();
-  assert.equal(labelLengthMm(9, device), 40);
-  assert.equal(labelLengthMm(2, device), 28);
+  for (const label of cases("labels")) {
+    await t.test(label.case, () => assert.equal(labelLengthMm(label.characters, device), label.mm));
+  }
+});
+
+test("the tape left fits as many labels as the shared cases say", async (t) => {
+  const device = labelMaker();
+  for (const fit of cases("fit")) {
+    await t.test(fit.case, () => assert.equal(labelsThatFit(fit.left_mm, fit.characters, device), fit.labels));
+  }
 });
 
 test("a length of tape reads in the unit a person would say it in, rounded down", () => {

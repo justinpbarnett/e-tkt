@@ -122,6 +122,7 @@ So the panel warns when a print looks like more than is left, but does not refus
 **Labels that fit** - how many of a label the tape left holds, each one taking the lead, a feed per character and the top-up, and the cut taking none.
 Rounded down, because a label that would run off the end of the tape is not one that fits.
 `labelsThatFit()` in `Tape.h`, restated in `data/tape.js`, which is where it is used.
+The worked cases in `test/vectors/tape.json` hold both to the same answers, from `test/test_tape` and `test/panel/tape.test.js`.
 
 ## Commands
 

@@ -12,7 +12,8 @@
 // The panel does the same sums to say how many labels will fit before the
 // roll runs out. It is served the numbers -- the lead, the feed length, the
 // roll -- from /api/capabilities and /api/status rather than keeping copies,
-// but labelFeeds() itself is restated in data/tape.js.
+// but labelFeeds() itself is restated in data/tape.js. The worked cases in
+// test/vectors/tape.json hold both copies to the same answers.
 
 // The blank feed before a label's first character. It leaves a margin ahead
 // of the text for the cut at the end of the previous label.
