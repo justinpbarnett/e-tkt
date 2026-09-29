@@ -295,7 +295,8 @@ void ETKT::loop() {
 
   // Picked once, as the job begins, so its presses cannot disagree: the full
   // test used to press its characters at the align it was trialling and cut
-  // at the saved one.
+  // at the saved one. Field by field, because a row can read one value
+  // without the other: the align test trials an align at the saved force.
   const CommandSpec* spec = commandSpec(running);
   const bool trialsAlign = spec != NULL && spec->usesAlign;
   const bool trialsForce = spec != NULL && spec->usesForce;
@@ -411,14 +412,16 @@ void ETKT::cutCommandInternal() {
 void ETKT::saveCommandInternal() {
   this->logger->log("saving settings");
 
-  display->renderSaved(this->command->align, this->command->force);
+  // The job's calibration is the pair this save was sent, since its row says
+  // it reads both.
+  display->renderSaved(this->calibration);
   // The waits used to live inside the two renderers. They are the caller's
   // business: how long a confirmation stays up is a decision about this
   // command, not about how to draw a screen.
   delay(SAVED_SCREEN_MS);
   ledFinish->off();
 
-  settings->save(this->command->align, this->command->force);
+  settings->save(this->calibration.align, this->calibration.force);
   display->render(Screen::REBOOTING);
   delay(REBOOT_SCREEN_MS);
   ledFinish->off();

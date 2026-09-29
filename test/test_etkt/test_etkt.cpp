@@ -197,8 +197,8 @@ void test_saving_stores_the_calibration_and_reboots(void) {
 
   const DisplayCall* saved = display->last(DisplayCall::RENDER_SAVED);
   TEST_ASSERT_NOT_NULL(saved);
-  TEST_ASSERT_EQUAL_INT(7, saved->align);
-  TEST_ASSERT_EQUAL_INT(3, saved->force);
+  TEST_ASSERT_EQUAL_INT(7, saved->calibration.align);
+  TEST_ASSERT_EQUAL_INT(3, saved->calibration.force);
   TEST_ASSERT_EQUAL_INT((int)Screen::REBOOTING, (int)display->screens().back());
   TEST_ASSERT_EQUAL_INT(1, stubRestarts());
   // What the machine reads when it comes back up.

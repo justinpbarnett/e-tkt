@@ -56,5 +56,5 @@ class OledDisplay : public Display {
   void setConnectionInfo(const String& ip, const String& ssid) override;
   void renderProgress(int charactersDone, const String& label, int copy,
                       int copies) override;
-  void renderSaved(int align, int force) override;
+  void renderSaved(const Calibration& saved) override;
 };

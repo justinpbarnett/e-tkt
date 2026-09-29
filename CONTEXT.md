@@ -54,7 +54,7 @@ The press never comes down on a slot the wheel did not reach.
 **Calibration** - an align and a force together, the pair one job presses at from its first character to its cut.
 The job runner picks it as the job begins: the pair being trialled for the two tests, and the saved pair for everything else.
 Before there was one, each press looked its own up, and the full test cut at the saved align after it stamped its characters at the align it was testing.
-`Calibration`, in `Printhead.h`.
+`Calibration`, in `Calibration.h`.
 
 ## What a label is
 

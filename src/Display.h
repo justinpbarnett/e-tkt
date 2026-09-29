@@ -2,6 +2,8 @@
 
 #include <Arduino.h>
 
+#include "Calibration.h"
+
 // How long the two confirmation screens stay up before whatever comes next
 // replaces them. These used to be delay() calls inside the renderers, which
 // meant Display decided how long its caller blocked.
@@ -101,12 +103,12 @@ class Display {
                               int copies) = 0;
 
   /**
-   * @brief Renders the save confirmation, showing the two values that were
+   * @brief Renders the save confirmation, showing the calibration that was
    * just written to EEPROM.
    *
    * Its own method rather than a Screen, because it is the one fixed screen
    * that carries numbers. Returns immediately; the caller waits
    * SAVED_SCREEN_MS.
    */
-  virtual void renderSaved(int align, int force) = 0;
+  virtual void renderSaved(const Calibration& saved) = 0;
 };

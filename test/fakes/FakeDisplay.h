@@ -36,8 +36,7 @@ struct DisplayCall {
   String label = "";                   // RENDER_PROGRESS
   int copy = 0;                        // RENDER_PROGRESS
   int copies = 0;                      // RENDER_PROGRESS
-  int align = 0;                       // RENDER_SAVED
-  int force = 0;                       // RENDER_SAVED
+  Calibration calibration = {0, 0};    // RENDER_SAVED
   String ip = "";                      // CONNECTION_INFO
   String ssid = "";                    // CONNECTION_INFO
   unsigned long atMs = 0;
@@ -98,10 +97,9 @@ class FakeDisplay : public Display {
     this->record(c);
   }
 
-  void renderSaved(int align, int force) override {
+  void renderSaved(const Calibration& saved) override {
     DisplayCall c(DisplayCall::RENDER_SAVED);
-    c.align = align;
-    c.force = force;
+    c.calibration = saved;
     this->record(c);
   }
 

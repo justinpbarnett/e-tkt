@@ -454,17 +454,17 @@ void OledDisplay::renderProgress(int charactersDone, const String& label,
   this->u8g2->sendBuffer();
 }
 
-void OledDisplay::renderSaved(int align, int force) {
+void OledDisplay::renderSaved(const Calibration& saved) {
   this->clear(0);
   this->u8g2->setFont(u8g2_font_nine_by_five_nbp_t_all);
   this->u8g2->drawStr(47, 17, "SAVED!");
 
   String alignString = "ALIGN: ";
-  alignString.concat(align);
+  alignString.concat(saved.align);
   this->u8g2->drawStr(44, 37, alignString.c_str());
 
   String forceString = "FORCE: ";
-  forceString.concat(force);
+  forceString.concat(saved.force);
   this->u8g2->drawStr(42, 57, forceString.c_str());
 
   this->u8g2->setFont(u8g2_font_open_iconic_all_1x_t);
