@@ -31,6 +31,11 @@ class FakeServo : public ServoDriver {
   std::vector<ServoCall> calls;
   bool attached = false;
 
+  // Called after every write(), once it is in calls, which is where a test
+  // notes where the daisy wheel stood as the press came down. See
+  // StrokeLog.h.
+  std::function<void()> afterWrite;
+
   void attach(int pin) override {
     this->attached = true;
     ServoCall c = {ServoCall::ATTACH, pin, millis()};
@@ -46,6 +51,9 @@ class FakeServo : public ServoDriver {
   void write(int angle) override {
     ServoCall c = {ServoCall::WRITE, angle, millis()};
     this->calls.push_back(c);
+    if (this->afterWrite) {
+      this->afterWrite();
+    }
   }
 
   // --- helpers the tests read the recording through ------------------------
@@ -169,6 +177,12 @@ class FakeStepper : public StepperDriver {
  public:
   std::vector<StepperCall> calls;
   bool energized = false;
+
+  // Where the shaft physically is, in steps from where it started: every
+  // step run() has taken, signed. setCurrentPosition() renames where the
+  // motor is without turning it, so it leaves this alone. This is the
+  // position the hall sensor and the press see. See FakeMagnet.h.
+  long shaft = 0;
   float maxSpeed = 0;
   float acceleration = 0;
 
@@ -217,7 +231,9 @@ class FakeStepper : public StepperDriver {
     if (this->position == this->target) {
       return false;
     }
-    this->position += (this->target > this->position) ? 1 : -1;
+    const long step = (this->target > this->position) ? 1 : -1;
+    this->position += step;
+    this->shaft += step;
     if (this->afterStep) {
       this->afterStep();
     }

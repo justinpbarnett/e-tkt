@@ -21,20 +21,25 @@
 #include "ETKT.h"
 #include "FakeDisplay.h"
 #include "FakeDrivers.h"
+#include "FakeMagnet.h"
 #include "Feeder.h"
 #include "HallSwitch.h"
 #include "Light.h"
 #include "Logger.h"
 #include "Press.h"
+#include "Printhead.h"
 #include "Roll.h"
 #include "Settings.h"
 #include "Sound.h"
 #include "StopSignal.h"
+#include "StrokeLog.h"
 
 static FakeServo* pressServo;
 static FakeStepper* charStepper;
 static FakeStepper* feedStepper;
 static FakeDisplay* display;
+static FakeMagnet* magnet;
+static StrokeLog* strokes;
 
 static Logger* logger;
 static StopSignal* stopSignal;
@@ -46,6 +51,7 @@ static Light* ledChar;
 static Press* press;
 static HallSwitch* hall;
 static DaisyWheel* daisywheel;
+static Printhead* printhead;
 static Feeder* feeder;
 static ETKT* etkt;
 
@@ -55,6 +61,10 @@ void setUp(void) {
   charStepper = new FakeStepper();
   feedStepper = new FakeStepper();
   display = new FakeDisplay();
+  // Anywhere but where the shaft starts, so the boot home has to find it.
+  magnet = new FakeMagnet(charStepper, 1000);
+  magnet->install();
+  strokes = new StrokeLog(pressServo, magnet);
 
   logger = new Logger();
   stopSignal = new StopSignal();
@@ -65,10 +75,11 @@ void setUp(void) {
   ledChar = new Light(CHARACTER_LED_PIN, stopSignal);
   press = new Press(logger, SERVO_PIN, ledChar, pressServo);
   hall = new HallSwitch(logger, HALL_PIN);
-  daisywheel = new DaisyWheel(logger, hall, settings, charStepper, stopSignal);
+  daisywheel = new DaisyWheel(logger, hall, charStepper, stopSignal);
+  printhead = new Printhead(logger, daisywheel, press, stopSignal);
   feeder = new Feeder(logger, feedStepper, stopSignal);
-  etkt = new ETKT(logger, settings, display, daisywheel, hall, feeder, roll,
-                  press, sound, ledFinish, ledChar, stopSignal);
+  etkt = new ETKT(logger, settings, display, printhead, feeder, roll, sound,
+                  ledFinish, ledChar, stopSignal);
   etkt->initialize();
   display->clear();
 }
@@ -76,6 +87,7 @@ void setUp(void) {
 void tearDown(void) {
   delete etkt;
   delete feeder;
+  delete printhead;
   delete daisywheel;
   delete hall;
   delete press;
@@ -86,6 +98,8 @@ void tearDown(void) {
   delete sound;
   delete stopSignal;
   delete logger;
+  delete strokes;
+  delete magnet;
   delete display;
   delete feedStepper;
   delete charStepper;
@@ -301,6 +315,33 @@ void test_no_job_starts_the_screen_again(void) {
   TEST_ASSERT_EQUAL_INT(0, display->countOf(DisplayCall::INITIALIZE));
 }
 
+// The full test trials an align and a force before either is saved, and
+// the cut that ends it is part of the trial. It used to cut at the saved
+// align, so the tape it handed back was pressed at one align and cut at
+// another, and an operator winding the align up to find the cut mark never
+// saw the cut move.
+void test_the_full_test_cuts_at_the_align_it_is_testing(void) {
+  submit(Command::CUT);
+  etkt->loop();
+  const long cutAtFive = strokes->strokes.back().bearing;
+  settings->save(9, 5);
+  submit(Command::CUT);
+  etkt->loop();
+  const long cutAtNine = strokes->strokes.back().bearing;
+  // Or the two aligns land in the same place and this test proves nothing.
+  TEST_ASSERT_NOT_EQUAL(cutAtFive, cutAtNine);
+  settings->save(5, 5);
+
+  CommandOptions options;
+  options.command = Command::TEST_FULL;
+  options.align = 9;
+  options.force = 5;
+  etkt->submit(options);
+  etkt->loop();
+
+  TEST_ASSERT_EQUAL_INT32(cutAtNine, strokes->strokes.back().bearing);
+}
+
 // --- stopping -------------------------------------------------------------
 
 // A tap on stop can race the end of the job it was meant for. Arriving to
@@ -469,6 +510,7 @@ int main(int, char**) {
   RUN_TEST(test_a_second_job_is_refused_while_one_is_queued);
   RUN_TEST(test_a_job_posted_while_the_idle_screen_draws_is_taken);
   RUN_TEST(test_no_job_starts_the_screen_again);
+  RUN_TEST(test_the_full_test_cuts_at_the_align_it_is_testing);
   RUN_TEST(test_a_stop_with_nothing_running_stops_nothing_later);
   RUN_TEST(test_saving_cannot_be_stopped);
   RUN_TEST(test_only_a_run_of_labels_can_stop_after_a_label);

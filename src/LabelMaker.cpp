@@ -44,6 +44,7 @@
 #include "Network.h"
 #include "OledDisplay.h"
 #include "Press.h"
+#include "Printhead.h"
 #include "Roll.h"
 #include "Settings.h"
 #include "Sound.h"
@@ -90,11 +91,11 @@ Light* ledFinish = new Light(FINISH_LED_PIN, stopSignal);
 Light* ledChar = new Light(CHARACTER_LED_PIN, stopSignal);
 Press* press = new Press(logger, SERVO_PIN, ledChar, pressServo);
 HallSwitch* hall = new HallSwitch(logger, HALL_PIN);
-DaisyWheel* daisywheel =
-    new DaisyWheel(logger, hall, settings, charStepper, stopSignal);
+DaisyWheel* daisywheel = new DaisyWheel(logger, hall, charStepper, stopSignal);
+Printhead* printhead = new Printhead(logger, daisywheel, press, stopSignal);
 Feeder* feeder = new Feeder(logger, feedStepper, stopSignal);
-ETKT* etkt = new ETKT(logger, settings, display, daisywheel, hall, feeder, roll,
-                      press, sound, ledFinish, ledChar, stopSignal);
+ETKT* etkt = new ETKT(logger, settings, display, printhead, feeder, roll, sound,
+                      ledFinish, ledChar, stopSignal);
 Network* network = new Network(logger, display, etkt, WIFI_RESET_PIN);
 
 void setup() {

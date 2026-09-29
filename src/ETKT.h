@@ -6,13 +6,11 @@
 #include <mutex>
 
 #include "Configuration.h"
-#include "DaisyWheel.h"
 #include "Display.h"
 #include "Feeder.h"
-#include "HallSwitch.h"
 #include "Light.h"
 #include "Logger.h"
-#include "Press.h"
+#include "Printhead.h"
 #include "Roll.h"
 #include "Settings.h"
 #include "Sound.h"
@@ -228,10 +226,8 @@ class ETKT {
   Light* ledChar;
   Settings* settings;
   Display* display;
-  DaisyWheel* daisywheel;
-  HallSwitch* hall;
+  Printhead* printhead;
   Feeder* feeder;
-  Press* press;
   Sound* sound;
   Roll* roll;
 
@@ -265,24 +261,18 @@ class ETKT {
   // the command loop.
   long feedsAtLastCut;
 
-  /**
-   * @brief Cuts the tape at the saved force calibration.
-   */
-  void cut();
+  // What every press of the running job is made at, from its first
+  // character to its cut. loop() picks it as the job begins: the align and
+  // force the job is trialling, where its row says it reads them, and the
+  // saved ones otherwise. Only the command loop touches it, so it is not
+  // behind the lock.
+  Calibration calibration;
 
   /**
-   * @brief Cuts the tape at the given force, 1 to 9.
-   *
-   * Separate from cut() rather than a defaulted parameter: force is a 1-9
-   * value, so there is no number left over to mean "caller did not say".
-   * The full test button is the one caller that has a force of its own --
-   * the one being trialled -- so the cut is made at the same setting as the
-   * characters it just stamped.
-   *
-   * A stop is obeyed between the three presses, so it can leave the tape
-   * partly cut.
+   * @brief The align and force saved in the settings. A job that is not
+   * trialling a calibration of its own presses at these.
    */
-  void cutAt(int force);
+  Calibration savedCalibration();
 
   /**
    * @brief Charges the roll for every feed since the last time this ran.
@@ -327,9 +317,8 @@ class ETKT {
 
  public:
   ETKT(Logger* logger, Settings* settings, Display* display,
-       DaisyWheel* daisywheel, HallSwitch* hall, Feeder* feeder, Roll* roll,
-       Press* press, Sound* sound, Light* ledFinish, Light* ledChar,
-       StopSignal* stopSignal);
+       Printhead* printhead, Feeder* feeder, Roll* roll, Sound* sound,
+       Light* ledFinish, Light* ledChar, StopSignal* stopSignal);
   ~ETKT();
 
   /**

@@ -7,14 +7,12 @@
 #include "HallSwitch.h"
 #include "Logger.h"
 #include "Motion.h"
-#include "Settings.h"
 #include "StopSignal.h"
 
-DaisyWheel::DaisyWheel(Logger* logger, HallSwitch* hall, Settings* settings,
-                       StepperDriver* stepper, StopSignal* stop) {
+DaisyWheel::DaisyWheel(Logger* logger, HallSwitch* hall, StepperDriver* stepper,
+                       StopSignal* stop) {
   this->logger = logger;
   this->hall = hall;
-  this->settings = settings;
   this->stepper = stepper;
   this->stop = stop;
 }
@@ -24,14 +22,14 @@ DaisyWheel::~DaisyWheel() {
 }
 
 void DaisyWheel::initialize() {
+  // The wheel's sensor, so nothing else has to know the wheel has one.
+  this->hall->initialize();
   this->stepsPerChar = (float)this->stepsPerRevolution / WHEEL_SLOT_COUNT;
   digitalWrite(PIN_STEPPER_CHAR_ENABLE, HIGH);
   this->stepper->setMaxSpeed(CHARACTER_STEPPER_MAX_SPEED);
   this->stepper->setAcceleration(CHARACTER_STEPPER_MAX_ACCELERATION);
   this->stepper->setPinsInverted(true, false, true);
   this->stepper->setEnablePin(PIN_STEPPER_CHAR_ENABLE);
-  this->home(this->settings->getAlignFactor());  // initial home for reference
-  this->deenergize();
 }
 
 void DaisyWheel::home(int align) {

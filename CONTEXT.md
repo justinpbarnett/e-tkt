@@ -43,6 +43,16 @@ Both are 1 to 9, both are refused outside that range at the HTTP boundary and cl
 **Cut mark** - the wheel slot the machine drives to in order to cut, rather than a character a label can contain.
 `CUT_CHARACTER`.
 
+**Printhead** - the daisy wheel and the press worked together: everything that comes down on the tape.
+A character, the cut and the align test's press are each a turn of the wheel and then a press, unless a stop comes in between.
+The press never comes down on a slot the wheel did not reach.
+`Printhead`, which the job runner drives in place of the wheel and the press.
+
+**Calibration** - an align and a force together, the pair one job presses at from its first character to its cut.
+The job runner picks it as the job begins: the pair being trialled for the two tests, and the saved pair for everything else.
+Before there was one, each press looked its own up, and the full test cut at the saved align after it stamped its characters at the align it was testing.
+`Calibration`, in `Printhead.h`.
+
 ## What a label is
 
 **Label** - the text a user asks for.
@@ -123,6 +133,7 @@ A command is added by adding an enumerator and a row.
 **Job runner** - `ETKT`, which takes one command at a time and runs it.
 The web server's task hands it a command with `submit()`, into a single slot, and the command loop takes it from there in `loop()`: it runs the command, parks the motors, empties the slot, and then draws the idle screen, so a job posted while that draws is taken.
 Every stop rule lives here: what can be stopped, what a stop leaves on the tape, and what the panel is told afterwards.
+Everything it presses goes through the **printhead**, at the job's one **calibration**.
 It builds and runs on a host against fakes, so `test/test_etkt` checks those rules without a machine or a roll of tape.
 
 **Busy** - a command is running.

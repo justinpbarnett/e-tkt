@@ -9,13 +9,11 @@
 
 #include "CharacterSet.h"
 #include "Configuration.h"
-#include "DaisyWheel.h"
 #include "Display.h"
 #include "Feeder.h"
-#include "HallSwitch.h"
 #include "Light.h"
 #include "Logger.h"
-#include "Press.h"
+#include "Printhead.h"
 #include "Progress.h"
 #include "Roll.h"
 #include "Settings.h"
@@ -51,8 +49,8 @@ const CommandSpec ETKT::COMMANDS[] = {
     {Command::REEL, "reel", false, false, NULL, false, false, true,
      &ETKT::reelCommandInternal},
     // Align only. This test presses at the minimum force by design -- see
-    // testCommandInternal -- so a force in the body is ignored, not refused,
-    // which keeps a stale cached script.js working.
+    // Printhead::testPress() -- so a force in the body is ignored, not
+    // refused, which keeps a stale cached script.js working.
     {Command::TEST_ALIGN, "testalign", true, false, NULL, false, false, false,
      &ETKT::testCommandInternal},
     {Command::TEST_FULL, "testfull", true, true, NULL, false, false, false,
@@ -111,20 +109,17 @@ const char* commandName(Command command) {
 }
 
 ETKT::ETKT(Logger* logger, Settings* settings, Display* display,
-           DaisyWheel* daisywheel, HallSwitch* hall, Feeder* feeder, Roll* roll,
-           Press* press, Sound* sound, Light* ledFinish, Light* ledChar,
-           StopSignal* stopSignal) {
+           Printhead* printhead, Feeder* feeder, Roll* roll, Sound* sound,
+           Light* ledFinish, Light* ledChar, StopSignal* stopSignal) {
   // Upstream never assigned this one, and initialize() dereferences it on its
   // first line. It only ever worked because Logger holds no state, so the
   // uninitialised pointer was never actually read through.
   this->logger = logger;
   this->settings = settings;
   this->display = display;
-  this->daisywheel = daisywheel;
-  this->hall = hall;
+  this->printhead = printhead;
   this->feeder = feeder;
   this->roll = roll;
-  this->press = press;
   this->sound = sound;
   this->ledFinish = ledFinish;
   this->ledChar = ledChar;
@@ -138,6 +133,8 @@ ETKT::ETKT(Logger* logger, Settings* settings, Display* display,
   // Nothing has fed yet, so there is nothing to charge.
   this->accountedFeeds = 0;
   this->feedsAtLastCut = 0;
+  this->calibration.align = 0;
+  this->calibration.force = 0;
 }
 
 ETKT::~ETKT() {
@@ -152,10 +149,15 @@ void ETKT::initialize() {
   this->settings->initialize();
   this->roll->initialize();
   this->display->initialize();
-  this->hall->initialize();
-  this->press->initialize();
+  this->printhead->initialize(this->savedCalibration());
   this->feeder->initialize();
-  this->daisywheel->initialize();
+}
+
+Calibration ETKT::savedCalibration() {
+  Calibration saved;
+  saved.align = (int)this->settings->getAlignFactor();
+  saved.force = (int)this->settings->getForceFactor();
+  return saved;
 }
 
 StatusUpdate ETKT::createStatus() {
@@ -257,35 +259,6 @@ void ETKT::accountForTape() {
   }
 }
 
-void ETKT::cut() { this->cutAt((int)this->settings->getForceFactor()); }
-
-void ETKT::cutAt(int force) {
-  if (!ENABLE_CUT) {
-    delay(500);
-    return;
-  }
-  // moves to a specific char (*) then presses label three times (more
-  // vigorously)
-  if (!this->daisywheel->move(CUT_CHARACTER,
-                              this->settings->getAlignFactor())) {
-    // move() cuts the coil current when it refuses, so the wheel is now both
-    // unreferenced and free to turn. Pressing three times at full force into
-    // whatever slot it stopped at would emboss a letter where the cut mark
-    // belongs, and leave the tape uncut anyway. A stop is the other reason
-    // move() says no, and that one was asked for.
-    if (!this->stopSignal->raised()) {
-      this->logger->warn("Skipped the cut: the wheel would not reach the mark");
-    }
-    return;
-  }
-  for (int i = 0; i < 3; i++) {
-    if (this->stopSignal->shouldStop()) {
-      return;
-    }
-    this->press->press(true, force, false);
-  }
-}
-
 void ETKT::loop() {
   // Wait for a command, with a timeout of 500 ms just in case. The wait
   // checks the slot before it sleeps, so a command queued before loop() got
@@ -305,11 +278,20 @@ void ETKT::loop() {
   const Command running = this->command->command;
   guard.unlock();
 
+  // Picked once, as the job begins, so its presses cannot disagree: the full
+  // test used to press its characters at the align it was trialling and cut
+  // at the saved one.
+  const CommandSpec* spec = commandSpec(running);
+  const bool trialsAlign = spec != NULL && spec->usesAlign;
+  const bool trialsForce = spec != NULL && spec->usesForce;
+  const Calibration saved = this->savedCalibration();
+  this->calibration.align = trialsAlign ? this->command->align : saved.align;
+  this->calibration.force = trialsForce ? this->command->force : saved.force;
+
   // Do the task. The command's row says which handler to run. A command with
   // no row at all is a bug worth hearing about; a row with no handler is
   // IDLE, which is a status rather than a job, so it falls straight through
   // to the parking code below.
-  const CommandSpec* spec = commandSpec(running);
   if (spec == NULL) {
     this->logger->log(String("No table row for command ") + (int)running);
   } else if (spec->run != NULL) {
@@ -333,8 +315,7 @@ void ETKT::loop() {
   // closes a gap: submit() goes on refusing new work until the slot is
   // genuinely clear, so nothing can begin against a machine that is still
   // being put away.
-  this->daisywheel->deenergize();
-  this->press->rest();
+  this->printhead->park();
   this->feeder->deenergize();
 
   this->lock.lock();
@@ -371,7 +352,7 @@ void ETKT::loop() {
 void ETKT::feedCommandInternal() {
   this->display->render(Screen::FEEDING);
   this->ledFinish->on(LIGHT_FAINT);
-  this->press->rest();
+  this->printhead->rest();
   delay(500);
   this->feeder->feed();
   this->ledFinish->off();
@@ -381,7 +362,7 @@ void ETKT::feedCommandInternal() {
 void ETKT::reelCommandInternal() {
   this->display->render(Screen::REELING);
   this->ledFinish->on(LIGHT_FAINT);
-  this->press->rest();
+  this->printhead->rest();
   delay(500);
 
   // A reel is a new roll going in. Anything fed before this came off the old
@@ -402,10 +383,10 @@ void ETKT::reelCommandInternal() {
 void ETKT::cutCommandInternal() {
   this->display->render(Screen::CUTTING);
   this->ledChar->on(LIGHT_DIM);
-  this->press->rest();
+  this->printhead->rest();
   delay(500);
 
-  this->cut();
+  this->printhead->cut(this->calibration);
   ledChar->off();
 }
 
@@ -433,74 +414,46 @@ void ETKT::saveCommandInternal() {
 
 void ETKT::testCommandInternal() {
   // No align or force on this screen. renderTest() took both and drew
-  // neither, and showing them would be worse than showing nothing: the press
-  // below deliberately ignores command->force and uses the minimum.
+  // neither, and showing them would be worse than showing nothing: the test
+  // press is always at the minimum force, whatever the job's calibration
+  // says. See Printhead::testPress().
   display->render(Screen::TESTING);
   ledFinish->off();
 
-  if (!this->daisywheel->move("M", this->command->align) ||
-      this->stopSignal->shouldStop()) {
-    return;
-  }
-  // Deliberately the minimum force, matching docs/diy/calibration.md: this
-  // button "will slowly and lightly press the daisy wheel letter" to check
-  // that the press lands centred on the character. Force is calibrated
-  // separately, with the full test button against real tape.
-  //
-  // It must stay at minimum force. This is the only path that passes
-  // slow=true, so it is the only press that holds at peak for
-  // PRESS_TEST_DWELL_MS rather than PRESS_DWELL_MS -- and the calibration doc
-  // sends the user here while the force field is wound up to 9 ("take the
-  // opportunity to see if the alignment is correct"). A full-bite peak held
-  // for seconds is a stalled servo, which is what wears an MG996R's gears and
-  // reams the P_press splines.
-  this->press->press(false, CALIBRATION_VALUE_MIN, true);
+  this->printhead->testPress(this->calibration);
 }
 
 void ETKT::testCommandFullInternal() {
-  String label = "E-TKT";
   this->feedsAtLastCut = this->feeder->feeds();
   this->feeder->feed();
-  for (int i = 0; i < label.length(); i++) {
+  const std::vector<String> characters = Utility::characters("E-TKT");
+  for (size_t i = 0; i < characters.size(); i++) {
     if (this->stopSignal->shouldStop()) {
       return;
     }
-    auto character = label.substring(i, i + 1);
     this->feeder->feed();
-    if (this->daisywheel->move(character, this->command->align) &&
-        !this->stopSignal->shouldStop()) {
-      this->press->press(false, this->command->force, false);
-    }
+    this->printhead->stamp(characters[i], this->calibration);
   }
   if (this->stopSignal->shouldStop()) {
     return;
   }
   this->feeder->feed();
-  this->cutAt(this->command->force);
+  this->printhead->cut(this->calibration);
 }
 
 void ETKT::homeCommandInternal() {
   this->ledFinish->on(LIGHT_FULL);
   this->ledChar->on(LIGHT_FULL);
-  this->press->rest();
+  this->printhead->rest();
   delay(500);
-  this->daisywheel->home(this->settings->getAlignFactor());
+  this->printhead->home(this->calibration);
   delay(1000);
 }
 
 void ETKT::moveCommandInternal() {
-  this->press->rest();
+  this->printhead->rest();
   delay(500);
-  // Nothing presses after this one, so a refused move costs no tape -- but it
-  // leaves the wheel parked somewhere other than the slot that was asked for,
-  // and saying so is the difference between a stuck wheel and a quiet one.
-  // Unless it was stopped, which is the operator's doing and no surprise.
-  if (!this->daisywheel->move(this->command->label,
-                              this->settings->getAlignFactor()) &&
-      !this->stopSignal->raised()) {
-    this->logger->warn(String("The wheel would not reach '") +
-                       this->command->label + "'");
-  }
+  this->printhead->turnTo(this->command->label, this->calibration);
 }
 
 void ETKT::tagCommandInternal() {
@@ -514,7 +467,7 @@ void ETKT::tagCommandInternal() {
   this->copy = 1;
   this->lock.unlock();
   // enables servo
-  this->press->rest();
+  this->printhead->rest();
   delay(500);
 
   if (copies > 1) {
@@ -616,7 +569,7 @@ void ETKT::printLabel(const String& label, int copy, int copies) {
   const int labelLength = characters.size();
 
   // home daisy wheel
-  this->daisywheel->home(this->settings->getAlignFactor());
+  this->printhead->home(this->calibration);
 
   this->feeder->feed(LEAD_FEEDS);
   if (this->stopSignal->shouldStop()) {
@@ -624,19 +577,7 @@ void ETKT::printLabel(const String& label, int copy, int copies) {
   }
 
   for (int i = 0; i < labelLength; i++) {
-    const String& character = characters[i];
-    // Only press what the wheel actually reached. move() logs the character
-    // it could not find and cuts the coil current, which leaves the wheel
-    // unreferenced and free to turn; pressing anyway embosses whichever slot
-    // it stopped at. readCommandOptions() refuses such a label at the door,
-    // so reaching here means a caller inside the device asked for it. A stop
-    // is the other reason the wheel may not have got there, and one that
-    // lands after it did still keeps the press up.
-    if (character != " " &&
-        this->daisywheel->move(character, this->settings->getAlignFactor()) &&
-        !this->stopSignal->shouldStop()) {
-      this->press->press(false, this->settings->getForceFactor(), false);
-    }
+    this->printhead->stamp(characters[i], this->calibration);
 
     this->feeder->feed();
     if (this->stopSignal->shouldStop()) {
@@ -663,5 +604,5 @@ void ETKT::printLabel(const String& label, int copy, int copies) {
     this->feeder->feed(topUp);
   }
 
-  this->cut();
+  this->printhead->cut(this->calibration);
 }

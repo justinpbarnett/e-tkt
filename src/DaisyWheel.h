@@ -5,7 +5,6 @@
 #include "Drivers.h"
 #include "HallSwitch.h"
 #include "Logger.h"
-#include "Settings.h"
 #include "StopSignal.h"
 
 /**
@@ -16,7 +15,6 @@ class DaisyWheel {
  private:
   Logger* logger;
   HallSwitch* hall;
-  Settings* settings;
   // Not owned; see LabelMaker.cpp.
   StepperDriver* stepper;
   StopSignal* stop;
@@ -36,12 +34,13 @@ class DaisyWheel {
   void lose();
 
  public:
-  DaisyWheel(Logger* logger, HallSwitch* hall, Settings* settings,
-             StepperDriver* stepper, StopSignal* stop);
+  DaisyWheel(Logger* logger, HallSwitch* hall, StepperDriver* stepper,
+             StopSignal* stop);
   ~DaisyWheel();
 
   /**
-   * @brief Initializes the daisy wheel stepper motor and homes it.
+   * @brief Starts the hall sensor and sets up the stepper. The wheel does
+   * not move: the first home() is the caller's, at the align it wants.
    */
   void initialize();
 
