@@ -28,6 +28,7 @@
 // Call stubReset() in setUp().
 
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 
 #include <algorithm>
@@ -94,9 +95,19 @@ inline void yield() {}
 inline unsigned long millis() { return stubClockMs(); }
 inline unsigned long micros() { return stubClockMs() * 1000UL + stubClockUs(); }
 
-// The ESP32 core's draws on the hardware random number generator. This one
+// What random() draws from, between howsmall and howbig - 1. The ESP32
+// core's draws on the hardware random number generator. Unset, this one
 // answers the bottom of the range every time, so no test depends on luck.
-inline long random(long howsmall, long) { return howsmall; }
+// The simulator sets a real generator, so that stop ids start somewhere new
+// at every boot, as they do on the machine. See StoppedCommand::id.
+inline std::function<long(long, long)>& stubRandom() {
+  static std::function<long(long, long)> source;
+  return source;
+}
+
+inline long random(long howsmall, long howbig) {
+  return stubRandom() ? stubRandom()(howsmall, howbig) : howsmall;
+}
 
 // --- recorded pin writes ---------------------------------------------------
 
@@ -182,6 +193,7 @@ inline void stubReset() {
   stubClockMs() = 0;
   stubClockUs() = 0;
   stubAfterDelay() = nullptr;
+  stubRandom() = nullptr;
   stubAnalogWrites().clear();
   stubDigitalWrites().clear();
   stubSerialLines().clear();
@@ -213,6 +225,14 @@ class String {
  private:
   std::string value;
 
+  // A number with `places` decimals, padded to the width the core's dtostrf()
+  // is given, so a float logs here as it does on the device.
+  static std::string fixed(double v, unsigned char places) {
+    char text[33];
+    snprintf(text, sizeof text, "%*.*f", places + 2, places, v);
+    return text;
+  }
+
  public:
   String() {}
   String(const char* s) : value(s == 0 ? "" : s) {}
@@ -222,8 +242,8 @@ class String {
   String(long v) : value(std::to_string(v)) {}
   String(unsigned int v) : value(std::to_string(v)) {}
   String(unsigned long v) : value(std::to_string(v)) {}
-  String(float v) : value(std::to_string(v)) {}
-  String(double v) : value(std::to_string(v)) {}
+  String(float v, unsigned char places = 2) : value(fixed(v, places)) {}
+  String(double v, unsigned char places = 2) : value(fixed(v, places)) {}
 
   const char* c_str() const { return this->value.c_str(); }
   const std::string& str() const { return this->value; }

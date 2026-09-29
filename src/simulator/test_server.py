@@ -1,18 +1,26 @@
-"""Checks that the simulator answers the way Api.cpp does.
+"""Checks that the simulator hands the panel's requests to the firmware.
 
-test_firmware.py covers what the simulator reads out of src/. This covers
-what it does with it: the requests it refuses and in what words, the runs of
-labels and the stop, and the count of tape those leave on the roll. The
-panel is built against these answers, so a difference here is a panel that
-works on the simulator and not on the machine. Run it with
+The simulator is the firmware. main.cpp builds this machine's own job runner
+and Api on the host, and server.py relays each request under /api/ to it and
+each reply back. What a reply says is tested once, in test/test_api and
+test/test_etkt. This covers the relay: that a request reaches the Api the way
+the webserver on the device hands it over, and that the reply leaves the way
+the device sends it. Run it from the repository root with
 
     python3 -m unittest discover -s src/simulator
 
-It needs aiohttp, as the simulator does, and skips itself without it.
+It needs aiohttp, as the simulator does, and PlatformIO to build the
+firmware, and skips itself without either.
 """
 
 import asyncio
+import contextlib
+import io
+import json
 import os
+import re
+import shutil
+import subprocess
 import sys
 import unittest
 
@@ -21,491 +29,416 @@ try:
 except ImportError:
     raise unittest.SkipTest("the simulator's server needs aiohttp")
 
-# server.py imports firmware.py relatively, so it has to be reached as part
-# of the package -- which means the repository root on the path, not this
-# folder the way test_firmware.py puts it.
+# server.py is reached as part of the package, which means the repository
+# root on the path rather than this folder.
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__))))
 sys.path.insert(0, ROOT)
 
-from src.simulator import firmware, server  # noqa: E402  (needs the path)
+from src.simulator import server  # noqa: E402  (needs the path)
+
+# How many times faster than the machine the simulated one runs. Fast enough
+# that a label is over before a test could wait on it, and slow enough that a
+# run of the longest label is still pressing when a test stops it.
+SPEED = 1000
+
+# How long a test waits for the machine to finish what it is doing. The
+# longest job a test waits on is a few labels, which the machine takes a
+# minute or so over, and SPEED makes a few hundredths of a second.
+JOB_SECONDS = 10
+
+# The firmware, built once for every test here.
+PROGRAM = None
 
 
-class Gate:
-    """Stands in for the simulator's waits. Open, every wait is over at once.
-    Closed, the machine stops where it is until the test opens it again.
-    close_after() shuts it partway into a job instead: that many more waits
-    go through, and the one after them is held."""
-
-    def __init__(self):
-        self.opened = asyncio.Event()
-        self.opened.set()
-        self.holding = asyncio.Event()
-        self.through = None
-
-    def close_after(self, waits):
-        self.through = waits
-
-    async def held(self):
-        """Returns once the machine is held at a wait."""
-        await self.holding.wait()
-
-    async def pause(self, seconds):
-        if self.through is not None:
-            if self.through == 0:
-                self.opened.clear()
-                self.through = None
-            else:
-                self.through -= 1
-        if not self.opened.is_set():
-            self.holding.set()
-        await self.opened.wait()
+def setUpModule():
+    global PROGRAM
+    try:
+        PROGRAM = server.build()
+    except server.NoPlatformIO as missing:
+        raise unittest.SkipTest(str(missing))
 
 
-def what_stopped(body):
-    """What the status says the last stop cut short, less the two fields
-    every stop here has: an id of its own, and the operator as its cause.
-    Stops.test_every_stop_has_an_id_of_its_own covers those two."""
-    stopped = dict(body["stopped"])
-    del stopped["id"]
-    del stopped["cause"]
-    return stopped
-
-
-def label_waits(label):
-    """The waits one label takes: one for each character, one for the top-up
-    and the cut, and one for the cut's last press, which no stop cuts short."""
-    return len(label) + 2
-
-
-class SimulatorTestCase(unittest.IsolatedAsyncioTestCase):
+class RelayTestCase(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        self.device = firmware.load()
-        self.sim = server.Server(self.device)
-        self.gate = Gate()
-        self.sim.pause = self.gate.pause
-        self.client = TestClient(TestServer(self.sim.application()))
+        # What the machine prints down its serial port would bury the
+        # results.
+        self.device = server.Server(PROGRAM, SPEED,
+                                    serial=asyncio.subprocess.DEVNULL)
+        await self.device.start()
+        self.client = TestClient(TestServer(self.device.application()))
         await self.client.start_server()
 
     async def asyncTearDown(self):
-        self.gate.opened.set()
-        await self.finish()
         await self.client.close()
-
-    async def post(self, path, body=None):
-        response = await self.client.post(path, json=body)
-        return response.status, await response.json()
+        await self.device.close()
 
     async def status(self):
         response = await self.client.get("/api/status")
+        self.assertEqual(200, response.status)
         return await response.json()
 
-    async def finish(self):
-        """Waits for whatever the simulator is running to be done."""
-        task = self.sim.running_task
-        if task is not None:
-            await task
+    async def until_idle(self):
+        """The status once the machine has finished what it is doing."""
+        clock = asyncio.get_running_loop()
+        deadline = clock.time() + JOB_SECONDS
+        while True:
+            status = await self.status()
+            if not status["busy"]:
+                return status
+            if clock.time() > deadline:
+                self.fail("Still busy after %d seconds: %r"
+                          % (JOB_SECONDS, status))
+            await asyncio.sleep(0.01)
 
-    def logged(self, message):
-        return any(line.endswith(" " + message) for line in self.sim.log)
+    async def press(self, tag, copies=1):
+        """Asks for a run of labels, which the machine starts on."""
+        response = await self.client.post(
+            "/api/tag", json={"tag": tag, "copies": copies})
+        self.assertEqual(200, response.status)
+        self.assertEqual({"result": "success"}, await response.json())
+
+    async def stop_a_run(self):
+        """Starts a long run of labels and stops it, and returns what the
+        status says was cut short."""
+        await self.press(" HELLO ", copies=500)
+        response = await self.client.post("/api/stop")
+        self.assertEqual({"result": "stopping"}, await response.json())
+        return (await self.until_idle())["stopped"]
+
+    async def save(self, align, force):
+        """Saves a calibration, which the machine reboots to take up, and
+        returns the status once it has."""
+        response = await self.client.post(
+            "/api/save", json={"align": align, "force": force})
+        self.assertEqual(200, response.status)
+        return await self.until_idle()
+
+    async def restart_simulator(self):
+        """Stops the simulator and starts it again, as its operator would."""
+        await self.asyncTearDown()
+        await self.asyncSetUp()
 
 
-class Requests(SimulatorTestCase):
-    async def test_copies_outside_the_range_are_refused_in_the_devices_words(
-            self):
-        status, body = await self.post("/api/tag", {"tag": "HELLO",
-                                                    "copies": 0})
-        self.assertEqual(400, status)
-        self.assertEqual("Please provide a copies value between 1 and 500, "
-                         "got 0", body["error"])
-        status, body = await self.post("/api/tag", {"tag": "HELLO",
-                                                    "copies": 501})
-        self.assertEqual(400, status)
-        self.assertIsNone(self.sim.command)
-
-    async def test_copies_that_are_not_a_number_read_as_nothing(self):
-        # What as<int>() makes of them, which the range then refuses.
-        status, body = await self.post("/api/tag", {"tag": "HELLO",
-                                                    "copies": "lots"})
-        self.assertEqual(400, status)
-        self.assertTrue(body["error"].endswith("got 0"))
-
-    async def test_a_numeric_string_is_read_as_its_number(self):
-        status, _ = await self.post("/api/tag", {"tag": "HI", "copies": "2"})
-        self.assertEqual(200, status)
-        self.assertEqual(2, self.sim.copies)
-
-    async def test_a_roll_length_outside_the_range_is_refused(self):
-        status, body = await self.post("/api/reel", {"length_mm": 20000})
-        self.assertEqual(400, status)
-        self.assertEqual("Please provide a length_mm value between 500 and "
-                         "10000, got 20000", body["error"])
-
-    async def test_a_field_a_command_does_not_read_is_ignored(self):
-        # Only a tag reads copies, so a feed with one is one feed.
-        status, _ = await self.post("/api/feed", {"copies": 0})
-        self.assertEqual(200, status)
-
-    async def test_a_body_that_is_not_an_object_carries_no_fields(self):
-        status, body = await self.post("/api/tag", ["tag", "copies"])
-        self.assertEqual(400, status)
-        self.assertEqual("Please provide a tag value", body["error"])
-
-    async def test_capabilities_say_how_a_label_uses_the_roll(self):
-        response = await self.client.get("/api/capabilities")
+class Status(RelayTestCase):
+    async def test_an_idle_device_reports_the_firmwares_status(self):
+        # The status the job runner reports on a machine that has just
+        # booted: nothing running, and a roll no one has declared, which the
+        # device takes to be the default length and full.
+        response = await self.client.get("/api/status")
+        self.assertEqual(200, response.status)
         body = await response.json()
-        self.assertEqual({"minimum": 1, "maximum": 500}, body["copies"])
-        self.assertEqual({"minimum_mm": 500, "maximum_mm": 10000,
-                          "default_mm": 3000}, body["roll"])
-        self.assertEqual({"length_um": 4000, "lead": 1}, body["feed"])
-
-    async def test_capabilities_state_every_fact_about_a_command(self):
-        # The panel decides whether to offer a stop, and whether a status
-        # counts a run, from these rows and never from a command's name.
-        response = await self.client.get("/api/capabilities")
-        commands = (await response.json())["commands"]
-        self.assertEqual({"uses_align": False, "uses_force": False,
-                          "label_field": "tag", "field_is_label": True,
-                          "prints_run": True, "uses_roll_length": False,
-                          "stoppable": True, "presses_label": True},
-                         commands["tag"])
-        self.assertFalse(commands["save"]["stoppable"])
-        self.assertNotIn("idle", commands)
-
-
-class Roll(SimulatorTestCase):
-    async def test_a_fresh_device_has_a_full_default_roll(self):
-        body = await self.status()
+        self.assertFalse(body["busy"])
+        self.assertEqual("idle", body["command"])
         self.assertEqual({"length_mm": 3000, "remaining_mm": 3000},
                          body["roll"])
-        self.assertTrue(self.logged("Roll: 3000 mm, 0 feeds used"))
-
-    async def test_every_label_of_a_run_is_charged_to_the_roll(self):
-        await self.post("/api/tag", {"tag": " HELLO ", "copies": 3})
-        await self.finish()
-        used = 3 * self.device.label_feeds(7) * 4
-        body = await self.status()
-        self.assertEqual(3000 - used, body["roll"]["remaining_mm"])
-        self.assertTrue(self.logged("print  HELLO  x 3"))
-        self.assertTrue(self.logged("Printing Complete"))
-
-    async def test_one_label_is_logged_without_a_count(self):
-        await self.post("/api/tag", {"tag": "HI"})
-        await self.finish()
-        self.assertTrue(self.logged("print HI"))
-
-    async def test_feeding_and_the_full_test_use_tape_too(self):
-        await self.post("/api/feed", {})
-        await self.finish()
-        await self.post("/api/testfull", {"align": 5, "force": 5})
-        await self.finish()
-        body = await self.status()
-        self.assertEqual(3000 - (1 + 7) * 4, body["roll"]["remaining_mm"])
-
-    async def test_a_new_roll_starts_the_count_again(self):
-        await self.post("/api/tag", {"tag": " HELLO "})
-        await self.finish()
-        await self.post("/api/reel", {"length_mm": 2500})
-        await self.finish()
-        body = await self.status()
-        # Threading the new roll through to the cutter comes off it.
-        self.assertEqual({"length_mm": 2500,
-                          "remaining_mm": 2500 - 16 * 4}, body["roll"])
-        self.assertTrue(self.logged("New roll: 2500 mm"))
-
-    async def test_a_new_roll_with_no_length_is_as_long_as_the_last(self):
-        await self.post("/api/reel", {"length_mm": 5000})
-        await self.finish()
-        await self.post("/api/reel", {})
-        await self.finish()
-        body = await self.status()
-        self.assertEqual(5000, body["roll"]["length_mm"])
 
 
-class Runs(SimulatorTestCase):
-    async def test_status_says_which_label_of_the_run_is_printing(self):
-        self.gate.opened.clear()
-        await self.post("/api/tag", {"tag": "HI", "copies": 4})
-        body = await self.status()
-        self.assertEqual("tag", body["command"])
-        self.assertEqual(1, body["copy"])
-        self.assertEqual(4, body["copies"])
-        self.assertNotIn("stop", body)
+class Commands(RelayTestCase):
+    async def test_a_commands_body_reaches_the_api(self):
+        # A run of no labels is refused, in the Api's words, which it can
+        # only say about the copies it was sent.
+        response = await self.client.post(
+            "/api/tag", json={"tag": "HELLO", "copies": 0})
+        self.assertEqual(400, response.status)
+        self.assertEqual(
+            {"error": "Please provide a copies value between 1 and 500, "
+                      "got 0"},
+            await response.json())
 
-    async def test_a_run_is_not_reported_once_it_is_over(self):
-        await self.post("/api/tag", {"tag": "HI", "copies": 2})
-        await self.finish()
-        body = await self.status()
-        self.assertFalse(body["busy"])
-        for field in ("copy", "copies", "stop", "stopped", "current_label"):
-            self.assertNotIn(field, body)
+    async def test_a_body_that_is_not_json_is_refused_for_its_type(self):
+        # The Api reads the Content-Type header, so it has to arrive.
+        response = await self.client.post(
+            "/api/feed", data="{}", headers={"Content-Type": "text/plain"})
+        self.assertEqual(415, response.status)
+        self.assertEqual(
+            {"error": "Please send the body as application/json"},
+            await response.json())
 
-    async def test_the_machine_is_busy_until_the_celebration_is_over(self):
-        # The finish LED blinks and fades once the last label is cut, and
-        # the device goes on saying so until it has.
-        self.gate.close_after(label_waits("HI"))
-        await self.post("/api/tag", {"tag": "HI"})
-        await self.gate.held()
-        self.assertTrue(self.logged("Printing Complete"))
-        body = await self.status()
-        self.assertTrue(body["busy"])
-        self.assertEqual(99, body["progress"])
-
-    async def test_a_run_holds_the_machine_until_its_last_label(self):
-        self.gate.opened.clear()
-        await self.post("/api/tag", {"tag": "HI", "copies": 2})
-        status, body = await self.post("/api/feed", {})
-        self.assertEqual(409, status)
-        self.assertEqual(server.BUSY_MESSAGE, body["error"])
-
-
-class StopsAfterTheLabel(SimulatorTestCase):
-    async def test_the_run_ends_once_the_label_being_pressed_is_cut(self):
-        self.gate.opened.clear()
-        await self.post("/api/tag", {"tag": " HELLO ", "copies": 5})
-        status, body = await self.post("/api/stop?after=label")
-        self.assertEqual(200, status)
-        self.assertEqual({"result": "stopping"}, body)
-        self.assertEqual("after_label", (await self.status())["stop"])
-
-        self.gate.opened.set()
-        await self.finish()
-        self.assertTrue(self.logged("Stopping after this label"))
-        self.assertTrue(self.logged("Stopped after 1 of 5"))
-        self.assertTrue(self.logged("Printing Complete"))
-        body = await self.status()
-        self.assertEqual(3000 - self.device.label_feeds(7) * 4,
-                         body["roll"]["remaining_mm"])
-        # Every label it printed is whole and cut, so nothing was cut short.
-        self.assertNotIn("stopped", body)
-
-    async def test_during_the_last_label_it_changes_nothing(self):
-        self.gate.opened.clear()
-        await self.post("/api/tag", {"tag": "HI"})
-        await self.post("/api/stop?after=label")
-        self.gate.opened.set()
-        await self.finish()
-        self.assertFalse(any("Stopped after" in line
-                             for line in self.sim.log))
-
-    async def test_it_is_forgotten_with_the_run_it_stopped(self):
-        self.gate.opened.clear()
-        await self.post("/api/tag", {"tag": "HI", "copies": 3})
-        await self.post("/api/stop?after=label")
-        self.gate.opened.set()
-        await self.finish()
-        await self.post("/api/tag", {"tag": "HI", "copies": 3})
-        await self.finish()
-        self.assertEqual(1, sum("Stopped after" in line
-                                for line in self.sim.log))
-
-    async def test_only_a_run_of_labels_can_stop_after_a_label(self):
-        self.gate.opened.clear()
-        await self.post("/api/feed", {})
-        status, body = await self.post("/api/stop?after=label")
-        self.assertEqual(409, status)
-        self.assertEqual("Only a run of labels can stop after a label",
-                         body["error"])
-        self.assertNotIn("stop", await self.status())
-
-    async def test_anything_but_label_after_it_is_refused_in_the_devices_words(
+    async def test_a_body_too_long_for_the_device_is_refused_for_its_length(
             self):
-        # Checked before anything else, so an idle machine says so too.
-        status, body = await self.post("/api/stop?after=cut")
-        self.assertEqual(400, status)
-        self.assertEqual("Please provide after=label to stop once the label "
-                         "being pressed is cut, or leave it out to stop now",
-                         body["error"])
-        status, _ = await self.post("/api/stop?after")
-        self.assertEqual(400, status)
+        # The device keeps what the Api allows and a byte more, to know that
+        # there was more. The relay has to pass on at least as much, or this
+        # would be a body cut off partway and refused as broken JSON.
+        response = await self.client.post(
+            "/api/tag", data=b'{"tag":"' + b"A" * 3000 + b'"}',
+            headers={"Content-Type": "application/json"})
+        self.assertEqual(413, response.status)
+        self.assertEqual({"error": "The body may be at most 2048 bytes"},
+                         await response.json())
 
 
-class Stops(SimulatorTestCase):
-    async def test_a_stop_ends_the_label_being_pressed(self):
-        self.gate.opened.clear()
-        await self.post("/api/tag", {"tag": " HELLO ", "copies": 3})
-        status, body = await self.post("/api/stop")
-        self.assertEqual(200, status)
-        self.assertEqual({"result": "stopping"}, body)
-        # Busy still, while the machine comes to rest, and saying why.
-        body = await self.status()
-        self.assertTrue(body["busy"])
-        self.assertEqual("now", body["stop"])
-        self.assertNotIn("stopped", body)
+class Stops(RelayTestCase):
+    async def test_the_query_reaches_the_api(self):
+        # Only /api/stop reads its query, and refuses a stop after anything
+        # but a label. Without the query this would be a stop now, which an
+        # idle machine answers with success.
+        response = await self.client.post("/api/stop?after=cut")
+        self.assertEqual(400, response.status)
+        self.assertEqual(
+            {"error": "Please provide after=label to stop once the label "
+                      "being pressed is cut, or leave it out to stop now"},
+            await response.json())
 
-        self.gate.opened.set()
-        await self.finish()
-        self.assertTrue(self.logged("Stopping now"))
-        self.assertTrue(self.logged("Stopped tag"))
-        self.assertFalse(self.logged("Printing Complete"))
-        body = await self.status()
-        self.assertFalse(body["busy"])
-        self.assertNotIn("stop", body)
-        # The label being pressed is left on the tape, uncut.
-        self.assertEqual({"command": "tag", "printed": 0, "copies": 3,
-                          "unfinished": True}, what_stopped(body))
-        # The lead, and the character that was being pressed.
-        self.assertEqual(3000 - 2 * 4, body["roll"]["remaining_mm"])
+    async def test_a_name_given_twice_in_the_query_takes_its_last_value(self):
+        # As the device's webserver reads a query. The first value alone
+        # would be refused; the last one asks an idle machine to stop after
+        # its label, which it answers by saying it is idle.
+        response = await self.client.post("/api/stop?after=cut&after=label")
+        self.assertEqual(200, response.status)
+        self.assertEqual({"result": "idle"}, await response.json())
 
-    async def test_the_labels_already_cut_are_counted(self):
-        # Held at the third character of the second label.
-        self.gate.close_after(label_waits(" HELLO ") + 2)
-        await self.post("/api/tag", {"tag": " HELLO ", "copies": 3})
-        await self.gate.held()
-        self.assertEqual(2, (await self.status())["copy"])
-        await self.post("/api/stop")
-        self.gate.opened.set()
-        await self.finish()
-        body = await self.status()
-        self.assertEqual({"command": "tag", "printed": 1, "copies": 3,
-                          "unfinished": True}, what_stopped(body))
-        # The first label whole, then the second's lead and the three
-        # characters it got to.
-        used = self.device.label_feeds(7) + 1 + 3
-        self.assertEqual(3000 - used * 4, body["roll"]["remaining_mm"])
 
-    async def test_a_stop_during_the_cut_leaves_that_label_uncut(self):
-        self.gate.close_after(len("HI"))
-        await self.post("/api/tag", {"tag": "HI", "copies": 2})
-        await self.gate.held()
-        await self.post("/api/stop")
-        self.gate.opened.set()
-        await self.finish()
-        body = await self.status()
-        self.assertEqual({"command": "tag", "printed": 0, "copies": 2,
-                          "unfinished": True}, what_stopped(body))
-        self.assertEqual(3000 - self.device.label_feeds(2) * 4,
-                         body["roll"]["remaining_mm"])
-
-    async def test_a_stop_as_the_cut_comes_down_ends_the_run_between_labels(
+class Methods(RelayTestCase):
+    async def test_a_command_asked_for_with_get_names_the_method_it_takes(
             self):
-        # Held at the last press of the first label's cut, which finishes its
-        # stroke: the label is cut before the stop is seen.
-        self.gate.close_after(label_waits("HI") - 1)
-        await self.post("/api/tag", {"tag": "HI", "copies": 3})
-        await self.gate.held()
-        await self.post("/api/stop")
-        self.gate.opened.set()
-        await self.finish()
-        self.assertTrue(self.logged("Stopped tag"))
-        body = await self.status()
-        # Cut short, but with nothing left on the tape.
-        self.assertEqual({"command": "tag", "printed": 1, "copies": 3,
-                          "unfinished": False}, what_stopped(body))
-        self.assertEqual(3000 - self.device.label_feeds(2) * 4,
-                         body["roll"]["remaining_mm"])
+        # HTTP asks a 405 to say which method the path does take, in an
+        # Allow header, and the Api says it for the relay to send.
+        response = await self.client.get("/api/tag")
+        self.assertEqual(405, response.status)
+        self.assertEqual("POST", response.headers["Allow"])
+        self.assertEqual({"error": "Please use POST for /api/tag"},
+                         await response.json())
 
-    async def test_after_the_last_cut_it_is_too_late_to_cut_anything_short(
+    async def test_a_method_the_device_does_not_know_is_refused(self):
+        # The device's webserver reads anything but GET and POST as a method
+        # no route takes.
+        response = await self.client.put("/api/tag", json={"tag": "HELLO"})
+        self.assertEqual(405, response.status)
+        self.assertEqual("POST", response.headers["Allow"])
+
+    async def test_a_reply_without_a_method_to_name_has_no_allow_header(self):
+        response = await self.client.get("/api/status")
+        self.assertNotIn("Allow", response.headers)
+
+
+class Replies(RelayTestCase):
+    async def test_the_log_is_sent_as_the_plain_text_it_is(self):
+        # The one reply that is not JSON. What the machine logged as it
+        # booted is in it, so it is the firmware's log and not a stand-in.
+        response = await self.client.get("/api/log")
+        self.assertEqual(200, response.status)
+        self.assertEqual("text/plain", response.content_type)
+        self.assertIn("Align factor: 5", await response.text())
+
+    async def test_a_fraction_in_the_log_has_the_places_the_device_gives_it(
             self):
-        self.gate.close_after(label_waits("HI"))
-        await self.post("/api/tag", {"tag": "HI"})
-        await self.gate.held()
-        status, body = await self.post("/api/stop")
-        self.assertEqual({"result": "stopping"}, body)
-        # Over at once, with the gate still shut: the celebration is all
-        # that was left, and a stop ends it.
-        await self.finish()
-        body = await self.status()
-        self.assertFalse(body["busy"])
-        self.assertNotIn("stopped", body)
-        self.assertTrue(self.logged("Printing Complete"))
-        self.assertFalse(self.logged("Stopped tag"))
+        # Two, as the Arduino core's String writes a float, where the
+        # standard library's to_string() writes six. The machine logs one as
+        # it homes the wheel.
+        response = await self.client.get("/api/log")
+        self.assertRegex(await response.text(), re.compile(
+            r"Homing with align: 5 and a: 0\.00$", re.M))
 
-    async def test_it_overtakes_a_stop_after_the_label(self):
-        self.gate.opened.clear()
-        await self.post("/api/tag", {"tag": "HI", "copies": 3})
-        await self.post("/api/stop?after=label")
-        await self.post("/api/stop")
-        self.assertEqual("now", (await self.status())["stop"])
-        self.gate.opened.set()
-        await self.finish()
-        body = await self.status()
-        self.assertEqual({"command": "tag", "printed": 0, "copies": 3,
-                          "unfinished": True}, what_stopped(body))
-        self.assertFalse(any("Stopped after" in line
-                             for line in self.sim.log))
+    async def test_a_path_under_api_the_device_does_not_know_is_its_to_refuse(
+            self):
+        # And not the webserver's, which would say so in plain text.
+        response = await self.client.get("/api/nothing")
+        self.assertEqual(404, response.status)
+        self.assertEqual({"error": "Not found"}, await response.json())
 
-    async def test_any_job_but_saving_can_be_stopped(self):
-        self.gate.opened.clear()
-        await self.post("/api/feed", {})
-        status, body = await self.post("/api/stop")
-        self.assertEqual(200, status)
-        self.gate.opened.set()
-        await self.finish()
-        self.assertTrue(self.logged("Stopped feed"))
-        body = await self.status()
-        # Only a run of labels says how far it got, and a feed presses no
-        # label to leave behind.
-        self.assertEqual({"command": "feed", "unfinished": False},
-                         what_stopped(body))
-        # Charged in full: the simulator cannot tell whether the feed had
-        # begun.
-        self.assertEqual(3000 - 1 * 4, body["roll"]["remaining_mm"])
 
-    async def test_a_stopped_full_test_leaves_its_label_on_the_tape(self):
-        self.gate.opened.clear()
-        await self.post("/api/testfull", {"align": 5, "force": 5})
-        await self.post("/api/stop")
-        self.gate.opened.set()
-        await self.finish()
-        self.assertTrue(self.logged("Stopped testfull"))
-        self.assertEqual({"command": "testfull", "unfinished": True},
-                         what_stopped(await self.status()))
+class Jobs(RelayTestCase):
+    async def test_a_run_of_labels_is_pressed_off_the_roll(self):
+        # Three labels of " HELLO " take 32 mm each off a roll that starts
+        # at 3000 mm, and the device counts it off as it feeds.
+        await self.press(" HELLO ", copies=3)
+        status = await self.until_idle()
+        self.assertEqual({"length_mm": 3000, "remaining_mm": 2904},
+                         status["roll"])
 
-    async def test_every_stop_has_an_id_of_its_own(self):
-        # Two stops that say the same thing, which the panel tells apart by
-        # id: one dismissed does not hide the next.
-        ids = []
-        for _ in range(2):
-            self.gate.opened.clear()
-            await self.post("/api/feed", {})
-            await self.post("/api/stop")
-            self.gate.opened.set()
-            await self.finish()
-            stopped = (await self.status())["stopped"]
-            self.assertEqual("operator", stopped["cause"])
-            ids.append(stopped["id"])
-        self.assertNotEqual(ids[0], ids[1])
+    async def test_a_run_can_be_stopped_while_it_is_pressed(self):
+        # The stop is answered between the machine's waits, as the device
+        # answers one while the job runner is busy, and what it cut short is
+        # in the status afterwards.
+        await self.press(" HELLO ", copies=500)
+        response = await self.client.post("/api/stop")
+        self.assertEqual(200, response.status)
+        self.assertEqual({"result": "stopping"}, await response.json())
+        stopped = (await self.until_idle())["stopped"]
+        self.assertEqual("tag", stopped["command"])
+        self.assertEqual("operator", stopped["cause"])
+        self.assertEqual(500, stopped["copies"])
+        self.assertLess(stopped["printed"], 500)
 
-    async def test_saving_cannot_be_stopped(self):
-        self.gate.opened.clear()
-        await self.post("/api/save", {"align": 5, "force": 5})
-        status, body = await self.post("/api/stop")
-        self.assertEqual(409, status)
-        self.assertEqual("The command running now cannot be stopped",
-                         body["error"])
-        self.assertNotIn("stop", await self.status())
+    async def test_a_second_command_is_refused_while_the_first_runs(self):
+        await self.press(" HELLO ", copies=500)
+        response = await self.client.post("/api/feed", json={})
+        self.assertEqual(409, response.status)
+        self.assertEqual(
+            {"error": "The printer is already busy executing a command."},
+            await response.json())
 
-    async def test_what_it_stopped_is_forgotten_once_a_job_is_accepted(self):
-        self.gate.opened.clear()
-        await self.post("/api/feed", {})
-        await self.post("/api/stop")
-        self.gate.opened.set()
-        await self.finish()
-        self.assertIn("stopped", await self.status())
-        # A refused request is not a job.
-        await self.post("/api/tag", {"tag": "HI", "copies": 0})
-        self.assertIn("stopped", await self.status())
-        self.gate.opened.clear()
-        await self.post("/api/feed", {})
-        self.assertNotIn("stopped", await self.status())
+    async def test_requests_that_arrive_together_each_get_their_own_reply(
+            self):
+        # The panel polls while a click is on its way, and two browsers can
+        # be open at once. Each refusal names the copies its own request
+        # asked for, so a reply read by the wrong request would show.
+        asked = range(501, 521)
+        responses = await asyncio.gather(*[
+            self.client.post("/api/tag", json={"tag": "A", "copies": copies})
+            for copies in asked])
+        self.assertEqual(
+            [{"error": "Please provide a copies value between 1 and 500, "
+                       "got %d" % copies} for copies in asked],
+            [await response.json() for response in responses])
 
-    async def test_the_next_job_runs_to_the_end(self):
-        self.gate.opened.clear()
-        await self.post("/api/feed", {})
-        await self.post("/api/stop")
-        self.gate.opened.set()
-        await self.finish()
-        await self.post("/api/tag", {"tag": "HI"})
-        await self.finish()
-        self.assertTrue(self.logged("Printing Complete"))
-        self.assertNotIn("stopped", await self.status())
 
-    async def test_stopping_an_idle_machine_is_not_an_error(self):
-        for path in ("/api/stop", "/api/stop?after=label"):
-            status, body = await self.post(path)
-            self.assertEqual(200, status)
-            self.assertEqual({"result": "idle"}, body)
+class Reboots(RelayTestCase):
+    async def test_a_saved_calibration_is_what_the_machine_boots_with(self):
+        # The save ends in a reboot, and the flash is all that survives it.
+        # The log is the new boot's, which read the calibration back.
+        status = await self.save(align=3, force=2)
+        self.assertEqual((3, 2), (status["align"], status["force"]))
+        log = await (await self.client.get("/api/log")).text()
+        self.assertIn("Align factor: 3", log)
+        self.assertNotIn("Align factor: 5", log)
+
+    async def test_a_stop_after_a_reboot_is_not_taken_for_one_before_it(self):
+        # The panel stays open across a reboot, and hides a stop it has been
+        # told to dismiss by the stop's id. The device starts its ids
+        # somewhere new at every boot, so a new stop cannot be hidden as an
+        # old one.
+        before = await self.stop_a_run()
+        await self.save(align=5, force=5)
+        after = await self.stop_a_run()
+        self.assertNotEqual(before["id"], after["id"])
+
+    async def test_a_stop_after_a_restart_is_not_taken_for_one_before_it(
+            self):
+        # The same, for the panel left open while the simulator is stopped
+        # and started again.
+        before = await self.stop_a_run()
+        await self.restart_simulator()
+        after = await self.stop_a_run()
+        self.assertNotEqual(before["id"], after["id"])
+
+
+class Loss(RelayTestCase):
+    async def test_a_firmware_that_has_ended_is_reported_once(self):
+        # To the panel in every reply, which says it has lost touch with the
+        # label maker, and to the operator once, in the terminal.
+        self.device.process.kill()
+        await self.device.process.wait()
+        gone = ("The simulated firmware was stopped by signal 9. Restart "
+                "the simulator to bring it back.")
+        with contextlib.redirect_stderr(io.StringIO()) as said:
+            for _ in range(2):
+                response = await self.client.get("/api/status")
+                self.assertEqual(502, response.status)
+                self.assertEqual({"error": gone}, await response.json())
+        self.assertEqual(gone + "\n", said.getvalue())
+
+
+class Starting(unittest.IsolatedAsyncioTestCase):
+    async def test_a_firmware_that_is_not_there_is_reported(self):
+        missing = os.path.join(ROOT, "no-such-program")
+        device = server.Server(missing)
+        with self.assertRaises(server.DeviceError) as raised:
+            await device.start()
+        await device.close()
+        self.assertEqual("Could not start the firmware at %s: No such file "
+                         "or directory" % missing, str(raised.exception))
+
+    async def test_a_firmware_that_ends_before_it_boots_is_reported_once(
+            self):
+        # Such as one that crashes as it boots. The error is the report:
+        # the operator reads it once, over what the firmware printed on its
+        # way down.
+        exits = shutil.which("false")
+        if exits is None:
+            self.skipTest("needs a false command")
+        device = server.Server(exits)
+        with contextlib.redirect_stderr(io.StringIO()) as said:
+            with self.assertRaises(server.DeviceError) as raised:
+                await device.start()
+        await device.close()
+        self.assertEqual("The simulated firmware exited with status 1 "
+                         "before it booted.", str(raised.exception))
+        self.assertEqual("", said.getvalue())
+
+
+class Program(unittest.TestCase):
+    """The program on its own, as somebody drives it by hand."""
+
+    def run_program(self, *arguments, lines=b""):
+        return subprocess.run(
+            [PROGRAM] + list(arguments), input=lines,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+
+    def test_a_line_that_is_not_a_request_is_answered_all_the_same(self):
+        # One reply to every line, or the next reply would be read as this
+        # one's.
+        done = self.run_program(lines=b"GET /api/status\n")
+        self.assertEqual(0, done.returncode)
+        self.assertEqual(
+            [{"code": 500, "contentType": "application/json",
+              "body": '{"error":"The simulator could not read the request"}',
+              "allow": None}],
+            [json.loads(line) for line in done.stdout.splitlines()])
+
+    def test_a_speed_that_is_not_above_zero_is_refused(self):
+        for speed in ["0", "-1", "nan", "inf", "fast", ""]:
+            with self.subTest(speed=speed):
+                done = self.run_program("--speed", speed)
+                self.assertEqual(2, done.returncode)
+                self.assertIn(b"usage: program [--speed N]", done.stderr)
+
+
+class Panel(RelayTestCase):
+    async def test_the_panel_is_served_at_the_root(self):
+        # As the device serves index.html for /.
+        response = await self.client.get("/")
+        self.assertEqual(200, response.status)
+        with open(os.path.join(ROOT, "data", "index.html"), "rb") as page:
+            self.assertEqual(page.read(), await response.read())
+
+    async def test_the_panels_files_are_served_out_of_data(self):
+        response = await self.client.get("/style.css")
+        self.assertEqual(200, response.status)
+        with open(os.path.join(ROOT, "data", "style.css"), "rb") as sheet:
+            self.assertEqual(sheet.read(), await response.read())
+
+    async def test_the_panel_has_words_for_every_command_the_firmware_offers(
+            self):
+        # data/script.js warns in the console when the two disagree, where
+        # nobody at the bench looks. This is the same check, where a
+        # disagreement fails.
+        response = await self.client.get("/api/capabilities")
+        offered = set((await response.json())["commands"])
+        with open(os.path.join(ROOT, "data", "script.js"),
+                  encoding="utf-8") as script:
+            source = script.read()
+        table = re.search(r"const COMMAND_LABELS = \{(.*?)\n\};", source,
+                          re.S)
+        self.assertIsNotNone(table, "no COMMAND_LABELS table in script.js")
+        named = set(re.findall(r"^\s*(\w+):", table.group(1), re.M))
+        self.assertEqual(offered, named)
+
+
+class Text(RelayTestCase):
+    async def test_a_character_of_more_than_one_byte_arrives_whole(self):
+        # The Api names the one character of the label the wheel cannot
+        # print. It can only name it whole if its two bytes got there, and
+        # came back, as they were sent. They are sent the way the panel's
+        # JSON.stringify sends them, as they are, where Python's json would
+        # write them as an escape.
+        response = await self.client.post(
+            "/api/tag", data='{"tag":"CAFÉ"}'.encode("utf-8"),
+            headers={"Content-Type": "application/json"})
+        self.assertEqual(400, response.status)
+        self.assertEqual({"error": "The daisy wheel cannot print 'É'"},
+                         await response.json())
+
+    async def test_a_body_that_is_not_utf8_reaches_the_api_byte_for_byte(self):
+        # The device's webserver hands the Api the bytes it was sent, and the
+        # Api does not ask them to be UTF-8. The refusal quotes the byte back.
+        response = await self.client.post(
+            "/api/tag", data=b'{"tag":"\xff"}',
+            headers={"Content-Type": "application/json"})
+        self.assertEqual(400, response.status)
+        self.assertEqual(b'{"error":"The daisy wheel cannot print \'\xff\'"}',
+                         await response.read())
 
 
 if __name__ == "__main__":

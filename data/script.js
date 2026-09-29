@@ -46,7 +46,7 @@
 // can stop is its own to say, in api/capabilities, but a cut or a feed is
 // over before a finger could get there.
 //
-// One entry to a line: src/simulator/test_firmware.py reads the names out of
+// One entry to a line: src/simulator/test_server.py reads the names out of
 // this table to hold them to the firmware's.
 const COMMAND_LABELS = {
   cut: { busyLabel: "Cutting…" },

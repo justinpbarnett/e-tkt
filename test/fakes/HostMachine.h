@@ -7,7 +7,8 @@
 // the sounder and the EEPROM.
 //
 // For the tests that drive the machine from outside, through the job runner
-// or the Api, and so need every module rather than one. Build one after
+// or the Api, and so need every module rather than one, and for the
+// simulator in src/simulator, which runs one behind the Api. Build one after
 // stubReset(), which clears the hooks it installs. By the time the
 // constructor returns the machine has booted: the wheel has found home, and
 // the screen's record of what booting drew is cleared.

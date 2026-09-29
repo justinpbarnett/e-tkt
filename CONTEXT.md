@@ -130,7 +130,7 @@ Plus `idle`, which is a status rather than a job.
 
 **Descriptor table** - `ETKT::COMMANDS` in `ETKT.cpp`, one row per command.
 A row carries the name the command answers to on the wire, the body field its text arrives in, the **command facts** that hold for it, and the handler that runs it.
-It is the single statement of what the commands are: the HTTP routes, the dispatch, the name `/api/status` reports and the simulator's endpoints are all read from it rather than restated.
+It is the single statement of what the commands are: the HTTP routes, the dispatch and the name `/api/status` reports are all read from it rather than restated.
 `/api/capabilities` serves every row with a handler, keyed by name, so the panel reads what a command is from the device as well.
 No code outside the table compares a command against a name to decide what it does: it asks the command's row.
 A command is added by adding an enumerator and a row.
@@ -192,7 +192,7 @@ The OLED says stopped where it would say ready.
 
 **Driver seam** - `Drivers.h` declares the servo and stepper interfaces the modules take, and `Display.h` the screen's.
 So the job runner and every module it drives build against recording fakes on a host, and against ESP32Servo, AccelStepper and the OLED on the board.
-Adapters: `ArduinoDrivers.h` and `OledDisplay` for the device, `test/fakes` for the tests.
+Adapters: `ArduinoDrivers.h` and `OledDisplay` for the device, `test/fakes` for the tests and the **simulator**.
 `test/stubs` stands in for the rest of what the board supplies: the Arduino core, Preferences and the sounder.
 
 **Api** - `Api.cpp`, everything the device answers under `/api/`.
@@ -212,9 +212,12 @@ Each one is a file in `src/bench/` with its own `setup()` and `loop()`, built by
 A rig uses the label maker's own modules, so the hall rig reads the sensor through `HallSwitch` and sees the same edges that homing sees.
 Flash `serial-upload` afterwards to put the label maker back.
 
-**Simulator** - `src/simulator`, a Python stand-in that serves the panel without a machine.
-It reads the descriptor table, the character set, the calibration range and the tape's numbers out of `src/` rather than restating them, because when it restated them it drifted and every button returned a 404.
-Its copy of the tape sums is checked against the same values the native tests check `Tape.h` against.
+**Simulator** - `src/simulator`, the firmware built for a computer, with the panel in front of it, so that work on the panel needs no machine.
+`main.cpp` builds the job runner and the **Api** on the fakes the native tests use, and reads requests on stdin.
+`server.py` serves `data/` and relays each request under `/api/` to that program, and its reply back.
+So every command, refusal and status field the firmware has, the simulator has too, with nothing written down twice.
+It used to be a Python copy of the firmware, which drifted until every button returned a 404.
+A wait takes its time on the machine divided by `--speed`, and a move of the wheel or the tape takes no time.
 
 ## Reading the machine
 

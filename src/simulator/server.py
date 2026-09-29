@@ -1,608 +1,278 @@
 """A stand-in for the machine, so data/ can be worked on without one.
 
-Serves the same files the device serves out of SPIFFS, and answers the same
-endpoints it answers out of Api.cpp -- one POST per runnable row of the
-command table, plus stop, status, capabilities and the log. None of that is
-written down here. firmware.py reads it out of src/, so a command added to
-the device shows up in the simulator with nothing to remember.
+The simulator is the firmware. main.cpp beside this file builds this
+machine's own job runner and Api for the host, on the fake motors, screen and
+flash the native tests drive, and reads requests on stdin. This serves the
+panel's files out of data/, as the device serves them out of SPIFFS, and
+relays every request under /api/ to that program and its reply back. Nothing
+the device says is written down here, so a command, a refusal or a status
+field added to the firmware is in the simulator with nothing to remember.
 
-It needs aiohttp, which nothing else in this repo does. From the repo root:
+It needs aiohttp, which nothing else in this repo does, and PlatformIO, which
+builds the firmware. From the repo root:
 
     python3 -m pip install aiohttp
-    sudo python3 -m src.simulator
+    python3 -m src.simulator
 
-then open http://localhost/. The sudo is PORT below: the device listens on
-80 and the panel's URLs are relative, so serving it anywhere else means the
-simulator is not answering the address the panel was written against.
+then open http://localhost/. The panel's URLs are relative, so any port
+serves it. macOS lets anyone listen on 80; on Linux, --port 8080 does
+without sudo. --speed 10 runs the machine ten times as fast.
 """
 
 import asyncio
+import json
 import os
-import time
-from collections import deque
+import shutil
+import subprocess
+import sys
 
 from aiohttp import web
 
-from . import firmware
+# The repository: the panel is served out of it, and the firmware is built in
+# it.
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__))))
+DATA = os.path.join(ROOT, "data")
 
-# The port the webserver will start on
-PORT = 80
+# The PlatformIO environment that builds the firmware for the host, and where
+# the build leaves the program. See [env:simulator] in platformio.ini.
+ENVIRONMENT = "simulator"
+PROGRAM = os.path.join(ROOT, ".pio", "build", ENVIRONMENT, "program")
 
-# How long it should take to simulate pressing one character
-PRINT_CHARACTER_SECONDS = 1
+# How much of a request's body is passed on. The device keeps the first
+# Api::MAX_BODY_BYTES + 1 bytes and drops the rest, and main.cpp cuts what it
+# is sent to the same, so any bound above that one will do. This one only
+# keeps a runaway body out of memory.
+BODY_KEPT_BYTES = 64 * 1024
 
-# The feeding and cutting after the last character. Progress sits at the
-# device's cap through this, which is what the cap is for.
-FINISH_SECONDS = 2
+# The longest reply line read back. The longest reply is the log's, which is
+# a few kilobytes.
+REPLY_LIMIT_BYTES = 1024 * 1024
 
-# The last of the cut's three presses, the end of FINISH_SECONDS rather than
-# more on top of it. Like every press, once it is on its way down it finishes
-# its stroke, so a stop that arrives during it finds the label cut and ends
-# the run between two labels, with nothing left on the tape.
-CUT_STROKE_SECONDS = 0.5
+# How long the program may take to exit once its stdin closes. It exits at
+# once when idle, and mid-job at the next wait.
+EXIT_SECONDS = 5
 
-# How long it should take to simulate any other action (eg cut, feed, etc)
-OTHER_COMMAND_SECONDS = 5
 
-# The finish LED's blink and fade once the last label of a run is cut, which
-# the device stays busy through. A stop ends it early, but too late to cut
-# anything short: the label is already cut.
-CELEBRATION_SECONDS = 4
+class NoPlatformIO(Exception):
+    """PlatformIO, which builds the firmware, is not installed."""
 
-# How long the machine takes to come to rest once a stop is obeyed: a press
-# on its way down finishes its stroke, and the motors are let go. The device
-# goes on saying it is busy, with the stop, until it has.
-STOPPING_SECONDS = 0.5
 
-# The one command whose effect outlives it. Which command that is, is
-# behaviour rather than a row in the table: the table says save reads align
-# and force, not that save is the only one that keeps them.
-SAVE_COMMAND = "save"
+class BuildFailed(Exception):
+    """The firmware did not build for the host."""
 
-# The one command that starts the count of tape again, for the same reason:
-# the table says reel may be given a roll length, not what it does with one.
-REEL_COMMAND = "reel"
 
-# The feeds taken by the two commands that feed but are neither a label nor a
-# new roll, restated from their handlers in ETKT.cpp. feedCommandInternal()
-# feeds once. testCommandFullInternal() feeds ahead of "E-TKT", once for each
-# of its characters, and once after. A label's feeds are labelFeeds() and a
-# new roll's are REEL_FEEDS, both of which firmware.py reads.
-COMMAND_FEEDS = {
-    "feed": 1,
-    "testfull": 1 + len("E-TKT") + 1,
-}
+class DeviceError(Exception):
+    """The firmware could not be started, or stopped before it booted."""
 
-# Word for word what PrinterBusyException says in src/ETKT.h.
-BUSY_MESSAGE = "The printer is already busy executing a command."
 
-# Word for word what Api::stop() answers.
-STOP_AFTER_MESSAGE = ("Please provide after=label to stop once the label "
-                      "being pressed is cut, or leave it out to stop now")
-UNSTOPPABLE_MESSAGE = "The command running now cannot be stopped"
-UNSTOPPABLE_AFTER_LABEL_MESSAGE = "Only a run of labels can stop after a label"
+def platformio():
+    """The PlatformIO command, or None if it is not installed."""
+    for name in ("pio", "platformio"):
+        found = shutil.which(name)
+        if found is not None:
+            return found
+    # Where PlatformIO's own installer puts it, which is not always on PATH.
+    installed = os.path.expanduser("~/.platformio/penv/bin/pio")
+    return installed if os.access(installed, os.X_OK) else None
 
-# As deep as the device's Logger. Nothing depends on the two agreeing.
-LOG_LINES = 32
 
-# There is no heap here. The panel does not read these; they are served so
-# that anything else looking at /api/status sees the shape the device sends.
-FAKE_HEAP_BYTES = 200000
-FAKE_LARGEST_BLOCK_BYTES = 110000
+def build():
+    """Builds the firmware for the host, and returns the program's path.
+
+    PlatformIO works out what has changed, so a build with nothing to do
+    takes a second or two.
+    """
+    pio = platformio()
+    if pio is None:
+        raise NoPlatformIO(
+            "The simulator builds the firmware with PlatformIO, which is not "
+            "installed. See https://platformio.org/install/cli")
+    done = subprocess.run(
+        [pio, "run", "--silent", "--environment", ENVIRONMENT,
+         "--project-dir", ROOT],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        encoding="utf-8", errors="replace")
+    if done.returncode != 0:
+        raise BuildFailed(
+            "The firmware did not build for the host:\n" + done.stdout)
+    return PROGRAM
+
+
+def request_line(asked):
+    """One request, as the line main.cpp reads.
+
+    The body's bytes go through as they came, whether or not they are
+    UTF-8, the way the device's webserver hands them to the Api.
+    """
+    text = json.dumps(asked, ensure_ascii=False)
+    return text.encode("utf-8", "surrogateescape") + b"\n"
+
+
+def read_reply(line):
+    """The reply main.cpp sent, as a dict.
+
+    Loosely, because ArduinoJson leaves most control characters in a string
+    unescaped, which strict JSON does not allow.
+    """
+    return json.loads(line.decode("utf-8", "surrogateescape"), strict=False)
+
+
+async def read_body(request):
+    """The request's body, up to BODY_KEPT_BYTES of it."""
+    kept = bytearray()
+    async for chunk in request.content.iter_any():
+        room = BODY_KEPT_BYTES - len(kept)
+        if room > 0:
+            kept += chunk[:room]
+    return bytes(kept)
 
 
 class Server:
-    """
-    Simulates a physical E-TKT device by serving web interface, locking during
-    printing, and reporting print progress.
-    """
+    """The firmware, and the webserver in front of it."""
 
-    def __init__(self, device):
-        self.device = device
-
-        # The row /api/status names when nothing is running. It is a row like
-        # any other and the only one with no handler, because IDLE is a
-        # status rather than a job. Checked rather than assumed: if that ever
-        # stops being true, the simulator should say so at startup and not
-        # report the wrong command for the rest of the session.
-        idle = [spec for spec in device.commands if not spec.runnable]
-        if len(idle) != 1:
-            raise firmware.FirmwareParseError(
-                "Expected one command with no handler, found %d: %s"
-                % (len(idle), [spec.name for spec in idle]))
-        self.idle = idle[0]
-
-        self.align = device.default_align
-        self.force = device.default_force
-        self.command = None
-        self.running_task = None
-        self.label = ""
-        self.progress = 0
-        # What the running command was asked for, as CommandOptions carries
-        # it on the device: how many labels, and how long a new roll is, 0
-        # meaning as long as the last one.
-        self.copies = 1
-        self.new_roll_mm = 0
-        # Where a run of labels has got to: the label being pressed, and how
-        # many are finished and cut. Both are cleared with the command.
-        self.copy = 0
-        self.printed = 0
-        # The two ways to stop, as ETKT keeps them. A stop now ends whatever
-        # the machine is waiting on. A stop after the label is only looked
-        # at between one label and the next.
-        self.stop_now = asyncio.Event()
-        self.stopping_after_label = False
-        # Whether a stop has cut the running command short, as against
-        # arriving while it was finishing anyway: StopSignal::cutShort().
-        self.cut_short = False
-        # What the last stop cut short, until the next command is accepted,
-        # as ETKT keeps lastStopped. None when there is nothing to say.
-        self.stopped = None
-        # The last stop's id, as ETKT keeps lastStopId. See
-        # StoppedCommand::id.
-        self.last_stop_id = 0
-        # What Roll keeps in EEPROM. Kept in memory here, so every start of
-        # the simulator is a device that has never counted a roll.
-        self.roll_mm = device.default_roll_mm
-        self.feeds_used = 0
-        # The count of feeds used at the last cut, as ETKT keeps
-        # feedsAtLastCut: a stop that finds more has left a label on the tape.
-        self.feeds_at_last_cut = 0
-        self.log = deque(maxlen=LOG_LINES)
-        self.started = time.monotonic()
-
-        # What Settings::initialize() and Roll::initialize() say on the way
-        # up.
-        self.record("INFO", "Align factor: %d" % self.align)
-        self.record("INFO", "Force factor: %d" % self.force)
-        self.record("INFO", "Roll: %d mm, %d feeds used"
-                    % (self.roll_mm, self.feeds_used))
-
-    def application(self):
-        """Every route the device answers, not yet listening anywhere."""
-        app = web.Application()
-        routes = [
-            web.get('/api/status', self.status),
-            web.post('/api/stop', self.stop),
-            web.get('/api/capabilities', self.capabilities),
-            web.get('/api/log', self.recent_log),
-        ]
-
-        # One route per runnable command, straight off the firmware's table,
-        # exactly as Api::route() answers the real ones.
-        for spec in self.device.routes():
-            routes.append(web.post('/api/' + spec.name, self.endpoint(spec)))
-
-        routes.append(web.get('/', self.index))
-        routes.append(web.static("/", self.data_path('')))
-        app.add_routes(routes)
-        return app
+    def __init__(self, program, speed=1, serial=None):
+        """`program` is what build() returned. `speed` is how many times as
+        fast as the machine it runs. `serial` is where what the machine
+        sends down its serial port goes: None for this process's stderr, or
+        anything asyncio.create_subprocess_exec takes, such as
+        asyncio.subprocess.DEVNULL.
+        """
+        self.program = program
+        self.speed = speed
+        self.serial = serial
+        self.process = None
+        self.runner = None
+        # Held from a request going out to its reply coming back, so each
+        # reply is read by the request it answers.
+        self.lock = None
+        # Whether the machine has booted: an end before then is start()'s to
+        # report, and one after it the relay's.
+        self.booted = False
+        # How the firmware ended, once it has: "exited with status 1".
+        self.ended = None
 
     async def start(self):
-        runner = web.AppRunner(self.application())
-        await runner.setup()
-        site = web.TCPSite(runner, "0.0.0.0", PORT)
-        print("Serving %d commands: %s"
-              % (len(self.device.routes()),
-                 " ".join(spec.name for spec in self.device.routes())))
-        print(f"Starting webserver, http://localhost:{PORT}")
-        await site.start()
+        """Starts the firmware, and waits for the machine to boot.
+
+        Returns the names of the commands it runs, as its capabilities list
+        them.
+        """
+        self.lock = asyncio.Lock()
+        try:
+            self.process = await asyncio.create_subprocess_exec(
+                self.program, "--speed", str(self.speed),
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE, stderr=self.serial,
+                limit=REPLY_LIMIT_BYTES)
+        except OSError as problem:
+            raise DeviceError("Could not start the firmware at %s: %s"
+                              % (self.program, problem.strerror))
+        reply = await self.ask({"method": "GET",
+                                "path": "/api/capabilities", "query": {},
+                                "contentType": "", "body": ""})
+        if reply is None:
+            raise DeviceError("The simulated firmware %s before it booted."
+                              % self.ended)
+        self.booted = True
+        return list(json.loads(reply["body"])["commands"])
+
+    def application(self):
+        """The panel and the api, not yet listening anywhere."""
+        app = web.Application()
+        app.add_routes([
+            # Every path under /api/, the ones the Api has no route for too,
+            # so a 404 there is the Api's, as on the device. aiohttp tries
+            # the longest prefix first, so no file in data/ can shadow one.
+            web.route("*", "/api/{tail:.*}", self.relay),
+            web.get("/", self.index),
+            web.static("/", DATA),
+        ])
+        return app
+
+    async def listen(self, port):
+        """Serves the application at `port`, on every address."""
+        self.runner = web.AppRunner(self.application())
+        await self.runner.setup()
+        await web.TCPSite(self.runner, "0.0.0.0", port).start()
+
+    async def close(self):
+        """Stops listening, and stops the firmware."""
+        if self.runner is not None:
+            await self.runner.cleanup()
+            self.runner = None
+        if self.process is None:
+            return
+        self.process.stdin.close()
+        try:
+            await asyncio.wait_for(self.process.wait(), EXIT_SECONDS)
+        except asyncio.TimeoutError:
+            self.process.kill()
+            await self.process.wait()
 
     async def index(self, request):
-        return web.FileResponse(self.data_path('index.html'))
+        return web.FileResponse(os.path.join(DATA, "index.html"))
 
-    async def status(self, request):
-        running = self.command
-        body = {
-            'progress': self.progress,
-            'busy': running is not None,
-            'command': (running or self.idle).name,
-            'align': self.align,
-            'force': self.force,
+    async def relay(self, request):
+        """Hands one request under /api/ to the firmware, as ApiHandler in
+        Network.cpp hands one to the Api, and sends back its reply."""
+        asked = {
+            "method": request.method,
+            "path": request.path,
+            # A name given twice takes the last value, as on the device.
+            "query": {name: value for name, value in request.query.items()},
+            "contentType": request.headers.get("Content-Type", ""),
+            "body": (await read_body(request)).decode(
+                "utf-8", "surrogateescape"),
         }
-        if running is not None and running.prints_run:
-            body['current_label'] = self.label
-            body['copy'] = self.copy
-            body['copies'] = self.copies
-        # A stop asked for and not yet obeyed. A stop now outranks a stop
-        # after the label, which it overtakes.
-        if running is not None and self.stop_now.is_set():
-            body['stop'] = 'now'
-        elif running is not None and self.stopping_after_label:
-            body['stop'] = 'after_label'
-        if self.stopped is not None:
-            body['stopped'] = self.stopped
-        # Busy or not, as the device sends it.
-        body['roll'] = {
-            'length_mm': self.roll_mm,
-            'remaining_mm': self.device.remaining_mm(self.roll_mm,
-                                                     self.feeds_used),
-        }
-        body['mem_heap_free_bytes'] = FAKE_HEAP_BYTES
-        body['mem_largest_free_block_bytes'] = FAKE_LARGEST_BLOCK_BYTES
-        body['uptime_ms'] = int((time.monotonic() - self.started) * 1000)
-        return web.json_response(body)
+        reply = await self.ask(asked)
+        if reply is None:
+            return web.json_response({"error": self.gone()}, status=502)
+        headers = {"Content-Type": reply["contentType"]}
+        if reply["allow"] is not None:
+            headers["Allow"] = reply["allow"]
+        return web.Response(
+            status=reply["code"], headers=headers,
+            body=reply["body"].encode("utf-8", "surrogateescape"))
 
-    async def stop(self, request):
-        """Mirrors Api::stop(), ETKT::stop() and
-        ETKT::stopAfterLabel()."""
-        # In the query string rather than a body, so a stop is one bare POST.
-        after = request.query.get('after')
-        if after is not None and after != 'label':
-            return self.refuse(STOP_AFTER_MESSAGE)
-        if self.command is None:
-            # Not an error. The job most likely finished while the tap was on
-            # its way.
-            return web.json_response({'result': 'idle'})
-        if after is None:
-            # Saving writes the settings and reboots, and a stop partway
-            # through that would leave the device neither one way nor the
-            # other. Its row says so.
-            if not self.command.stoppable:
-                return self.refuse(UNSTOPPABLE_MESSAGE, status=409)
-            self.stop_now.set()
-            self.record("INFO", "Stopping now")
+    async def ask(self, asked):
+        """Sends the firmware one request, and returns its reply, or None
+        once it has stopped answering."""
+        async with self.lock:
+            if self.ended is not None:
+                return None
+            try:
+                self.process.stdin.write(request_line(asked))
+                await self.process.stdin.drain()
+                line = await self.process.stdout.readline()
+            except (BrokenPipeError, ConnectionResetError, ValueError):
+                # ValueError is a reply past REPLY_LIMIT_BYTES, which leaves
+                # the rest of it where the next reply would be read from.
+                line = b""
+            if not line.endswith(b"\n"):
+                await self.lose()
+                return None
+        return read_reply(line)
+
+    async def lose(self):
+        """Notes that the firmware has stopped answering, and how."""
+        if self.process.returncode is None:
+            try:
+                self.process.kill()
+            except ProcessLookupError:
+                pass
+        code = await self.process.wait()
+        if code < 0:
+            self.ended = "was stopped by signal %d" % -code
         else:
-            if not self.command.prints_run:
-                return self.refuse(UNSTOPPABLE_AFTER_LABEL_MESSAGE,
-                                   status=409)
-            self.stopping_after_label = True
-            self.record("INFO", "Stopping after this label")
-        return web.json_response({'result': 'stopping'})
+            self.ended = "exited with status %d" % code
+        # Once, rather than in every reply's wake. The panel goes on being
+        # served, and says it has lost touch with the label maker.
+        if self.booted:
+            print(self.gone(), file=sys.stderr)
 
-    async def capabilities(self, request):
-        return web.json_response({
-            'printable': self.device.printable,
-            'aliases': self.device.aliases,
-            'calibration': {
-                'min': self.device.calibration_min,
-                'max': self.device.calibration_max,
-            },
-            'label': {
-                'minimum': self.device.min_label_characters,
-                'maximum': self.device.max_label_characters,
-            },
-            'copies': {
-                'minimum': 1,
-                'maximum': self.device.max_copies,
-            },
-            'roll': {
-                'minimum_mm': self.device.roll_min_mm,
-                'maximum_mm': self.device.roll_max_mm,
-                'default_mm': self.device.default_roll_mm,
-            },
-            'feed': {
-                'length_um': self.device.feed_length_um,
-                'lead': self.device.lead_feeds,
-            },
-            # Every row with a route, keyed by name, as Api.cpp serves
-            # them. The panel offers a stop, and counts a run, by these.
-            'commands': {spec.name: {
-                'uses_align': spec.uses_align,
-                'uses_force': spec.uses_force,
-                'label_field': spec.label_field,
-                'field_is_label': spec.field_is_label,
-                'prints_run': spec.prints_run,
-                'uses_roll_length': spec.uses_roll_length,
-                'stoppable': spec.stoppable,
-                'presses_label': spec.presses_label,
-            } for spec in self.device.routes()},
-        })
-
-    async def recent_log(self, request):
-        # Plain text, oldest first, the way /api/log serves it.
-        return web.Response(text="\n".join(self.log),
-                            content_type="text/plain")
-
-    def endpoint(self, spec):
-        """The handler for one command's route."""
-        async def handle(request):
-            return await self.accept(spec, request)
-        return handle
-
-    async def accept(self, spec, request):
-        try:
-            body = await request.json()
-        except ValueError:
-            # The device's JSON handler never calls the command back on a
-            # body it cannot read, so the fields are simply all missing.
-            body = {}
-        if not isinstance(body, dict):
-            # Valid JSON that is not an object. as<JsonObject>() makes that a
-            # null object on the device, which contains nothing -- where a
-            # string here would answer `in` by searching itself.
-            body = {}
-
-        align, refusal = self.read_calibration(
-            spec.uses_align, body, "align", "Please provide an align value")
-        if refusal is not None:
-            return refusal
-        force, refusal = self.read_calibration(
-            spec.uses_force, body, "force", "Please provide a force value")
-        if refusal is not None:
-            return refusal
-
-        label = ""
-        if spec.label_field is not None:
-            if spec.label_field not in body:
-                return self.refuse(
-                    "Please provide a %s value" % spec.label_field)
-            label = str(body[spec.label_field])
-
-            # Only for a field that is text to emboss. A move's field names a
-            # slot on the wheel instead, cut mark included, and the device
-            # leaves that one to DaisyWheel::move().
-            if spec.field_is_label:
-                if len(label) > self.device.max_label_characters:
-                    return self.refuse(
-                        "A %s may be at most %d characters, got %d"
-                        % (spec.label_field,
-                           self.device.max_label_characters, len(label)))
-                unprintable = self.device.unprintable_character(label)
-                if unprintable:
-                    return self.refuse(
-                        "The daisy wheel cannot print '%s'" % unprintable)
-
-        # Optional, unlike the fields above: a body without them asks for
-        # what every body asked for before they existed -- one label, and a
-        # new roll as long as the last.
-        copies = 1
-        if spec.prints_run and "copies" in body:
-            copies = _as_int(body["copies"])
-            if not self.device.valid_copies(copies):
-                return self.refuse(
-                    "Please provide a copies value between 1 and %d, got %d"
-                    % (self.device.max_copies, copies))
-        new_roll_mm = 0
-        if spec.uses_roll_length and "length_mm" in body:
-            new_roll_mm = _as_int(body["length_mm"])
-            if not self.device.valid_roll_length(new_roll_mm):
-                return self.refuse(
-                    "Please provide a length_mm value between %d and %d, "
-                    "got %d" % (self.device.roll_min_mm,
-                                self.device.roll_max_mm, new_roll_mm))
-
-        # Busy is checked after the body and not before, because that is the
-        # order the device checks them in: the fields are read on the
-        # request's own task and only then handed to submit(), which is what
-        # throws. So a bad body on a busy machine is a 400 about the body.
-        if self.command is not None:
-            # 409, not 400: the request was fine, the machine was not.
-            return self.refuse(BUSY_MESSAGE, status=409)
-
-        if spec.name == SAVE_COMMAND:
-            self.align = align
-            self.force = force
-            # Word for word what Settings::save() logs.
-            self.record("INFO", "Saved align %d" % self.align)
-            self.record("INFO", "Saved force %d" % self.force)
-
-        # A new job, so the last one's stop is old news.
-        self.stopped = None
-        self.command = spec
-        self.label = label
-        self.copies = copies
-        self.new_roll_mm = new_roll_mm
-        self.progress = 0
-        # Held, not dropped. asyncio keeps only a weak reference to a task, so
-        # a create_task() whose result nobody stores can be collected part way
-        # through a label.
-        self.running_task = asyncio.create_task(self.run(spec))
-        return web.json_response({'result': 'success'})
-
-    def read_calibration(self, wanted, body, field, missing):
-        """One 1-9 field, or a 400. Mirrors readCalibrationField()."""
-        if not wanted:
-            # A field a command does not read is ignored rather than refused.
-            return None, None
-        if field not in body:
-            return None, self.refuse(missing)
-        value = _as_int(body[field])
-        if not self.device.valid_calibration(value):
-            # Word for word what readCalibrationField() in Api.cpp says,
-            # which is the message for a missing field with the range added.
-            return None, self.refuse(
-                "%s between %d and %d, got %d"
-                % (missing, self.device.calibration_min,
-                   self.device.calibration_max, value))
-        return value, None
-
-    def refuse(self, message, status=400):
-        return web.json_response({'error': message}, status=status)
-
-    async def run(self, spec):
-        # The commands that press labels count from here, as they do on the
-        # device, so tape fed before them is not taken for theirs.
-        self.feeds_at_last_cut = self.feeds_used
-        if spec.prints_run:
-            await self.print_labels()
-        elif spec.name == REEL_COMMAND:
-            await self.reel()
-        else:
-            # Any other command takes the same amount of time. A stop cuts it
-            # short and it is charged all its feeds all the same: the
-            # simulator cannot tell how many the device would have made
-            # first, and a count that runs out a little early is better than
-            # one that runs out late.
-            await self.work(OTHER_COMMAND_SECONDS)
-            self.use(COMMAND_FEEDS.get(spec.name, 0))
-
-        if self.cut_short:
-            # Word for word what ETKT::loop() logs.
-            self.record("INFO", "Stopped " + spec.name)
-            await self.pause(STOPPING_SECONDS)
-            # Only the operator stops the simulator: it has no wheel to lose.
-            self.last_stop_id += 1
-            stopped = {'id': self.last_stop_id, 'command': spec.name,
-                       'cause': 'operator'}
-            if spec.prints_run:
-                stopped['printed'] = self.printed
-                stopped['copies'] = self.copies
-            # Tape fed since the last cut is a label nothing has cut off.
-            stopped['unfinished'] = (spec.presses_label and
-                                     self.feeds_used > self.feeds_at_last_cut)
-            self.stopped = stopped
-        # All together, as ETKT::loop() does when it clears the command:
-        # leaving progress behind reports an idle printer stuck at 99%, and
-        # leaving a stop behind would stop the next job before it began.
-        self.command = None
-        self.running_task = None
-        self.progress = 0
-        self.copy = 0
-        self.printed = 0
-        self.stopping_after_label = False
-        self.cut_short = False
-        self.stop_now.clear()
-
-    async def reel(self):
-        # ETKT::reelCommandInternal(). The new roll is as long as the request
-        # said, or as long as the last one, and the feeds that thread it
-        # through to the cutter are tape off the new roll.
-        self.roll_mm = self.new_roll_mm or self.roll_mm
-        self.feeds_used = 0
-        # Word for word what Roll::load() logs.
-        self.record("INFO", "New roll: %d mm" % self.roll_mm)
-        # Charged in full even when a stop cuts it short, for the reason in
-        # run().
-        await self.work(OTHER_COMMAND_SECONDS)
-        self.use(self.device.reel_feeds)
-
-    async def print_labels(self):
-        # The device uppercases a copy and leaves the submitted label alone,
-        # which is why /api/status hands back exactly what the panel sent.
-        label = self.label.upper()
-        copies = self.copies
-        if copies > 1:
-            self.record("INFO", "print %s x %d" % (label, copies))
-        else:
-            self.record("INFO", "print " + label)
-        for character in label:
-            if character not in self.device.printable:
-                # What DaisyWheel::move() says when it is asked for a
-                # character the wheel does not carry. Nothing posted to
-                # /api/tag reaches here any more -- accept() refuses such a
-                # label -- but the device still logs this line for a label
-                # raised from inside itself, and skips the press for that
-                # character while printing the rest.
-                self.record("ERROR",
-                            "No character '%s' on the daisy wheel"
-                            % character)
-
-        # Python counts code points, which is the unit progressPercent()
-        # asks for -- four of the wheel's characters are more than one byte.
-        total = len(label)
-        for copy in range(1, copies + 1):
-            self.copy = copy
-            self.progress = 0
-            if not await self.print_label(total):
-                # Stopped partway through this label, which is left on the
-                # tape.
-                break
-            self.feeds_at_last_cut = self.feeds_used
-            self.printed = copy
-            if copy == copies:
-                break
-
-            # Between one cut and the next label, where both kinds of stop
-            # can end a run without leaving anything on the tape, as
-            # ETKT::tagCommandInternal() looks at them. A stop now obeyed
-            # here still counts as cutting the run short.
-            if self.should_stop():
-                break
-            if self.stopping_after_label:
-                self.record("INFO", "Stopped after %d of %d" % (copy, copies))
-                break
-
-        if self.cut_short:
-            return
-        self.record("INFO", "Printing Complete")
-        await self.wait(CELEBRATION_SECONDS)
-
-    async def print_label(self, total):
-        """One label of a run, as ETKT::printLabel() presses it. Says whether
-        it was finished and cut, which a stop can keep it from being."""
-        # Charged once the label is over, cut or stopped, as the device
-        # charges it, so what /api/status says is left steps down once per
-        # label. A step's feeds count from the moment the step begins: the
-        # simulator cannot tell how far into one a stop landed, and a count
-        # that runs out a little early is better than one that runs out late.
-        fed = self.device.lead_feeds
-        for done in range(1, total + 1):
-            fed += 1
-            if not await self.work(PRINT_CHARACTER_SECONDS):
-                self.use(fed)
-                return False
-            self.progress = self.device.progress_percent(done, total)
-
-        # The top-up and the cut, which is the stretch the device holds its
-        # last percentage point back for. The cut's last press finishes its
-        # stroke whatever happens, so a stop that arrives during it is only
-        # seen once the label is cut, between it and the next.
-        fed += self.device.top_up_feeds(total)
-        finished = await self.work(FINISH_SECONDS - CUT_STROKE_SECONDS)
-        if finished:
-            await self.pause(CUT_STROKE_SECONDS)
-        self.use(fed)
-        return finished
-
-    def use(self, feeds):
-        """Counts feeds taken from the roll. Mirrors Roll::use()."""
-        self.feeds_used += feeds
-
-    async def pause(self, seconds):
-        """Every wait the simulated machine makes goes through here, so a test
-        can hold it part way through a job."""
-        await asyncio.sleep(seconds)
-
-    async def wait(self, seconds):
-        """A pause that a stop now ends early, whether it is already up or
-        arrives partway. Says whether the pause ran its course."""
-        if self.stop_now.is_set():
-            return False
-        pausing = asyncio.ensure_future(self.pause(seconds))
-        stopping = asyncio.ensure_future(self.stop_now.wait())
-        done, pending = await asyncio.wait(
-            {pausing, stopping}, return_when=asyncio.FIRST_COMPLETED)
-        for task in pending:
-            task.cancel()
-        # A stop that lands as the pause ends is left to the next one, the way
-        # the device looks for a stop before each step and not after it.
-        return pausing in done
-
-    async def work(self, seconds):
-        """A wait that is part of the job, so a stop that ends it cuts the
-        job short."""
-        if await self.wait(seconds):
-            return True
-        self.cut_short = True
-        return False
-
-    def should_stop(self):
-        """Mirrors StopSignal::shouldStop(): whether to drop the work in
-        hand, and from a yes on, the job counts as cut short."""
-        if not self.stop_now.is_set():
-            return False
-        self.cut_short = True
-        return True
-
-    def record(self, level, message):
-        """One line of the log, formatted the way Logger::recent() is."""
-        self.log.append("%.3f %-5s %s"
-                        % (time.monotonic() - self.started, level, message))
-
-    def data_path(self, path):
-        return os.path.join(os.path.dirname(__file__), '../../data/', path)
-
-
-def _as_int(value):
-    """A JSON value read as a number the way ArduinoJson's as<int>() reads
-    one: a number, a numeric string or a boolean, truncated to a whole one,
-    and 0 for anything else -- including a number too big for an int, which
-    then fails whichever range check the caller makes."""
-    try:
-        number = int(value)
-    except (TypeError, ValueError, OverflowError):
-        return 0
-    if not -2 ** 31 <= number < 2 ** 31:
-        return 0
-    return number
+    def gone(self):
+        """What the relay says in place of a reply, once the firmware has
+        ended."""
+        return ("The simulated firmware %s. Restart the simulator to bring "
+                "it back." % self.ended)

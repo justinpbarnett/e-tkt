@@ -12,8 +12,7 @@
 // The panel does the same sums to say how many labels will fit before the
 // roll runs out. It is served the numbers -- the lead, the feed length, the
 // roll -- from /api/capabilities and /api/status rather than keeping copies,
-// but labelFeeds() itself is restated in script.js, and the simulator's copy
-// is checked against the values tested here.
+// but labelFeeds() itself is restated in script.js.
 
 // The blank feed before a label's first character. It leaves a margin ahead
 // of the text for the cut at the end of the previous label.
