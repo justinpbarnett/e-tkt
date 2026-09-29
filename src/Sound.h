@@ -8,7 +8,6 @@
 #include "Utility.h"
 #include "pitches.h"  // list of notes and their frequencies
 
-
 #define NOTE_DURATION_MAX 100
 #define NOTE_DURATION_MIN 20
 #define NOTE_DURATION_DECREASE 2

@@ -8,7 +8,6 @@
 #include "Configuration.h"
 #include "Logger.h"
 
-
 Settings::Settings(Logger* logger) { this->logger = logger; }
 
 void Settings::initialize() {

@@ -59,7 +59,8 @@ void test_every_force_step_travels_at_least_as_far_as_the_last(void) {
   for (int f = 2; f <= 9; f++) {
     const int prev = pressPeakAngle(REST, STAMP, BITE, f - 1);
     const int curr = pressPeakAngle(REST, STAMP, BITE, f);
-    TEST_ASSERT_TRUE_MESSAGE(curr <= prev, "peak angle must not move backwards");
+    TEST_ASSERT_TRUE_MESSAGE(curr <= prev,
+                             "peak angle must not move backwards");
   }
 }
 
@@ -207,7 +208,7 @@ void test_selected_machine_reaches_force_nine_within_servo_travel(void) {
       "cut off");
 }
 
-int main(int, char **) {
+int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_force_zero_is_treated_as_one);
   RUN_TEST(test_negative_force_is_treated_as_one);

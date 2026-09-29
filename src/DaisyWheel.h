@@ -40,7 +40,7 @@ class DaisyWheel {
   void initialize();
 
   /**
-   * @brief Moves the daisy wheel to the home position, which shoudl be letter "J".
+   * @brief Moves the daisy wheel home, which should be the letter "J".
    */
   void home(int align);
 

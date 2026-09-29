@@ -53,10 +53,10 @@ void DaisyWheel::home(int align) {
   }
 
   // TODO: Change the above to only move as long as the hall sensor is
-  // triggerred, which could save a little time while printing.
+  // triggered, which could save a little time while printing.
 
-  // Move the daisy wheel until the hall sensor triggers, and then treat wherever
-  // that is as the new home position.
+  // Move the daisy wheel until the hall sensor triggers, and then treat
+  // wherever that is as the new home position.
   this->stepper->move(-this->stepsPerRevolution * 1.5f);
   auto hallState = hall->triggered();
   // Give up once the 1.5-revolution sweep is exhausted rather than spinning

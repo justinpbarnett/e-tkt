@@ -7,7 +7,7 @@
 
 /**
  * @brief Controls a hall effect sensor.
- * 
+ *
  * The hall effect sensor is used to detect when the feeder has rotated to the
  * home position.
  */

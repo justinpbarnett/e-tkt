@@ -2,7 +2,6 @@
 
 #include <Arduino.h>
 
-
 int Utility::utf8CharLength(String str, int position) {
   // Cast, do not assume. The leading byte of a multi-byte character has its
   // high bit set, and these shifts only give the right answer if that bit is

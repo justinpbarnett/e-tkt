@@ -1,4 +1,7 @@
 #pragma once
+
+// Hand-aligned tables that clang-format would reflow.
+// clang-format off
 /*************************************************
 
  * Public Constants
@@ -123,4 +126,5 @@
 #define C8  4186    //          R
 #define CS8 4435    
 #define D8  4699    //          S
-#define DS8 4978    
+#define DS8 4978
+// clang-format on

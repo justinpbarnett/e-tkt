@@ -39,7 +39,7 @@ struct FontInfo {
 /**
  * @brief Manages the characters that can be printed on the
  * E-TKT.
-*/
+ */
 class Characters {
  private:
   int characterCount;
