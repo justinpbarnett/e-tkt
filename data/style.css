@@ -1,3 +1,5 @@
+@charset "utf-8";
+
 /* MIT License
 
 // Copyright (c) 2022 Andrei Speridião
@@ -24,743 +26,1250 @@
 // for more information, please visit https://github.com/andreisperid/E-TKT
 */
 
+/*
+ * The Passion look, as the Link and Jira portal apps have it: a grey page,
+ * white cards, black type, and cyan for the one thing to press. Colours,
+ * sizes and motion are all tokens here, so a colour never appears in a
+ * rule below or in script.js -- state reaches the page as a class or a data
+ * attribute, and this file decides what it looks like.
+ *
+ * No web fonts except the tape's own. The panel has to work on a network
+ * with no way out to the internet, so the Passion faces are named first
+ * for the devices that have them and fall back to what every phone has.
+ */
+
 @font-face {
   font-family: "Impact Label Reversed";
-  src: url("/fontwhite.ttf");
-  color: #000000;
+  src: url("/fontwhite.ttf") format("truetype");
+  font-display: block;
 }
-* {
-  font-family: "Impact Label Reversed", sans-serif;
-  font-size: 22px;
-  color: #e7dac9;
-  text-decoration: none;
-  -webkit-user-select: none; /* Chrome all / Safari all */
-  -moz-user-select: none; /* Firefox all */
-  -ms-user-select: none; /* IE 10+ */
-  user-select: none; /* Likely future */
+
+/* Realtime Text, on the Macs that have it installed, keeps all of its line
+   spacing above the letters, so in a button its capitals sit a sixth of the
+   type size below the middle. These are the same faces under another name,
+   with as much room above the capitals as below the baseline, so they centre
+   the way Helvetica does on a phone. Of the ways to share that room out,
+   this one stays closest once Chrome rounds it to whole pixels, at every
+   screen density. Without the font the name matches nothing, and the stack
+   goes on to the next one. */
+@font-face {
+  font-family: "Realtime Text UI";
+  src: local("RealtimeText-Regular"), local("Realtime Text");
+  font-weight: 400;
+  ascent-override: 81.5%;
+  descent-override: 17.5%;
+  line-gap-override: 0%;
 }
+
+@font-face {
+  font-family: "Realtime Text UI";
+  src: local("RealtimeText-Bold"), local("Realtime Text Bold");
+  font-weight: 700;
+  ascent-override: 81.5%;
+  descent-override: 17.5%;
+  line-gap-override: 0%;
+}
+
+:root {
+  --page: #f0f0f0;
+  --card: #ffffff;
+  --sunken: #e3e3e3;
+  --taupe: #e2e3da;
+  --ink: #000000;
+  --text-2: #626262;
+  --text-3: #9a9a9a;
+  --hairline: #c7c7c7;
+  --line: #8a8a8a;
+  --cyan: #00ceff;
+  --cyan-hover: #0fb0f9;
+  --cyan-press: #009fc6;
+  --on-cyan: #000000;
+  --focus-ring: #0a74a4;
+  --danger: #c1121f;
+  --warning: #b45309;
+  --activity-fill: rgba(0, 0, 0, 0.08);
+  --backdrop: rgba(0, 0, 0, 0.4);
+  --scroll-thumb: rgba(0, 0, 0, 0.3);
+
+  /* The tape is black in both themes: it is what comes out of the machine. */
+  --tape: #000000;
+  --tape-text: #ffffff;
+  --tape-edge: transparent;
+  --tape-progress: #e2e3da;
+
+  /* The chosen option in a segmented bar, raised off the sunken track. */
+  --segment-chosen: #ffffff;
+
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-2: 0 4px 14px rgba(0, 0, 0, 0.07);
+  --shadow-3: 0 12px 34px rgba(0, 0, 0, 0.09);
+  --shadow-modal: 0 28px 70px rgba(0, 0, 0, 0.12);
+
+  --radius-xs: 4px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 20px;
+  --radius-xl: 28px;
+  --radius-pill: 999px;
+
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --fast: 120ms;
+  --slow: 200ms;
+
+  --font-display: "Helvetica Now Display", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --font-serif: "Saol Standard", Georgia, "Times New Roman", serif;
+  --font-ui:
+    "Realtime Text UI", "Realtime Text", "Helvetica Now Display", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --font-body: Archivo, "Helvetica Now Display", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-tape: "Impact Label Reversed", var(--font-mono);
+
+  /* The tape's geometry. The track is taller than the strip by what a
+     scrollbar needs below it, so a label long enough to scroll grows a
+     scrollbar into space that was already there, and nothing moves. */
+  --tape-height: 36px;
+  --tape-inset: 18px;
+  --track-height: calc(var(--tape-height) + 2 * var(--tape-inset));
+
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  --page: #121212;
+  --card: #1c1c1c;
+  --sunken: #0a0a0a;
+  --taupe: #33342c;
+  --ink: #f0f0f0;
+  --text-2: #a2a2a2;
+  --text-3: #8a8a8a;
+  --hairline: #4e4e4e;
+  --line: rgba(255, 255, 255, 0.36);
+  --focus-ring: #5cd8f7;
+  --danger: #f87171;
+  --warning: #f59e0b;
+  --activity-fill: rgba(255, 255, 255, 0.1);
+  --backdrop: rgba(0, 0, 0, 0.6);
+  --scroll-thumb: rgba(255, 255, 255, 0.3);
+
+  /* On a near-black track the black strip needs an edge to be seen at all. */
+  --tape-edge: #2e2e2e;
+
+  --segment-chosen: #2e2e2e;
+
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-2: 0 4px 14px rgba(0, 0, 0, 0.5);
+  --shadow-3: 0 12px 34px rgba(0, 0, 0, 0.6);
+  --shadow-modal: 0 28px 70px rgba(0, 0, 0, 0.6);
+
+  color-scheme: dark;
+}
+
+/*----------*/
+/*   base   */
+/*----------*/
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
 body {
-  background-color: rgb(32, 32, 32);
-  margin: 0px;
-  padding: 0px;
+  margin: 0;
+  min-height: 100vh;
+  min-height: 100dvh;
+  background: var(--page);
+  color: var(--ink);
+  font: 400 17px/1.5 var(--font-body);
+  letter-spacing: 0.01em;
+  accent-color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-tap-highlight-color: transparent;
 }
+
+::selection {
+  background: var(--cyan);
+  color: var(--on-cyan);
+}
+
+p,
 h1,
-h2,
-h3 {
-  color: #e7dac9;
-  font-weight: 100;
-}
-h1 {
-  font-size: 55px;
-  margin: 0px;
-  color: #e7dac9;
-  opacity: 1;
-  filter: drop-shadow(-2px -2px 2px rgba(181, 214, 255, 0.4));
-}
 h2 {
-  font-size: 23px;
-  margin: 0px;
-  opacity: 0.25;
+  margin: 0;
 }
-h3 {
-  text-align: center;
-  margin-top: 10px;
+
+/* No line of a note or a dialog left holding a single word. */
+p {
+  text-wrap: pretty;
 }
-a {
-  font-size: 18px;
-  color: rgba(231, 218, 201, 0.75);
-  opacity: 0.6;
-  filter: drop-shadow(0px 0px 15px #fff);
+
+button,
+input,
+output {
+  font: inherit;
+  color: inherit;
+  letter-spacing: inherit;
 }
-a:hover {
-  opacity: 1;
-}
-#hint {
-  font-size: 20px;
-  color: #e7dac960;
-}
+
+button,
+label,
 input {
-  color: #e7dac9;
-  background: none;
-  border-color: #131a3466;
-  border-width: 2px;
-  border-radius: 20px;
-  padding: 3px 0 4px 0;
-  margin: 0px;
-  /* width: 100%; */
-}
-button {
-  color: #e7dac9;
-  background: none;
-  border-color: #131a3466;
-  border-width: 2px;
-  border-radius: 3px;
-  padding: 3px 0 4px 0;
-  margin: 0px;
-  width: 100%;
+  touch-action: manipulation;
 }
 
-#text-input {
-  margin: auto;
-  grid-row-start: 1;
-  grid-column-start: 1;
-  height: 29px;
+[hidden] {
+  display: none !important;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* Views and dialogs take focus when they open, so a screen reader starts
+   reading in the right place. They are not controls; no ring. */
+.view:focus,
+.dialog:focus {
   outline: none;
-  padding: 0px;
-  color: rgb(231, 218, 201);
-  background: rgba(0, 0, 0, 0.05);
-  box-shadow: 0px 0px 50px rgba(255, 255, 255, 0.5);
-  border-style: solid dashed;
-  border-color: rgba(255, 166, 0, 0.5) rgba(0, 102, 255, 0.7);
-  border-radius: 0px;
-  text-align: center;
-  font-size: 25px;
-  /* filter: drop-shadow(0px 0px 40px rgba(174, 219, 255, 255)); */
-  caret-color: "white";
-  -webkit-user-select: text; /* Chrome all / Safari all */
-  -moz-user-select: text; /* Firefox all */
-  -ms-user-select: text; /* IE 10+ */
-  user-select: text; /* Likely future */
 }
 
-#text-input:disabled {
-  border-color: rgba(173, 113, 0, 0.5) rgba(0, 65, 163, 0.7);
+a {
+  color: var(--focus-ring);
 }
 
-#text-input:disabled {
-  pointer-events: none;
-}
+/*----------*/
+/*  layout  */
+/*----------*/
 
-#text-form-scroll {
-  margin: 2px;
-  overflow-x: hidden;
-  overflow-y: hidden;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-}
-
-.scrolling #text-form-scroll {
-  overflow-x: scroll;
-}
-
-/* Hide the scrollbar and prevent manual scrolling while printing */
-[data-printing="true"] .scrolling #text-form-scroll {
-  overflow-x: hidden;
-}
-
-/*
- * Browsers like Firefox on Windows 11 render scrollbars differently, 
- * as an inline overlay.  To make it more useable this element reserves
- * space under the text input for the track to pop in to.
- */
-.overlay-gutter {
+.page {
   width: 100%;
-  display: none;
-  position: sticky;
-  left: 0;
+  max-width: calc(30rem + 32px);
+  margin: 0 auto;
+  padding: max(20px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right))
+    max(24px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
 }
 
-#text-form-border.scrolling {
-  margin-bottom: 0px;
-}
-
-[data-printing="true"] #text-form-border.scrolling {
-  margin-bottom: 12.5px;
-}
-
-
-/*
- * Firefox specific rules to style the scrollbar.
- */
-@supports (-moz-appearance:none) {
-  .scrolling #text-form-scroll { 
-    scrollbar-color: #808080 transparent;
-  }
-}
-
-.overlay-scroll-enabled .scrolling .overlay-gutter {
-  background: rgb(37, 42, 50);
-  height: 14px;
-  display: block;
-  z-index: 10;
-}
-
-.overlay-scroll-enabled #text-form-border{
-  margin-bottom: 14px;
-}
-
-.overlay-scroll-enabled #text-form-border.scrolling {
-  margin-bottom: 0px;
-}
-
-[data-printing="true"].overlay-scroll-enabled #text-form-border.scrolling {
-  margin-bottom: 14px;
-}
-
-[data-printing="true"].overlay-scroll-enabled .scrolling .overlay-gutter {
-  height: 0px;
-}
-/*
-  * Overlay scrollbars on mobile devices tend to be smaller and not selectable,
-  * so style the elements appropriately.
-  */
-@media screen and (max-width: 760px) {
-    .overlay-scroll-enabled #text-form-border{
-      margin-bottom: 8px;
-    }
-    
-    .overlay-scroll-enabled #text-form-border.scrolling {
-      margin-bottom: 0px;
-    }
-    
-    [data-printing="true"].overlay-scroll-enabled #text-form-border.scrolling {
-      margin-bottom: 8px;
-    }
-    
-    [data-printing="true"].overlay-scroll-enabled .scrolling .overlay-gutter {
-      height: 0px;
-    }
-
-    .overlay-scroll-enabled .scrolling .overlay-gutter {
-      height: 8px;
-    }
-
-    .overlay-scroll-enabled #text-form-border {
-      margin-bottom: 8px;
-    }
-    
-    #text-form-scroll { 
-      scrollbar-color: transparent #252A32;
-    }
-
-    [data-printing="true"].overlay-scroll-enabled .scrolling .overlay-gutter {
-      height: 0px;
-    }
-}
-
-/**
-  * Rules are to prevent the scrollbar overlay gutter from being rendered
-  * on iOS Safari.
-  */
-@supports (-webkit-touch-callout: none) {
-  .overlay-gutter {
-    display: none !important;
-  }
-
-  #text-form-border {
-    margin-bottom: 0px !important;
-  }
-
-  .overlay-scroll-enabled #text-form-border {
-    margin-bottom: 0px;
-  }
-}
-
-/* width */
-::-webkit-scrollbar {
-  height: 12.5px;
-}
-/* Handle */
-::-webkit-scrollbar-thumb {
-  background: #80808080;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: #808080ff;
-}
-::-webkit-scrollbar-track {
-  background: #d6d6d620;
-}
-
-#tips {
-  position: absolute;
+.masthead {
   display: flex;
-  justify-content: space-between;
-  width: 116.5%;
-  margin: 1px 0 0 -8%;
-  pointer-events: none;
-}
-
-.tip-child {
-  /* filter: drop-shadow(-1px -1px 1px rgb(255, 255, 255)); */
-  background-image: linear-gradient(to right,rgba(255,255,255,0),rgba(255,255,255,0.05),rgba(255,255,255,0.05),rgba(255,255,255,0));
-  /* border-radius: 5px; */
-  padding: 11px 8px 14px 8px;
-  font-size: 9px;
-  visibility: hidden;
-  pointer-events: all;
-  cursor: pointer;
-}
-
-.tip-child.visible {
-  visibility: visible;
-}
-
-.tip-child:hover {
-  font-weight: bold;
-  background-image: linear-gradient(to right,rgba(255,255,255,0),rgba(255,255,255,0.07),rgba(255,255,255,0.07),rgba(255,255,255,0));
-}
-
-[data-printing="true"] .tip-child.visible {
-  visibility: hidden;
-}
-
-#text-form-border {
-  width: 100%;
-  outline: 3px solid rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.25);
-  border-width: 0 1px 1px 0;
-  border-radius: 2px;
-  box-shadow: 0px 5px 10px rgba(255, 255, 255, 0.25);
-  margin-bottom: 12.5px;
-}
-
-#progress-bar-container {
-  display: grid;
-  width: fit-content;
-  margin: auto;
-}
-
-[data-printing="true"] #progress-bar-container {
-  border-width: 0px;
-  background-color: rgb(21, 15, 6);
-  box-shadow: 0px 0px 50px rgba(255, 255, 255, 0.5);
-}
-
-[data-printing="true"] #text-input {
-  display: none;
-}
-
-#printing-label {
-  margin: auto;
-  grid-row-start: 1;
-  grid-column-start: 1;
-  height: 29px;
-  padding: 0px;
-  color: rgb(231, 218, 201);
-  box-shadow: 0px 0px 50px rgba(255, 255, 255, 0.5);
-  text-align: center;
-  font-size: 25px;
-  border: solid transparent 2px;
-  background: transparent;
-  display: none;
-  justify-content: center;
   align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+/* The brand tracks a display heading at -0.07em, for a title in Title Case.
+   This one is a name in capitals, and at that tracking its K runs into the T
+   after it in every face a phone falls back to. At nothing, which is what the
+   brand gives anything set in capitals, every letter stands clear. */
+.title {
+  font: 700 40px/0.98 var(--font-display);
+  letter-spacing: 0;
+}
+
+.subtitle {
+  margin-top: 6px;
+  color: var(--text-2);
+  font: 400 14px/1.3 var(--font-body);
+}
+
+.panel {
+  border-radius: var(--radius-lg);
+  background: var(--card);
+  box-shadow: var(--shadow-2);
+}
+
+.card,
+.composer {
+  padding: 20px;
+}
+
+.card + .card {
+  margin-top: 16px;
+}
+
+.section-heading {
+  margin-bottom: 12px;
+  font: 400 26px/1.1 var(--font-serif);
+  letter-spacing: -0.03em;
+}
+
+.label {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--text-2);
+  font: 700 12px/1.2 var(--font-ui);
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.note {
+  margin-top: 8px;
+  color: var(--text-2);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.note[data-tone="warning"] {
+  color: var(--warning);
+}
+
+/* Keeps the line break the script puts before a way out of a spent roll. */
+#quantity-note {
+  white-space: pre-line;
+}
+
+.field {
+  margin-top: 20px;
+}
+
+.credit {
+  margin-top: 32px;
+  text-align: center;
+  font: 400 12px/1.4 var(--font-ui);
+}
+
+.credit a {
+  color: var(--text-2);
+  text-decoration: none;
+}
+
+.credit a:hover {
+  color: var(--ink);
+  text-decoration: underline;
+}
+
+@media (max-width: 359px) {
+  .card,
+  .composer {
+    padding: 16px;
+  }
+}
+
+@media (min-width: 600px) {
+  .page {
+    padding-top: 48px;
+  }
+}
+
+/*-----------*/
+/*  buttons  */
+/*-----------*/
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  margin: 0;
+  padding: 13px 26px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  font: 700 13px/1 var(--font-ui);
+  letter-spacing: 0;
+  text-transform: uppercase;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  transition:
+    background-color var(--fast) var(--ease),
+    border-color var(--fast) var(--ease),
+    color var(--fast) var(--ease),
+    opacity var(--fast) var(--ease),
+    transform var(--fast) var(--ease);
+}
+
+.btn:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.btn-compact {
+  min-height: 40px;
+  padding: 9px 18px;
+  font-size: 12px;
+}
+
+.btn-block {
+  width: 100%;
+}
+
+.btn-primary {
+  background: var(--cyan);
+  color: var(--on-cyan);
+}
+
+@media (hover: hover) {
+  .btn-primary:hover:not(:disabled) {
+    background: var(--cyan-hover);
+  }
+}
+
+.btn-primary:active:not(:disabled) {
+  background: var(--cyan-press);
+}
+
+/* Faded onto a dark card, the cyan turns to murk and the black lettering
+   all but goes, so there a primary button out of reach goes grey. */
+:root[data-theme="dark"] .btn-primary:disabled:not([data-running]) {
+  opacity: 1;
+  background: var(--segment-chosen);
+  color: var(--text-3);
+}
+
+.btn-secondary {
+  border-color: var(--hairline);
+  background: var(--card);
+  color: var(--ink);
+}
+
+@media (hover: hover) {
+  .btn-secondary:hover:not(:disabled) {
+    background: var(--page);
+  }
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--text-2);
+}
+
+@media (hover: hover) {
+  .btn-ghost:hover:not(:disabled) {
+    background: var(--sunken);
+    color: var(--ink);
+  }
+}
+
+/* The round ones: the symbol keys and the steppers' minus and plus. */
+.btn-key {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--hairline);
+  border-radius: 50%;
+  background: var(--card);
+  color: var(--ink);
+  font: 400 18px/1 var(--font-body);
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  transition:
+    background-color var(--fast) var(--ease),
+    opacity var(--fast) var(--ease),
+    transform var(--fast) var(--ease);
+}
+
+@media (hover: hover) {
+  .btn-key:hover:not(:disabled) {
+    background: var(--page);
+  }
+}
+
+.btn-key:active:not(:disabled) {
+  transform: scale(0.94);
+}
+
+.btn-key:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.btn-icon {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  margin: 0 -8px 0 0;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+  transition:
+    background-color var(--fast) var(--ease),
+    color var(--fast) var(--ease);
+}
+
+@media (hover: hover) {
+  .btn-icon:hover {
+    background: var(--sunken);
+    color: var(--ink);
+  }
+}
+
+.icon {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* A stepper's minus and plus. Drawn, because a font sets them on its
+   maths axis, a pixel or two below the middle of the key. */
+.icon-step {
+  width: 14px;
+  height: 14px;
+  stroke-width: 1.5;
+}
+
+/* The button shows where it goes, not where the page is. */
+:root[data-theme="dark"] .icon-moon,
+:root:not([data-theme="dark"]) .icon-sun {
+  display: none;
+}
+
+/*----------*/
+/*   tape   */
+/*----------*/
+
+.tape-track {
+  position: relative;
+  height: var(--track-height);
+  overflow: hidden;
+  border-radius: var(--radius-md);
+  background: var(--sunken);
+}
+
+/* The input has no ring of its own; the track it sits in takes it. */
+.tape-track:focus-within {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* Scrolls sideways once the label is longer than the track, and only then:
+   the class is script.js measuring the label. The spacers either side keep
+   the ends of a long label off the track's edges at either end of the
+   scroll -- as flex items, so every browser counts them in the scroll
+   width, which is not true of padding. */
+.tape-scroll {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  height: 100%;
+  padding-top: var(--tape-inset);
+  overflow: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scroll-thumb) transparent;
+}
+
+.tape-scroll::before,
+.tape-scroll::after {
+  content: "";
+  flex: none;
+  width: 16px;
+}
+
+.tape-track.scrolling .tape-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+/* The label moves past the progress bar on its own while it prints. */
+body[data-printing="true"] .tape-track.scrolling .tape-scroll {
+  overflow-x: hidden;
+}
+
+/* The strip of tape. One grid cell, so the input -- or while printing, the
+   label and the progress bar laid over it -- sit on top of each other. */
+.tape {
+  display: grid;
+  flex: none;
+  height: var(--tape-height);
+  margin: 0 auto;
+  border-radius: var(--radius-xs);
+  background: var(--tape);
+  box-shadow: inset 0 0 0 1px var(--tape-edge);
+  overflow: hidden;
+  font: 400 25px/1 var(--font-tape);
+  letter-spacing: 0;
+}
+
+.tape > * {
+  grid-row: 1;
+  grid-column: 1;
+}
+
+/* Until script.js has measured the label: the placeholder and its margin,
+   in a face that is a fixed 0.6em a character. */
+.tape-input {
+  width: calc(12ch + 4px);
+  height: 100%;
+  margin: 0;
+  padding: 2px 0 0;
+  border: 0;
+  border-radius: 0;
+  outline: none;
+  background: transparent;
+  color: var(--tape-text);
+  caret-color: var(--tape-text);
+  font: inherit;
+  letter-spacing: 0;
+  text-align: center;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.tape-input::placeholder {
+  color: var(--tape-text);
+  opacity: 0.35;
+}
+
+/* Centred text puts the caret of an empty field between WRITE and HERE,
+   where it reads as a slip in the word. With the caret in it, the strip is
+   blank tape instead. */
+.tape-input:focus::placeholder {
+  color: transparent;
+}
+
+.tape-input::selection {
+  background: var(--cyan);
+  color: var(--on-cyan);
+}
+
+.tape-input:disabled {
+  pointer-events: none;
+  -webkit-text-fill-color: var(--tape-text);
+  opacity: 0.5;
+}
+
+.tape-printing {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding-top: 2px;
+  color: var(--tape-text);
   white-space: pre;
 }
 
-[data-printing="true"] #printing-label {
-  display: flex;
-}
-
-#progress-bar {
-  grid-row-start: 1;
-  grid-column-start: 1;
-  outline: none;
+/* A difference blend: over the black tape it shows the taupe, over the
+   white characters it shows them dark, so the part already embossed reads
+   as tape that has come out of the machine. */
+.tape-progress {
   display: none;
-  filter: drop-shadow(0px 0px 25px rgb(174, 219, 255));
+  justify-self: start;
+  width: 0;
+  background: var(--tape-progress);
   mix-blend-mode: difference;
+  transition: width var(--slow) var(--ease);
 }
 
-[data-printing="true"] #progress-bar {
+body[data-printing="true"] .tape-input {
+  display: none;
+}
+
+body[data-printing="true"] .tape-printing {
+  display: flex;
+}
+
+body[data-printing="true"] .tape-progress {
   display: block;
-  background: rgba(212, 206, 197, 1);
-  height: 100%;
-  width: 0%;
 }
 
-#mode-dropdown {
-  outline: none;
-  border-color: rgb(0, 102, 255);
-  border-width: 0 2px 0 2px;
-  border-style: dashed;
-  font-size: 21px;
-  background: rgb(7, 15, 22);
-  height: 40px;
-  width: 100%;
-  text-align: center;
-  border-radius: 5px;
-}
-#mode-dropdown:disabled {
-  color: rgba(231, 218, 201, 0.25);
-  border-color: rgba(0, 102, 255, 0.5);
-}
-
-#single-column {
+/* Pointer shortcuts to either end of a long label, over the ends of the
+   strip. A fade from the track's own colour, so the tape reads as carrying
+   on past the edge. */
+.tape-tip {
+  position: absolute;
+  top: var(--tape-inset);
   display: flex;
-  flex-direction: row;
-  justify-content: space-between;
-  width: 100%;
-  margin: auto;
-  padding-bottom: 15px;
-}
-
-input[type="button"] {
-  width: 100%;
-  height: 40px;
-}
-
-input[type="button"]:disabled {
-  color: #333333;
-}
-
-button:disabled {
-  color: #333333;
-  pointer-events: none;
-}
-
-#emoji-button {
-  filter: drop-shadow(-3px -3px 3.5px rgba(255, 255, 255, 0.25));
-  background-color: rgb(11, 17, 26);
-  color: rgba(231, 218, 201, 0.75);
-  font-size: 18px;
-  width: 40px;
-  height: 40px;
-  border-width: 0.5px 0 0 0.5px;
-  border-color: rgba(255, 255, 255, 0.32);
-}
-#emoji-button:disabled {
-  color: rgba(231, 218, 201, 0.25);
-  pointer-events: none;
-}
-#emoji-button:active {
-  filter: drop-shadow(3px 3px 3.5px rgba(255, 255, 255, 0.1));
-  color: rgba(231, 218, 201, 1);
-  background-color: rgb(18, 25, 37);
-  border-width: 0 0.5px 0.5px 0;
-  border-color: rgba(255, 255, 255, 0.2);
-}
-
-#clear-button {
-  filter: drop-shadow(-4px -4px 4.5px rgba(255, 255, 255, 0.15));
-  background-color: rgb(11, 17, 26);
-  color: rgb(255, 0, 0);
-  border-color: rgba(255, 0, 0, 0.55);
-  border-style: solid;
-}
-#clear-button:disabled {
-  color: rgba(255, 0, 0, 0.25);
-  border-color: rgba(255, 0, 0, 0.15);
-  pointer-events: none;
-}
-#clear-button:active {
-  filter: drop-shadow(4px 4px 4.5px rgba(255, 68, 68, 0.5));
-  background-color: rgb(18, 25, 37);
-  border-color: rgba(255, 0, 0, 1);
-  padding: 0 0 2px 0;
-}
-
-#reel-button {
-  filter: drop-shadow(-4px -4px 4.5px rgba(255, 255, 255, 0.15));
-  background-color: rgb(11, 17, 26);
-  color: rgb(0, 189, 35);
-  border-color: rgba(0, 189, 35, 0.4);
-  border-style: solid;
-}
-#reel-button:disabled {
-  color: rgba(0, 151, 81, 0.25);
-  border-color: rgba(0, 151, 81, 0.25);
-  pointer-events: none;
-}
-#reel-button:active {
-  filter: drop-shadow(4px 4px 4.5px rgba(134, 255, 156, 0.4));
-  background-color: rgb(18, 25, 37);
-  border-color: rgb(0, 255, 47);
-  padding: 0 0 2px 0;
-}
-
-#feed-button {
-  filter: drop-shadow(-4px -4px 4.5px rgba(255, 255, 255, 0.15));
-  background-color: rgb(11, 17, 26);
-  color: rgba(255, 166, 0, 1);
-  border-color: rgba(255, 166, 0, 0.25);
-  border-style: solid;
-}
-#feed-button:disabled {
-  color: rgba(255, 166, 0, 0.25);
-  border-color: rgba(255, 166, 0, 0.25);
-  pointer-events: none;
-}
-#feed-button:active {
-  filter: drop-shadow(4px 4px 4.5px rgba(255, 183, 49, 0.4));
-  background-color: rgb(18, 25, 37);
-  border-color: rgba(255, 166, 0, 1);
-  padding: 0 0 2px 0;
-}
-
-#cut-button {
-  filter: drop-shadow(-4px -4px 4.5px rgba(255, 255, 255, 0.15));
-  background-color: rgb(11, 17, 26);
-  color: rgba(0, 102, 255, 1);
-  border-color: rgba(0, 102, 255, 0.25);
-  border-style: dashed;
-}
-#cut-button:disabled {
-  color: rgba(0, 102, 255, 0.25);
-  border-color: rgba(0, 102, 255, 0.25);
-  pointer-events: none;
-}
-#cut-button:active {
-  filter: drop-shadow(4px 4px 4px rgba(45, 129, 255, 0.4));
-  background-color: rgb(18, 25, 37);
-  border-color: rgba(0, 102, 255, 1);
-  padding: 0 0 2px 0;
-}
-
-#submit-button {
-  filter: drop-shadow(-4px -4px 4.5px rgba(255, 255, 255, 0.15));
-  background-color: rgb(11, 17, 26);
-  color: rgba(231, 218, 201, 0.75);
-  border-color: rgba(231, 218, 201, 0.75);
-  border-style: solid;
-}
-#submit-button:disabled {
-  /* color: rgba(231, 218, 201, .25); */
-  border-color: rgba(231, 218, 201, 0.25);
-  pointer-events: none;
-}
-#submit-button:active {
-  filter: drop-shadow(3px 3px 6px rgba(255, 255, 255, 0.6));
-  background-color: rgb(18, 25, 37);
-  color: white;
-  border-color: white;
-  padding: 0 0 2px 0;
-}
-
-#test-align-button {
-  filter: drop-shadow(-2px -2px 2.5px rgba(255, 255, 255, 0.25));
-  background-color: rgb(11, 17, 26);
-  color: rgba(231, 218, 201, 0.75);
-  border-width: 0px;
-  border-width: 0.5px 0 0 0.5px;
-  border-color: rgba(255, 255, 255, 0.2);
-}
-#test-align-button:disabled {
-  color: rgba(231, 218, 201, 0.25);
-  pointer-events: none;
-}
-#test-align-button:active {
-  filter: drop-shadow(2px 2px 2.5px rgba(255, 255, 255, 0.5));
-  color: rgba(231, 218, 201, 1);
-  background-color: rgb(18, 25, 37);
-  border-width: 0px;
-  border-width: 0 0.5px 0.5px 0;
-  border-color: rgba(255, 255, 255, 0.2);
-}
-
-#setup-button,
-#test-full-button,
-#cancel-button,
-#save-button {
-  filter: drop-shadow(-4px -4px 4.5px rgba(255, 255, 255, 0.25));
-  background-color: rgb(11, 17, 26);
-  color: rgba(231, 218, 201, 0.75);
-  border-width: 0px;
-  border-width: 0.5px 0 0 0.5px;
-  border-color: rgba(255, 255, 255, 0.2);
-}
-#setup-button:disabled,
-#test-full-button:disabled,
-#cancel-button:disabled,
-#save-button:disabled {
-  color: rgba(231, 218, 201, 0.25);
-  pointer-events: none;
-}
-#setup-button:active,
-#test-full-button:active,
-#cancel-button:active,
-#save-button:active {
-  filter: drop-shadow(4px 4px 4.5px rgba(255, 255, 255, 0.1));
-  color: rgba(231, 218, 201, 1);
-  background-color: rgb(18, 25, 37);
-  border-width: 0px;
-  border-width: 0 0.5px 0.5px 0;
-  border-color: rgba(255, 255, 255, 0.2);
-}
-
-.align {
-  color: rgb(220, 100, 255);
-  border-color: rgba(220, 100, 255, 0.5);
-}
-.align:disabled {
-  color: rgba(220, 100, 255, 0.25);
-  border-color: rgba(220, 100, 255, 0.5);
-  pointer-events: none;
-}
-
-#remove-align-button,
-#add-align-button {
-  filter: drop-shadow(-4px -4px 4.5px rgba(255, 255, 255, 0.25));
-  background-color: rgb(11, 17, 26);
-  border-style: solid;
-  /* border-width: 1px; */
-}
-#remove-align-button:active,
-#add-align-button:active {
-  filter: drop-shadow(4px 4px 4.5px rgba(255, 157, 248, 0.4));
-  background-color: rgb(18, 25, 37);
-  border-color: rgba(220, 100, 255, 1);
-  padding: 0 0 2px 0;
-}
-
-.force {
-  color: rgb(80, 255, 255);
-  border-color: rgba(80, 255, 255, 0.25);
-}
-.force:disabled {
-  color: rgba(80, 255, 255, 0.25);
-  border-color: rgba(80, 255, 255, 0.25);
-  pointer-events: none;
-}
-
-#remove-force-button,
-#add-force-button {
-  filter: drop-shadow(-4px -4px 4.5px rgba(255, 255, 255, 0.25));
-  background-color: rgb(11, 17, 26);
-  border-style: solid;
-  /* border-width: 1px; */
-}
-#remove-force-button:active,
-#add-force-button:active {
-  filter: drop-shadow(4px 4px 4.5px rgba(147, 235, 255, 0.4));
-  background-color: rgb(16, 22, 33);
-  border-color: rgba(80, 255, 255, 1);
-  padding: 0 0 2px 0;
-}
-
-#background {
-  position: fixed;
-  top: 0px;
-  bottom: 0px;
-  left: 0px;
-  right: 0px;
-  margin: auto;
-  padding: 0px;
-  z-index: -1;
-  width: 100%;
-  height: 100vh;
-  /* background: rgb(11, 17, 26); */
-  background: linear-gradient(rgb(11, 17, 26) 500px, rgb(3, 5, 8) 100%);
-}
-
-#frame {
-  border-radius: 40px;
-  /* filter: drop-shadow(-4px -4px 3px rgb(35, 42, 56)); */
-  background: rgb(11, 17, 26);
-}
-
-#splash {
-  width: 100vw;
-  height: 100vh;
-  position: fixed;
-  top: 0px;
-  bottom: 0px;
-  left: 0px;
-  right: 0px;
-
-  padding: 0px;
-  margin: 0px;
-
-  background: linear-gradient(rgb(11, 17, 26) 500px, rgb(3, 5, 8) 100%);
-  /* background: rgb(11, 17, 26); */
-  margin: auto;
-
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
   align-items: center;
-
-  -webkit-animation: fade 2.5s;
-  animation: fade 2.5s;
-  opacity: 0;
-  z-index: -1;
+  width: 48px;
+  height: var(--tape-height);
+  color: var(--text-2);
+  font: 700 17px/1 var(--font-ui);
+  letter-spacing: 0;
+  cursor: pointer;
+  visibility: hidden;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
-#splashlogo {
-  width: 220px;
-  height: 150px;
+.tape-tip-start {
+  left: 0;
+  justify-content: flex-start;
+  padding-left: 8px;
+  background: linear-gradient(to right, var(--sunken) 45%, transparent);
+}
 
-  display: flex;
-  flex-direction: column;
+.tape-tip-end {
+  right: 0;
   justify-content: flex-end;
-  align-content: flex-start;
+  padding-right: 8px;
+  background: linear-gradient(to left, var(--sunken) 45%, transparent);
+}
 
-  -webkit-animation: fade 2s;
-  animation: fade 2s;
+.tape-tip.visible {
+  visibility: visible;
+}
 
+@media (hover: hover) {
+  .tape-tip:hover {
+    color: var(--ink);
+  }
+}
+
+body[data-printing="true"] .tape-tip.visible {
+  visibility: hidden;
+}
+
+.tape-meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 10px;
+}
+
+.hint {
+  min-width: 0;
+  color: var(--text-2);
+  font: 400 13px/1.4 var(--font-ui);
+  letter-spacing: 0;
+  overflow-wrap: anywhere;
+}
+
+.hint[data-tone="warning"] {
+  color: var(--warning);
+}
+
+.hint[data-tone="danger"] {
+  color: var(--danger);
+}
+
+.length {
+  flex: none;
+  color: var(--text-2);
+  font: 700 13px/1.4 var(--font-ui);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+
+/*----------*/
+/*   keys   */
+/*----------*/
+
+/* Clear's padding already keeps its lettering clear of the keys, so the
+   gap beside it can be small. */
+.keys {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 4px;
+  margin-top: 16px;
+}
+
+/* On a narrow phone the symbol keys give up a few pixels each, so Clear
+   keeps its place at the end of their row instead of taking a row of its
+   own. They go from 40px down to 32px before it does. */
+.keys-group {
+  display: flex;
+  flex: 1 1 184px;
+  gap: 6px;
+  max-width: 224px;
+}
+
+.keys-group > .btn-key {
+  flex: 1 1 0;
+  width: auto;
+  height: auto;
+  aspect-ratio: 1;
+}
+
+/* Its lettering ends where the tape's length above it does. The padding
+   past that is only there for a finger, and for the hover on a desktop. */
+#clear-button {
+  margin-right: -12px;
+  margin-left: auto;
+  padding-inline: 12px;
+}
+
+/*-----------------*/
+/*  segmented bar  */
+/*-----------------*/
+
+.segmented {
+  display: grid;
+  grid-auto-columns: 1fr;
+  grid-auto-flow: column;
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--radius-pill);
+  background: var(--sunken);
+}
+
+.segment {
+  position: relative;
+  display: flex;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/* The radio stays where it is and takes the taps, invisibly, so the
+   keyboard and screen readers get a real radio group. */
+.segment input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
   opacity: 0;
-  z-index: -1;
+  cursor: inherit;
 }
 
-#splashbar {
-  background-image: url("splash.png");
-  background-repeat: no-repeat;
-  background-position: left;
-
-  height: 150px;
-  -webkit-animation: move 2s;
-  animation: move 2s;
+.segment span {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  min-height: 38px;
+  padding: 0 10px;
+  border-radius: var(--radius-pill);
+  color: var(--text-2);
+  font: 700 12px/1 var(--font-ui);
+  letter-spacing: 0;
+  text-align: center;
+  text-transform: uppercase;
+  white-space: nowrap;
+  transition:
+    background-color var(--fast) var(--ease),
+    box-shadow var(--fast) var(--ease),
+    color var(--fast) var(--ease),
+    opacity var(--fast) var(--ease);
 }
-@keyframes move {
-  0% {
-    width: 0%;
-  }
-  6% {
-    width: 0%;
-  }
-  7% {
-    width: 20%;
-  }
-  13% {
-    width: 20%;
-  }
-  14% {
-    width: 40%;
-  }
-  20% {
-    width: 40%;
-  }
-  21% {
-    width: 60%;
-  }
-  27% {
-    width: 60%;
-  }
-  28% {
-    width: 80%;
-  }
-  34% {
-    width: 80%;
-  }
-  35% {
-    width: 100%;
+
+@media (hover: hover) {
+  .segment:hover input:not(:disabled):not(:checked) + span {
+    color: var(--ink);
   }
 }
 
-@keyframes fade {
-  0% {
-    z-index: 999;
-    opacity: 1;
+.segment input:checked + span {
+  background: var(--segment-chosen);
+  box-shadow: var(--shadow-1);
+  color: var(--ink);
+}
+
+.segment input:focus-visible + span {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.segment:has(input:disabled) {
+  cursor: not-allowed;
+}
+
+.segment input:disabled + span {
+  opacity: 0.35;
+}
+
+/*-------------*/
+/*  steppers   */
+/*-------------*/
+
+.stepper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Room for a digit and a little air. Any wider, and on a 320px phone the
+   test button beside a setting goes down to a line of its own. */
+.stepper-value {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  color: var(--ink);
+  font: 700 17px/1 var(--font-ui);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+  text-align: center;
+}
+
+.input {
+  min-height: 42px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--card);
+  color: var(--ink);
+  transition: border-color var(--fast) var(--ease);
+}
+
+.input:focus {
+  border-color: var(--ink);
+}
+
+.input:focus-visible {
+  outline-offset: 1px;
+}
+
+.input:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.input[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+
+input.stepper-value {
+  width: 76px;
+  padding: 10px 8px;
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+input.stepper-value::-webkit-inner-spin-button,
+input.stepper-value::-webkit-outer-spin-button {
+  margin: 0;
+  -webkit-appearance: none;
+}
+
+/* On the line of the number it belongs to. Centred beside the field
+   instead, the smaller face sits a few pixels above the digits. As the
+   tallest thing in the stepper, the field is where it would be centred
+   anyway, so only the unit moves. */
+input.stepper-value,
+.stepper-unit {
+  align-self: baseline;
+}
+
+.stepper-unit {
+  color: var(--text-2);
+  font-size: 14px;
+}
+
+.copies {
+  margin-top: 12px;
+}
+
+/*------------*/
+/*   action   */
+/*------------*/
+
+/* The print button, or in its place what the machine is doing. */
+.action {
+  margin-top: 24px;
+}
+
+.action > * {
+  min-height: 48px;
+}
+
+.activity {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 22px;
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  background: var(--sunken);
+}
+
+.activity-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 0;
+  background: var(--activity-fill);
+  transition: width var(--slow) var(--ease);
+}
+
+.activity-text,
+.activity-percent {
+  position: relative;
+  font: 700 13px/1.2 var(--font-ui);
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.activity-percent {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+
+/* A setup button while the command it started runs: disabled, but saying
+   so in full rather than faded like a button that cannot be pressed. */
+.btn[data-running]:disabled {
+  opacity: 1;
+  cursor: progress;
+}
+
+/* Both of its labels in one grid cell, so the button is as wide as the
+   longer of the two whichever it shows, and nothing beside it moves when
+   it changes. Hidden, the other one is out of its accessible name too. */
+.btn-stacked {
+  display: inline-grid;
+  place-items: center;
+}
+
+.btn-stacked > * {
+  grid-area: 1 / 1;
+}
+
+.btn-stacked:not([data-running]) > .running-text,
+.btn-stacked[data-running] > .idle-text {
+  visibility: hidden;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .activity[data-breathing] .activity-text,
+  .btn[data-running] {
+    animation: breathing 1.6s var(--ease) infinite;
   }
-  75% {
-    z-index: 999;
-    opacity: 1;
+}
+
+@keyframes breathing {
+  50% {
+    opacity: 0.45;
   }
-  100% {
-    z-index: -1;
+}
+
+/* Under the card, on the page: what the machine does without a label. */
+.machine-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+
+#run-actions {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/*-----------*/
+/*  alerts   */
+/*-----------*/
+
+.alert {
+  margin-top: 16px;
+  padding: 1rem 1.25rem;
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-sm);
+  background: var(--card);
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.masthead + .alert {
+  margin: -4px 0 16px;
+}
+
+.problem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-right: 8px;
+}
+
+.problem .btn {
+  flex: none;
+}
+
+/*----------*/
+/*  setup   */
+/*----------*/
+
+.roll-figure {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+}
+
+.roll-remaining {
+  font: 700 32px/1 var(--font-display);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.04em;
+}
+
+.roll-of {
+  color: var(--text-2);
+  font-size: 14px;
+}
+
+.meter {
+  height: 8px;
+  margin-top: 14px;
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  background: var(--sunken);
+}
+
+.meter-fill {
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--ink);
+  transition: width var(--slow) var(--ease);
+}
+
+.meter-fill[data-tone="warning"] {
+  background: var(--warning);
+}
+
+.card > .btn {
+  margin-top: 16px;
+}
+
+.setting + .setting {
+  margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px solid var(--hairline);
+}
+
+.setting-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.setup-status {
+  margin-top: 16px;
+  text-align: center;
+}
+
+.setup-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 20px;
+}
+
+.version {
+  margin-top: 16px;
+  color: var(--text-2);
+  font: 400 12px/1.4 var(--font-ui);
+  letter-spacing: 0;
+  text-align: center;
+}
+
+/*-----------*/
+/*  dialogs  */
+/*-----------*/
+
+.dialog {
+  width: min(100% - 32px, 400px);
+  max-width: none;
+  max-height: calc(100% - 32px);
+  margin: auto;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-xl);
+  background: var(--card);
+  color: var(--ink);
+  box-shadow: var(--shadow-modal);
+}
+
+.dialog::backdrop {
+  background: var(--backdrop);
+}
+
+.dialog-body {
+  padding: 24px;
+}
+
+.dialog-body > p {
+  color: var(--text-2);
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.dialog-title {
+  margin-bottom: 10px;
+  font: 400 26px/1.1 var(--font-serif);
+  letter-spacing: -0.03em;
+}
+
+/* The primary action on top on a phone, where the thumb is, and last on the
+   right anywhere with room for both side by side. */
+.dialog-actions {
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 8px;
+  margin-top: 24px;
+}
+
+@media (min-width: 480px) {
+  .dialog-actions {
+    flex-direction: row;
+    justify-content: flex-end;
+  }
+}
+
+.countdown {
+  color: var(--ink);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .dialog[open] {
+    animation: dialog-in var(--slow) var(--ease);
+  }
+
+  .dialog[open]::backdrop {
+    animation: backdrop-in var(--slow) var(--ease);
+  }
+}
+
+@keyframes dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+}
+
+@keyframes backdrop-in {
+  from {
     opacity: 0;
   }
 }
 
-@keyframes fade-modal {
-  0% {
-    opacity: 1;
-  }
-  75% {
-    opacity: 1;
-  }
-  100% {
-    opacity: 0;
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
   }
 }
 

@@ -24,14 +24,9 @@
 // for more information, please visit https://github.com/andreisperid/E-TKT
 //
 
-let busy = false;
-let align;
-let force;
-let alignTemp;
-let forceTemp;
-let scrollbarHeight = 0;
+"use strict";
 
-// What the button says while each command runs, keyed by the name the device
+// What the panel says while each command runs, keyed by the name the device
 // answers to. That name is also the path this panel posts to, api/<name>,
 // and the string /api/status reports back while the command runs.
 //
@@ -45,153 +40,558 @@ let scrollbarHeight = 0;
 // whatever it said last. No button posts either one today. They are here
 // because the device can still be running one, and the panel has to be able
 // to say so.
+//
+// One entry to a line: src/simulator/test_firmware.py reads the names out of
+// this table to hold them to the firmware's.
 const COMMAND_LABELS = {
-  cut: { busyLabel: " cutting... " },
-  feed: { busyLabel: " feeding... " },
-  reel: { busyLabel: " reeling... " },
-  testalign: { busyLabel: " testing... " },
-  testfull: { busyLabel: " testing... " },
-  save: { busyLabel: " saving... " },
-  tag: { busyLabel: " printing... " },
-  home: { busyLabel: " homing... " },
-  move: { busyLabel: " moving... " },
+  cut: { busyLabel: "Cutting…" },
+  feed: { busyLabel: "Feeding…" },
+  reel: { busyLabel: "Loading the new roll…" },
+  testalign: { busyLabel: "Testing the alignment…" },
+  testfull: { busyLabel: "Printing a test label…" },
+  save: { busyLabel: "Saving…" },
+  tag: { busyLabel: "Printing…" },
+  home: { busyLabel: "Finding home…" },
+  move: { busyLabel: "Moving the wheel…" },
 };
 
 // Shown when the device reports a command this copy of the panel has never
 // heard of, which means a cached script.js is talking to newer firmware.
-const UNKNOWN_BUSY_LABEL = " working... ";
+const UNKNOWN_BUSY_LABEL = "Working…";
+
+// The commands setup starts, each of which says so on its own button while
+// it runs. Anything else running while setup is open gets a line of its own.
+const SETUP_COMMANDS = ["reel", "testalign", "testfull"];
+
+// How often /api/status is asked, and how often while the page is in the
+// background: still often enough that a run finishing is noticed on the way
+// back, and rarely enough not to keep a phone's radio awake for nothing.
+const POLL_MS = 1000;
+const HIDDEN_POLL_MS = 5000;
+
+// Polls in a row that can fail before the page says the device is gone. One
+// is a dropped packet on a busy access point; two is worth saying out loud.
+const OFFLINE_AFTER_MISSES = 2;
+
+// How long the device takes to come back after a save, which restarts it.
+const RESTART_SECONDS = 15;
+
+// Where this browser keeps a theme picked with the button in the header.
+// index.html reads the same key before the page is drawn.
+const THEME_KEY = "e-tkt-theme";
+
+// The smallest run the Multiple option offers. One label is the One option.
+const MIN_MULTIPLE = 2;
+
+// What the roll length's minus and plus move it by, in millimetres. Rolls
+// come in whole and half metres; anything in between can still be typed.
+const ROLL_STEP_MM = 500;
+
+// How close the caret may come to either end of the track before the tape
+// scrolls to follow it: clear of the fades that mark more tape past the edge.
+const CARET_ROOM = 56;
 
 // What the device will accept: the characters a label may contain, what the
-// ones the wheel does not carry come out as instead, and the range the
-// align and force fields are offered in. All three arrive from
-// api/capabilities at startup; until they do the panel refuses to validate
-// or to send anything, the same way it refuses to save before align and
-// force have loaded.
+// ones the wheel does not carry come out as instead, the range the align and
+// force settings are offered in, how many labels one request may ask for,
+// how long a roll may be declared at, and how much tape a feed pulls
+// through. All of it arrives from api/capabilities at startup; until it does
+// the panel refuses to validate or to send anything, the same way it refuses
+// to save before align and force have loaded.
 //
 // None of it is guessed here on purpose. Each of these used to have a copy
 // in this file that could drift from the firmware and did: the character
 // set was a regex written twice, and the range was a literal here and two
 // pairs of min/max attributes in index.html.
-let printableCharacters = null;
-let characterAliases = null;
-let calibrationRange = null;
-let minLabelCharacters = null;
-let maxLabelCharacters = null;
+let device = null;
 
-window.onload = startupRoutine;
+// Everything the page shows that is not the tape, drawn from here by
+// render(). Handlers change this and call render() rather than writing to
+// the page themselves, so the page cannot say two things at once.
+const state = {
+  // The last /api/status, or null until the first one lands.
+  status: null,
+  // Polls that have failed in a row.
+  missedPolls: 0,
+  // The command whose POST is on its way.
+  posting: null,
+  // A command the device has accepted that no poll has reported on yet.
+  // Without it a quick command could come and go between two polls and the
+  // page never show it running. With it the page is busy from the moment
+  // the device says yes until a status asked for after that says what
+  // became of it.
+  pending: null,
+  // Whether this page has asked the run to stop. The device says so as well,
+  // in status.stopping, but not until the next poll.
+  stopRequested: false,
+  view: "print",
+  // align and force as the device has them, and as setup has them now.
+  saved: null,
+  draft: null,
+  // The last thing that went wrong, and which view it belongs to.
+  problem: null,
+  // Set once the settings are saved and the device is restarting.
+  restarting: false,
+};
 
-async function startupRoutine() {
-  checkOverlayScrollbars();
-  let body = document.getElementsByTagName("body")[0];
-  body.dataset.printing = "false";
-  drawHelper();
-  document.getElementById("text-input").focus();
+const $ = (id) => document.getElementById(id);
+
+const el = {
+  themeButton: $("theme-button"),
+  viewName: $("view-name"),
+  offline: $("offline"),
+  printView: $("print-view"),
+  setupView: $("setup-view"),
+  form: $("label-form"),
+  tapeTrack: $("tape-track"),
+  tapeScroll: $("tape-scroll"),
+  tape: $("tape"),
+  input: $("label-input"),
+  printingLabel: $("printing-label"),
+  progressBar: $("progress-bar"),
+  tipStart: $("tip-start"),
+  tipEnd: $("tip-end"),
+  hint: $("label-hint"),
+  length: $("label-length"),
+  keys: document.querySelectorAll("[data-insert]"),
+  clearButton: $("clear-button"),
+  copiesStepper: $("copies-stepper"),
+  copiesInput: $("copies-input"),
+  copiesLess: $("copies-less"),
+  copiesMore: $("copies-more"),
+  quantityNote: $("quantity-note"),
+  printButton: $("print-button"),
+  activity: $("activity"),
+  activityFill: $("activity-fill"),
+  activityText: $("activity-text"),
+  activityPercent: $("activity-percent"),
+  machineActions: $("machine-actions"),
+  runActions: $("run-actions"),
+  feedButton: $("feed-button"),
+  cutButton: $("cut-button"),
+  setupButton: $("setup-button"),
+  stopButton: $("stop-button"),
+  rollRemaining: $("roll-remaining"),
+  rollOf: $("roll-of"),
+  rollMeter: $("roll-meter"),
+  reelButton: $("reel-button"),
+  alignValue: $("align-value"),
+  forceValue: $("force-value"),
+  stepButtons: document.querySelectorAll("[data-setting]"),
+  testAlignButton: $("test-align-button"),
+  testFullButton: $("test-full-button"),
+  setupStatus: $("setup-status"),
+  cancelButton: $("cancel-button"),
+  saveButton: $("save-button"),
+  problems: document.querySelectorAll("[data-problem]"),
+  reelDialog: $("reel-dialog"),
+  reelForm: $("reel-form"),
+  reelLength: $("reel-length"),
+  reelLess: $("reel-less"),
+  reelMore: $("reel-more"),
+  reelRange: $("reel-range"),
+  reelConfirm: $("reel-confirm"),
+  discardDialog: $("discard-dialog"),
+  discardSummary: $("discard-summary"),
+  saveDialog: $("save-dialog"),
+  saveSummary: $("save-summary"),
+  restartDialog: $("restart-dialog"),
+  countdown: $("countdown"),
+};
+
+async function startup() {
+  document.body.dataset.printing = "false";
+  applyTheme(document.documentElement.dataset.theme === "dark" ? "dark" : "light");
+  wireEvents();
+  drawTape();
+  render();
+
+  // Straight into typing where there is a keyboard to type on. Not on a
+  // phone, where it would throw the keyboard up over the page unasked.
+  if (matchMedia("(hover: hover) and (pointer: fine)").matches) {
+    el.input.focus();
+  }
+
+  // The tape is measured in its own face, which may still be on its way
+  // when the page first draws. Measured again once it is here.
+  if (document.fonts) {
+    document.fonts.load('25px "Impact Label Reversed"').then(drawTape, () => {});
+  }
+
+  // One after the other, not side by side: the device serves the page's own
+  // files at the same time, and it has only a handful of sockets.
   await retrieveCapabilities();
-  await retrieveSettings();
-  await getStatus();
+  poll();
 }
 
-function checkScrollbarWidth() {
-  const outer = document.createElement("div");
-  outer.style.overflow = "scroll";
-  document.body.appendChild(outer);
+function wireEvents() {
+  el.themeButton.addEventListener("click", toggleTheme);
 
-  const scrollbarWidth = outer.offsetWidth - outer.clientWidth;
-  document.body.removeChild(outer);
+  el.form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    printLabels();
+  });
+  el.input.addEventListener("input", labelChanged);
+  el.input.addEventListener("focus", followCaret);
+  // In capture, because Firefox fires this at the input and does not let it
+  // bubble, while Chrome and Safari fire it at the document.
+  document.addEventListener("selectionchange", followCaret, true);
+  el.tapeScroll.addEventListener("scroll", updateScrollTips, { passive: true });
+  el.tipStart.addEventListener("click", () => jumpToScrollEnds(0));
+  el.tipEnd.addEventListener("click", () => jumpToScrollEnds(1));
+  new ResizeObserver(updateOverflow).observe(el.tapeTrack);
 
-  return scrollbarWidth;
+  for (const key of el.keys) {
+    // Keeps the caret in the label, so the symbol goes where the caret was
+    // and a phone's keyboard does not drop and come back up.
+    key.addEventListener("mousedown", (event) => event.preventDefault());
+    key.addEventListener("click", () => insertIntoField(key.dataset.insert));
+  }
+  el.clearButton.addEventListener("mousedown", (event) => event.preventDefault());
+  el.clearButton.addEventListener("click", clearField);
+
+  for (const radio of el.form.elements.margin) {
+    radio.addEventListener("change", labelChanged);
+  }
+  for (const radio of el.form.elements.quantity) {
+    radio.addEventListener("change", render);
+  }
+  el.copiesInput.addEventListener("input", render);
+  el.copiesInput.addEventListener("change", commitCopies);
+  el.copiesInput.addEventListener("keydown", (event) => {
+    // Settles the number rather than printing it. A run of labels is too
+    // much to start from a key pressed to finish typing a count.
+    if (event.key === "Enter") {
+      event.preventDefault();
+      commitCopies();
+    }
+  });
+  el.copiesLess.addEventListener("click", () => stepCopies(-1));
+  el.copiesMore.addEventListener("click", () => stepCopies(1));
+
+  el.feedButton.addEventListener("click", () => send("feed"));
+  el.cutButton.addEventListener("click", () => send("cut"));
+  el.setupButton.addEventListener("click", openSetup);
+  el.stopButton.addEventListener("click", stopRun);
+
+  el.reelButton.addEventListener("click", openReelDialog);
+  for (const button of el.stepButtons) {
+    button.addEventListener("click", () => stepSetting(button.dataset.setting, Number(button.dataset.step)));
+  }
+  el.testAlignButton.addEventListener("click", testAlignCommand);
+  el.testFullButton.addEventListener("click", testFullCommand);
+  el.cancelButton.addEventListener("click", leaveSetup);
+  el.saveButton.addEventListener("click", confirmSave);
+
+  for (const button of document.querySelectorAll("[data-dismiss]")) {
+    button.addEventListener("click", dismissProblem);
+  }
+
+  el.reelLength.addEventListener("input", renderReelDialog);
+  el.reelLength.addEventListener("keydown", (event) => {
+    // Enter in a form submits it with the first submit button in it, and
+    // here that is Cancel. Enter after typing a length means use it.
+    if (event.key === "Enter") {
+      event.preventDefault();
+      el.reelForm.requestSubmit(el.reelConfirm);
+    }
+  });
+  el.reelLess.addEventListener("click", () => stepReel(-1));
+  el.reelMore.addEventListener("click", () => stepReel(1));
+  el.reelForm.addEventListener("submit", (event) => {
+    if (event.submitter === el.reelConfirm && typedRollLength() === null) {
+      event.preventDefault();
+    }
+  });
+  el.reelDialog.addEventListener("close", () => {
+    const lengthMm = typedRollLength();
+    if (el.reelDialog.returnValue === "reel" && lengthMm !== null) {
+      send("reel", { length_mm: lengthMm });
+    }
+  });
+  el.discardDialog.addEventListener("close", () => {
+    if (el.discardDialog.returnValue === "discard") {
+      closeSetup();
+    }
+  });
+  el.saveDialog.addEventListener("close", () => {
+    if (el.saveDialog.returnValue === "save") {
+      settingsCommand();
+    }
+  });
+  // Nothing to go back to while the device restarts. Escape is refused, and
+  // since a browser may close a dialog anyway on a second Escape, it is put
+  // straight back up if it does.
+  el.restartDialog.addEventListener("cancel", (event) => event.preventDefault());
+  el.restartDialog.addEventListener("close", () => {
+    if (state.restarting) {
+      el.restartDialog.showModal();
+    }
+  });
+
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) {
+      poll();
+    }
+  });
 }
 
-/**
- * Attempts to detect if overlay scrollbars are in use, and adds a css class we can
- * change layout behavior on.
- */
-function checkOverlayScrollbars() {
-  const scrollbarWidth = checkScrollbarWidth();
-  if (scrollbarWidth === 0) {
-    document.body.classList.add("overlay-scroll-enabled");
+//-----------//
+//   theme   //
+//-----------//
+
+const darkScheme = matchMedia("(prefers-color-scheme: dark)");
+
+// Follows the phone's setting for as long as no choice has been made here.
+darkScheme.addEventListener("change", (event) => {
+  if (storedTheme() === null) {
+    applyTheme(event.matches ? "dark" : "light");
+  }
+});
+
+function storedTheme() {
+  try {
+    const theme = localStorage.getItem(THEME_KEY);
+    return theme === "light" || theme === "dark" ? theme : null;
+  } catch (error) {
+    // Storage can be refused outright, as index.html says. No choice kept,
+    // then, and the phone's setting decides.
+    return null;
   }
 }
+
+function applyTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  // Named for what it does, not for what the page is now.
+  el.themeButton.setAttribute("aria-label", theme === "dark" ? "Switch to light theme" : "Switch to dark theme");
+  // The browser's own bars take the page's colour, in either theme. Read
+  // back off the page so the colour is only ever written in style.css.
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) {
+    meta.content = getComputedStyle(document.body).backgroundColor;
+  }
+}
+
+function toggleTheme() {
+  const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+  try {
+    localStorage.setItem(THEME_KEY, next);
+  } catch (error) {
+    // Not kept, then. It still changes for as long as the page is open.
+  }
+  applyTheme(next);
+}
+
+//------------------//
+//   capabilities   //
+//------------------//
+
+// Raised when api/capabilities answers but leaves out something this page
+// needs, which means the device is running older firmware than this page.
+class CapabilitiesMismatch extends Error {}
 
 // Fetches what the device will accept. Retries on its own rather than
 // leaving the panel unable to validate: the device answers this from its own
 // constants, so there is no local fallback to fall back to.
 async function retrieveCapabilities() {
   try {
-    const request = await fetchWithTimeout("api/capabilities", { timeout: 5000 });
-    const response = await request.json();
-    if (typeof response.printable !== "string" || response.printable.length === 0) {
-      throw new Error("api/capabilities served no printable set");
+    const response = await fetchWithTimeout("api/capabilities", { timeout: 5000 });
+    if (response.status === 404) {
+      throw new CapabilitiesMismatch("api/capabilities is not there");
     }
-    const range = response.calibration;
-    if (!range || !Number.isInteger(range.min) || !Number.isInteger(range.max)) {
-      throw new Error("api/capabilities served no calibration range");
+    if (!response.ok) {
+      throw new Error("api/capabilities answered " + response.status);
     }
-    const label = response.label;
-    if (!label || !Number.isInteger(label.minimum)) {
-      throw new Error("api/capabilities served no minimum label length");
-    }
-    if (!Number.isInteger(label.maximum)) {
-      throw new Error("api/capabilities served no maximum label length");
-    }
-    printableCharacters = response.printable;
-    characterAliases = response.aliases || {};
-    calibrationRange = range;
-    minLabelCharacters = label.minimum;
-    maxLabelCharacters = label.maximum;
-    applyTypedLengthLimit();
-
-    // Not fatal: an unknown command already falls back to UNKNOWN_BUSY_LABEL
-    // and the panel keeps working. Worth saying out loud, though, because
-    // the usual cause is a cached script.js talking to newer firmware, and
-    // that is invisible from the bench.
-    const offered = response.commands;
-    if (Array.isArray(offered)) {
-      const missing = offered.filter((name) => !(name in COMMAND_LABELS));
-      const extra = Object.keys(COMMAND_LABELS).filter(
-        (name) => !offered.includes(name),
-      );
-      if (missing.length > 0 || extra.length > 0) {
-        console.warn(
-          "This panel and the firmware disagree about the command list." +
-            (missing.length ? " No wording here for: " + missing.join(", ") + "." : "") +
-            (extra.length ? " Device does not offer: " + extra.join(", ") + "." : ""),
-        );
-      }
-    }
+    device = readCapabilities(await response.json());
   } catch (error) {
     console.error("Unable to fetch what the device accepts, retrying");
     console.error(error);
+    if (error instanceof CapabilitiesMismatch) {
+      // Said on the page as well as in the console: nothing will print until
+      // it is fixed, and the console is invisible from the bench.
+      showProblem(
+        "The label maker is running older firmware than this page. Upload the firmware and the page from the " +
+          "same copy of the code.",
+        "capabilities",
+      );
+      render();
+    }
     setTimeout(retrieveCapabilities, 2000);
     return;
   }
-  // changeField() reads the bounds back off the inputs, so this is where the
-  // device's range reaches the + and - buttons.
-  for (const field of ["align-field", "force-field"]) {
-    document.getElementById(field).min = calibrationRange.min;
-    document.getElementById(field).max = calibrationRange.max;
+
+  if (state.problem !== null && state.problem.source === "capabilities") {
+    state.problem = null;
   }
-  renderHint();
-  validateField();
+  applyTypedLengthLimit();
+  el.copiesInput.max = device.copies.maximum;
+  warnAboutCommandList(device.commands);
+  drawTape();
+  render();
 }
 
-// Fills the hint line under the input. Normally it lists what may be typed.
-// While the label holds a character the wheel does not carry it says what
-// that character will come out as instead, which is the only warning before
-// the tape is spent.
-function renderHint() {
-  const hint = document.getElementById("hint");
-  if (printableCharacters === null) {
+// Everything api/capabilities has to say, checked before any of it is used,
+// or a CapabilitiesMismatch naming what is missing.
+function readCapabilities(response) {
+  const need = (ok, what) => {
+    if (!ok) {
+      throw new CapabilitiesMismatch("api/capabilities served no " + what);
+    }
+  };
+  need(typeof response.printable === "string" && response.printable.length > 0, "printable set");
+  const calibration = response.calibration;
+  need(calibration && Number.isInteger(calibration.min) && Number.isInteger(calibration.max), "calibration range");
+  const label = response.label;
+  need(label && Number.isInteger(label.minimum), "minimum label length");
+  need(Number.isInteger(label.maximum), "maximum label length");
+  const copies = response.copies;
+  need(copies && Number.isInteger(copies.minimum) && Number.isInteger(copies.maximum), "copies range");
+  const roll = response.roll;
+  need(
+    roll && Number.isInteger(roll.minimum_mm) && Number.isInteger(roll.maximum_mm) && Number.isInteger(roll.default_mm),
+    "roll lengths",
+  );
+  const feed = response.feed;
+  need(feed && Number.isInteger(feed.length_um) && feed.length_um > 0 && Number.isInteger(feed.lead), "feed length");
+
+  return {
+    printable: response.printable,
+    aliases: response.aliases || {},
+    calibration: calibration,
+    label: label,
+    copies: copies,
+    roll: roll,
+    feed: feed,
+    commands: Array.isArray(response.commands) ? response.commands : null,
+  };
+}
+
+// Not fatal: an unknown command already falls back to UNKNOWN_BUSY_LABEL and
+// the panel keeps working. Worth saying out loud, though, because the usual
+// cause is a cached script.js talking to newer firmware, and that is
+// invisible from the bench.
+function warnAboutCommandList(offered) {
+  if (offered === null) {
     return;
   }
+  const missing = offered.filter((name) => !(name in COMMAND_LABELS));
+  const extra = Object.keys(COMMAND_LABELS).filter((name) => !offered.includes(name));
+  if (missing.length > 0 || extra.length > 0) {
+    console.warn(
+      "This panel and the firmware disagree about the command list." +
+        (missing.length ? " No wording here for: " + missing.join(", ") + "." : "") +
+        (extra.length ? " Device does not offer: " + extra.join(", ") + "." : ""),
+    );
+  }
+}
 
-  const typed = document.getElementById("text-input").value.toUpperCase();
-  const surprises = Object.keys(characterAliases)
-    .filter((character) => typed.indexOf(character) >= 0)
-    .map((character) => character + " prints " + characterAliases[character]);
+//-----------//
+//   label   //
+//-----------//
 
-  hint.textContent =
-    surprises.length > 0 ? surprises.join("   ") : summariseCharacters(printableCharacters);
+// The widest margin buildTreatedLabel() adds to a label that is already long
+// enough on its own, per side. Short labels get more, to reach the minimum,
+// but a label near the maximum never does.
+const WIDEST_MARGIN = 1;
+
+// Caps the input at what the device will actually take, less the margin this
+// panel is about to add to it. The number used to be maxlength="247" written
+// into data/index.html, which is the panel deciding for itself what the
+// device accepts -- and it decided wrong, because the margin pushed a full
+// 247 characters to 249 and the device refused the label on arrival.
+function applyTypedLengthLimit() {
+  el.input.maxLength = device.label.maximum - WIDEST_MARGIN * 2;
+}
+
+// How many characters the panel pads a label up to, or null while the device
+// has not said yet.
+//
+// One past the device's minimum. A label that only just reaches the minimum
+// leaves the device topping the tape up with trailing feeds, which pushes the
+// text off centre; padding one further does not. The number comes from
+// api/capabilities -- three places here used to write it as a bare 7 while
+// the device called it 6, and two of them kept saying 7 after the third
+// started asking.
+function paddedLabelTarget() {
+  return device === null ? null : device.label.minimum + 1;
+}
+
+function buildTreatedLabel() {
+  let fieldValue = el.input.value;
+  if (fieldValue.length === 0) {
+    fieldValue = "WRITE HERE";
+  }
+  let multiplier = el.form.elements.margin.value === "tight" ? 0 : 1;
+
+  // Spaces go on both sides so the text stays centred. No fallback when the
+  // device has not said yet: a guessed minimum is the same drift in a
+  // different place, so only the mode's own padding is applied. That shows
+  // for as long as the first api/capabilities call takes -- drawTape() runs
+  // again when it lands, and the one caller that sends is behind
+  // isValidLabelText(), which refuses until then.
+  const target = paddedLabelTarget();
+  if (target !== null) {
+    const printLength = codePoints(fieldValue) + multiplier * 2;
+    if (printLength < target) {
+      // Added to the margin the mode already asked for, not put in its place.
+      // Assigning here discarded the loose mode's own space on each side, so
+      // every short label in that mode went out two characters under the
+      // minimum the device had just asked for.
+      multiplier += Math.ceil((target - printLength) / 2);
+    }
+  }
+  return " ".repeat(multiplier) + fieldValue + " ".repeat(multiplier);
+}
+
+// Characters as the device counts them. Four of the wheel's are more than
+// one byte, and a count in bytes or in UTF-16 would disagree with it.
+function codePoints(text) {
+  return Array.from(text).length;
+}
+
+// Each character of the label the wheel does not carry, once, in the order
+// typed. Case does not matter: the label is sent lowercase and the firmware
+// upper-cases it again.
+function unprintableCharacters(text) {
+  if (device === null) {
+    return [];
+  }
+  const found = [];
+  for (const character of text.toUpperCase()) {
+    if (device.printable.indexOf(character) < 0 && !found.includes(character)) {
+      found.push(character);
+    }
+  }
+  return found;
+}
+
+// Whether the label in the input is something the device would accept. Every
+// character is checked against the set the device served, so this answer and
+// the device's answer cannot drift apart.
+function isValidLabelText() {
+  return device !== null && el.input.value.length > 0 && unprintableCharacters(el.input.value).length === 0;
+}
+
+// The line under the tape. Normally it lists what may be typed. While the
+// label holds a character the wheel does not carry it names it, and while it
+// holds one the wheel prints as something else it says what that will come
+// out as, which is the only warning before the tape is spent.
+function hintFor(typed) {
+  if (device === null) {
+    return { text: "", tone: null };
+  }
+  const unprintable = unprintableCharacters(typed);
+  if (unprintable.length > 0) {
+    return { text: "Not on the wheel: " + unprintable.join(" "), tone: "danger" };
+  }
+  const upper = typed.toUpperCase();
+  const surprises = Object.keys(device.aliases)
+    .filter((character) => upper.indexOf(character) >= 0)
+    .map((character) => character + " prints " + device.aliases[character]);
+  if (surprises.length > 0) {
+    return { text: surprises.join(", "), tone: "warning" };
+  }
+  return { text: summariseCharacters(device.printable), tone: null };
 }
 
 // Turns the served character set into something short enough to sit under
@@ -199,8 +599,7 @@ function renderHint() {
 // to a range; everything else is listed as itself. Nothing is left out, so
 // the line cannot quietly stop matching what the device accepts.
 function summariseCharacters(characters) {
-  const sameKind = (a, b) =>
-    (/[0-9]/.test(a) && /[0-9]/.test(b)) || (/[A-Z]/.test(a) && /[A-Z]/.test(b));
+  const sameKind = (a, b) => (/[0-9]/.test(a) && /[0-9]/.test(b)) || (/[A-Z]/.test(a) && /[A-Z]/.test(b));
 
   const parts = [];
   let run = [];
@@ -231,138 +630,92 @@ function summariseCharacters(characters) {
   return parts.join(" ");
 }
 
-async function retrieveSettings() {
-  // TODO: consolidate this method with getStatus(), since they both now use the same API method.
-
-  // retrieve settings from the device
-  let request = await fetchWithTimeout("api/status", { timeout: 5000 });
-  let response = await request.json();
-
-  align = response.align;
-  force = response.force;
-  alignTemp = align;
-  forceTemp = force;
-
-  document.getElementById("align-field").value = align;
-  document.getElementById("force-field").value = force;
+function labelChanged() {
+  drawTape();
+  render();
 }
 
-function measureText(element, text) {
-  // Create a temporary canvas element
-  const canvas = document.createElement("canvas");
-  const context = canvas.getContext("2d");
-
-  // Apply the styles (height and font) from the element to the context
-  const style = getComputedStyle(element);
-  context.font = `${style.fontSize} ${style.fontFamily}`;
-
-  // Measure the text
-  const metrics = context.measureText(text);
-
-  // Return the width
-  return metrics.width;
+function clearField() {
+  el.input.value = "";
+  labelChanged();
+  el.input.focus();
 }
 
-function calculateLength() {
-  // calculates the label length based on the number of characters (including spaces)
-
-  let label = document.getElementById("length-label");
-  let treatedLabel = buildTreatedLabel();
-
-  if (!isValidLabelText()) {
-    label.textContent = "??mm";
-    label.style.opacity = 0.2;
-  } else {
-    // No floor of its own: buildTreatedLabel() has already padded to the
-    // minimum, and a second statement of that rule is what let this line
-    // quote a length the device was never going to receive.
-    label.textContent = treatedLabel.length * 4 + "mm";
-    label.style.opacity = 1;
-  }
-}
-
-async function labelCommand() {
-  // sends the label to the device
-  if (isValidLabelText()) {
-    document.getElementById("text-input").blur();
-    setUiBusy(true);
-    await sendCommand("tag", { tag: buildTreatedLabel().toLowerCase() });
-  }
-}
-
-// How many characters the panel pads a label up to, or null while the device
-// has not said yet.
-//
-// One past the device's minimum. A label that only just reaches the minimum
-// leaves the device topping the tape up with trailing feeds, which pushes the
-// text off centre; padding one further does not. The number comes from
-// api/capabilities -- three places here used to write it as a bare 7 while
-// the device called it 6, and two of them kept saying 7 after the third
-// started asking.
-// The widest margin buildTreatedLabel() adds to a label that is already long
-// enough on its own, per side. Short labels get more, to reach the minimum,
-// but a label near the maximum never does.
-const WIDEST_MARGIN = 1;
-
-// Caps the input at what the device will actually take, less the margin this
-// panel is about to add to it. The number used to be maxlength="247" written
-// into data/index.html, which is the panel deciding for itself what the
-// device accepts -- and it decided wrong, because the margin pushed a full
-// 247 characters to 249 and the device refused the label on arrival.
-function applyTypedLengthLimit() {
-  if (maxLabelCharacters === null) {
+// Puts a symbol where the caret is, or over the selection.
+function insertIntoField(symbol) {
+  const input = el.input;
+  const start = input.selectionStart ?? input.value.length;
+  const end = input.selectionEnd ?? start;
+  // maxLength only stops typing and pasting. A value set from here has to
+  // keep to it by hand.
+  if (input.maxLength >= 0 && input.value.length - (end - start) + symbol.length > input.maxLength) {
     return;
   }
-  const input = document.getElementById("text-input");
-  input.maxLength = maxLabelCharacters - WIDEST_MARGIN * 2;
+  input.setRangeText(symbol, start, end, "end");
+  input.focus();
+  labelChanged();
 }
 
-function paddedLabelTarget() {
-  return minLabelCharacters === null ? null : minLabelCharacters + 1;
-}
+//----------//
+//   tape   //
+//----------//
 
-function buildTreatedLabel() {
-  const LabelInput = document.getElementById("text-input");
-  let fieldValue = LabelInput.value;
-  let multiplier;
-  if (fieldValue.length == 0) {
-    fieldValue = "WRITE HERE";
-  }
-  switch (document.getElementById("mode-dropdown").value) {
-    case "tight":
-      multiplier = 0;
-      break;
-    default:
-      multiplier = 1;
-      break;
-  }
-
-  // Spaces go on both sides so the text stays centred. No fallback when the
-  // device has not said yet: a guessed minimum is the same drift in a
-  // different place, so only the mode's own padding is applied. That shows
-  // for as long as the first api/capabilities call takes -- the two callers
-  // that draw the preview run again when it lands, and the one that sends is
-  // behind isValidLabelText(), which refuses until then.
-  const target = paddedLabelTarget();
-  if (target !== null) {
-    const printLength = fieldValue.length + multiplier * 2;
-    if (printLength < target) {
-      // Added to the margin the mode already asked for, not put in its place.
-      // Assigning here discarded the loose mode's own space on each side, so
-      // every short label in that mode went out two characters under the
-      // minimum the device had just asked for.
-      multiplier += Math.ceil((target - printLength) / 2);
-    }
-  }
-  return " ".repeat(multiplier) + fieldValue + " ".repeat(multiplier);
-}
-
-function getScrollbarHeight(element) {
-  if (element.scrollHeight > element.clientHeight) {
-    return element.offsetHeight - element.clientHeight;
-  } else {
+// The same sums as labelFeeds() and labelsThatFit() in src/Tape.h, over the
+// numbers api/capabilities serves, so the page can say how many labels fit
+// before the roll runs out. The machine cannot see the tape: every length
+// here is a count of feeds, and an estimate.
+//
+// A label shorter than the minimum is topped up to it with blank feeds, so
+// there is something to take hold of when the tape is cut -- except a
+// one-character label, which the machine has always printed short.
+function topUpFeeds(length) {
+  if (length >= device.label.minimum || length === 1) {
     return 0;
   }
+  return device.label.minimum - Math.max(length, 0);
+}
+
+// The lead, one per character -- a space is a feed with no press -- and the
+// top-up. The cut takes none.
+function labelFeeds(length) {
+  return device.feed.lead + Math.max(length, 0) + topUpFeeds(length);
+}
+
+function labelLengthMm(length) {
+  return (labelFeeds(length) * device.feed.length_um) / 1000;
+}
+
+// Rounded down: a label that would run off the end of the tape is not one
+// that fits.
+function labelsThatFit(remainingMm, length) {
+  const perLabelUm = labelFeeds(length) * device.feed.length_um;
+  if (remainingMm <= 0 || perLabelUm <= 0) {
+    return 0;
+  }
+  return Math.floor((remainingMm * 1000) / perLabelUm);
+}
+
+// A length of tape in the unit a person would say it in. Rounded down, so
+// what is left is never more than the device's own estimate.
+function formatLength(mm) {
+  if (mm < 10) {
+    return Math.max(Math.floor(mm), 0) + " mm";
+  }
+  if (mm < 1000) {
+    return Math.floor(mm / 10) + " cm";
+  }
+  return Math.floor(mm / 100) / 10 + " m";
+}
+
+let measuringContext = null;
+
+function measureText(element, text) {
+  if (measuringContext === null) {
+    measuringContext = document.createElement("canvas").getContext("2d");
+  }
+  const style = getComputedStyle(element);
+  measuringContext.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+  return measuringContext.measureText(text).width;
 }
 
 function getLabelWidth(element, label) {
@@ -370,411 +723,878 @@ function getLabelWidth(element, label) {
   // is the padded length the panel aims at, not a number of its own.
   const target = paddedLabelTarget();
   const floor = target === null ? 0 : measureText(element, " ".repeat(target));
-  return Math.max(measureText(element, label), floor) + 4;
+  return Math.ceil(Math.max(measureText(element, label), floor)) + 4;
 }
 
-function drawHelper() {
-  // draws visual helper with label length taking options into account
-  const labelInput = document.getElementById("text-input");
-  const labelText = labelInput.value;
-  const scroll = document.getElementById("text-form-scroll"); // picks up the parent scroll element
-  const border = document.getElementById("text-form-border");
+// Sizes the strip to the label the device will be sent, margins and all, so
+// what is on the screen is the piece of tape that comes out.
+function drawTape() {
+  el.input.style.width = getLabelWidth(el.input, buildTreatedLabel()) + "px";
+  updateOverflow();
+  followCaret();
+}
 
-  document.getElementById("clear-button").disabled = labelText === "";
-  document.getElementById("submit-button").disabled = labelText === "";
-  document.getElementById("reel-button").disabled = !(labelText === "");
-  document.getElementById("feed-button").disabled = !(labelText === "");
-  document.getElementById("cut-button").disabled = !(labelText === "");
-  document.getElementById("setup-button").disabled = !(labelText === "");
-
-  labelInput.style.width = getLabelWidth(labelInput, buildTreatedLabel()) + "px";
-  const neededWidth = labelInput.clientWidth + 4;
-  if (neededWidth > scroll.clientWidth) {
-    // If modifying the text near the beginning or end of the scrollable area, then
-    // move the scroll area to keep the border visible while editing for better context.
-    if (labelInput.selectionEnd && labelInput.selectionEnd >= labelText.length - 20) {
-      scroll.scrollLeft = scroll.scrollWidth - scroll.clientWidth;
-    } else if (labelInput.selectionStart && labelInput.selectionStart < 20) {
-      scroll.scrollLeft = 0;
-    }
-    // Avoid leaving the scroll position past the end of the "needed" scrollable area.
-    // Dunno why browsers let you do this.
-    if (scroll.scrollLeft + neededWidth > scroll.scrollWidth) {
-      scroll.scrollLeft = neededWidth - scroll.clientWidth;
-    }
-    border.classList.add("scrolling");
-  } else {
-    border.classList.remove("scrolling");
+// Lets the track scroll once the strip is longer than it, and only then.
+// Measured rather than worked out, so the spacers at either end, the card's
+// padding and the width of the phone are all already in the answer.
+function updateOverflow() {
+  const scroll = el.tapeScroll;
+  const overflowing = scroll.scrollWidth > scroll.clientWidth;
+  el.tapeTrack.classList.toggle("scrolling", overflowing);
+  if (!overflowing) {
     scroll.scrollLeft = 0;
   }
-
-  onTextInputSelectionchange();
+  updateScrollTips();
 }
 
-function onTextInputSelectionchange() {
-  const labelInput = document.getElementById("text-input");
-  const scroll = document.getElementById("text-form-scroll");
-
-  // If the selection is at the beginning or end of the text, then move the scroll area to
-  // the beginning or end to include the label margins.
-  if (labelInput.selectionStart == labelInput.selectionEnd && labelInput.selectionEnd == 0) {
+// Keeps the caret in view on a label longer than the track. At either end of
+// the text the track goes all the way to that end, so the margin shows too.
+function followCaret() {
+  const input = el.input;
+  const scroll = el.tapeScroll;
+  if (document.activeElement !== input || !el.tapeTrack.classList.contains("scrolling")) {
+    return;
+  }
+  const value = input.value;
+  const caret = input.selectionDirection === "backward" ? input.selectionStart : input.selectionEnd;
+  if (caret === null) {
+    return;
+  }
+  if (caret === 0) {
     scroll.scrollLeft = 0;
-  } else if (
-    labelInput.selectionStart == labelInput.selectionEnd &&
-    labelInput.selectionEnd == labelInput.value.length
-  ) {
+  } else if (caret === value.length) {
     scroll.scrollLeft = scroll.scrollWidth - scroll.clientWidth;
-  }
-}
-
-// Whether the label in the input is something the device would accept. Every
-// character is checked against the set the device served, so this answer and
-// the device's answer cannot drift apart. Case does not matter: the label is
-// sent lowercase and the firmware upper-cases it again.
-function isValidLabelText() {
-  const value = document.getElementById("text-input").value;
-  if (value.length === 0 || printableCharacters === null) {
-    return false;
-  }
-  for (const character of value.toUpperCase()) {
-    if (printableCharacters.indexOf(character) < 0) {
-      return false;
-    }
-  }
-  return true;
-}
-
-function updateScrollHelper() {
-  // shows "..." helper if text is overflowed to that side
-
-  let scroll = document.getElementById("text-form-scroll");
-  let leftHelper = document.getElementById("tip-left");
-  let rightHelper = document.getElementById("tip-right");
-
-  // console.log(Math.round(scroll.scrollLeft + scroll.offsetWidth), scroll.scrollWidth);
-
-  if (scroll.scrollWidth > scroll.offsetWidth) {
-    if (
-      Math.round(scroll.scrollLeft + scroll.offsetWidth) >=
-      scroll.scrollWidth - 1 // "1" is margin of error
-    ) {
-      rightHelper.classList.remove("visible");
-    } else {
-      rightHelper.classList.add("visible");
-    }
-    if (scroll.scrollLeft == 0) {
-      leftHelper.classList.remove("visible");
-    } else {
-      leftHelper.classList.add("visible");
-    }
   } else {
-    leftHelper.classList.remove("visible");
-    rightHelper.classList.remove("visible");
+    // The text is centred in the strip, so it starts part way in.
+    const textStart = (input.offsetWidth - measureText(input, value)) / 2;
+    const x = el.tape.offsetLeft + textStart + measureText(input, value.slice(0, caret));
+    if (x < scroll.scrollLeft + CARET_ROOM) {
+      scroll.scrollLeft = x - CARET_ROOM;
+    } else if (x > scroll.scrollLeft + scroll.clientWidth - CARET_ROOM) {
+      scroll.scrollLeft = x - scroll.clientWidth + CARET_ROOM;
+    }
   }
+  updateScrollTips();
 }
 
+// Shows the "…" at whichever ends of the track have more tape past them.
+function updateScrollTips() {
+  const scroll = el.tapeScroll;
+  const overflowing = el.tapeTrack.classList.contains("scrolling");
+  // "1" is margin of error, for scroll positions that come out fractional.
+  el.tipStart.classList.toggle("visible", overflowing && scroll.scrollLeft > 1);
+  el.tipEnd.classList.toggle(
+    "visible",
+    overflowing && Math.ceil(scroll.scrollLeft + scroll.clientWidth) < scroll.scrollWidth - 1,
+  );
+}
+
+// jumps to the scroll target where 0 is the start and 1 the end
 function jumpToScrollEnds(target) {
-  // jumps to the scroll target where 0 is the start and 1 the end
-
-  let labelInput = document.getElementById("text-input");
-  labelInput.focus();
-  labelInput.setSelectionRange(target * labelInput.value.length, target * labelInput.value.length );
-
-  // let scroll = document.getElementById("text-form-scroll");
-  // scroll.scrollTo({ left: target * scroll.scrollWidth, behavior: "smooth" });
+  const position = target * el.input.value.length;
+  el.input.focus();
+  el.input.setSelectionRange(position, position);
+  followCaret();
 }
 
-function lerp(start, end, amt) {
-  return (1 - amt) * start + amt * end;
+// While a label prints: the label the device is working on, with the part
+// already embossed under the progress bar, kept in the middle of the track.
+function drawPrinting(status) {
+  const label = typeof status.current_label === "string" ? status.current_label : "";
+  if (el.printingLabel.textContent !== label) {
+    // textContent, not innerHTML: this is current_label off api/status, which
+    // is whatever was posted to api/tag, and a label is text.
+    el.printingLabel.textContent = label;
+  }
+  const width = getLabelWidth(el.printingLabel, label);
+  el.printingLabel.style.width = width + "px";
+  updateOverflow();
+
+  const characters = Array.from(label);
+  const done = Math.round((characters.length * printPercentage(status)) / 100);
+  const printed = characters.slice(0, done).join("");
+  // From the strip's left edge, past the centring, to just after the last
+  // character down.
+  const textStart = Math.max((width - measureText(el.printingLabel, label)) / 2, 0);
+  const progress = printed === "" ? 0 : textStart + measureText(el.printingLabel, printed) + 1;
+  el.progressBar.style.width = progress + "px";
+
+  const scroll = el.tapeScroll;
+  scroll.scrollLeft = Math.max(el.tape.offsetLeft + progress - scroll.clientWidth / 2, 0);
 }
 
-function validateField() {
-  // instantly validates label field by blocking buttons and giving visual feedback
-  let labelInput = document.getElementById("text-input");
-  drawHelper();
-  renderHint();
+// How far through the current label the device is. The device already holds
+// the last point back while it finishes feeding and cutting (see Progress.h).
+// Subtracting another one here is what made the browser read a point below
+// the OLED beside it.
+function printPercentage(status) {
+  const percentage = parseInt(status.progress, 10);
+  return Number.isNaN(percentage) ? 0 : Math.min(Math.max(percentage, 0), 100);
+}
 
-  if (!isValidLabelText() && labelInput.value != "") {
-    document.getElementById("hint").style.color = "red";
-    document.getElementById("text-input").style.color = "red";
-    document.getElementById("submit-button").disabled = true;
-    document.getElementById("submit-button").value = " invalid entry ";
-    document.getElementById("submit-button").style.color = "red";
-  } else {
-    document.getElementById("hint").style.color = "#e7dac960";
-    document.getElementById("text-input").style.color = "#e7dac9ff";
-    document.getElementById("submit-button").value = labelInput.value != "" ? " Print label! " : " ... ";
-    document.getElementById("submit-button").style.color = "#e7dac9ff";
+//--------------//
+//   quantity   //
+//--------------//
+
+function quantityMode() {
+  return el.form.elements.quantity.value;
+}
+
+function remainingRollMm() {
+  const roll = state.status && state.status.roll;
+  return roll && Number.isFinite(roll.remaining_mm) ? roll.remaining_mm : null;
+}
+
+// How many labels of the one typed fit on what is left of the roll, or null
+// while there is no label to measure or no roll to measure it against.
+function labelsFitting() {
+  const remaining = remainingRollMm();
+  if (remaining === null || !isValidLabelText()) {
+    return null;
+  }
+  return labelsThatFit(remaining, codePoints(buildTreatedLabel()));
+}
+
+// The whole number in the Multiple field, in range or not, or null while it
+// is not one. A number field that holds something it cannot read as a
+// number reports an empty value, so anything else typed is null here too.
+function rawCopies() {
+  const text = el.copiesInput.value.trim();
+  return /^\d+$/.test(text) ? Number(text) : null;
+}
+
+// The count in the Multiple field, or null while it is not one the device
+// would take.
+function typedCopies() {
+  const copies = rawCopies();
+  if (device === null || copies === null) {
+    return null;
+  }
+  return copies >= MIN_MULTIPLE && copies <= device.copies.maximum ? copies : null;
+}
+
+// How many labels the print button asks for, or null while the options as
+// they stand do not come to a number.
+function requestedCopies() {
+  switch (quantityMode()) {
+    case "multiple":
+      return typedCopies();
+    case "max": {
+      const fit = labelsFitting();
+      return fit === null || fit < 1 ? null : Math.min(fit, device.copies.maximum);
+    }
+    default:
+      return 1;
   }
 }
 
-function labelTextChanged() {
-  validateField();
-  calculateLength();
-  drawHelper();
-}
-
-function labelTextKeyDown(e) {
-  if (e.key === "Enter" && isValidLabelText()) {
-    document.getElementById("submit-button").click();
+// Settles the Multiple field on a count the device will take: the nearest
+// one to what was typed, or the smallest when nothing readable was.
+function commitCopies() {
+  if (device === null) {
+    return;
   }
-  onTextInputSelectionchange();
+  const typed = Number(el.copiesInput.value.trim());
+  const copies = el.copiesInput.value.trim() === "" || !Number.isFinite(typed) ? MIN_MULTIPLE : Math.round(typed);
+  el.copiesInput.value = clamp(copies, MIN_MULTIPLE, device.copies.maximum);
+  render();
 }
 
-function marginDropdownChanged(e) {
-  validateField();
-  calculateLength();
-  drawHelper();
+// From an out-of-range count, the first step lands back inside the range.
+function stepCopies(step) {
+  if (device === null) {
+    return;
+  }
+  const copies = rawCopies();
+  const next = copies === null ? MIN_MULTIPLE : copies + step;
+  el.copiesInput.value = clamp(next, MIN_MULTIPLE, device.copies.maximum);
+  render();
 }
 
-function clearField() {
-  // clears the label field and restore default button and form states
-  const labelInput = document.getElementById("text-input");
+function plural(count, one, many) {
+  return count + " " + (count === 1 ? one : many);
+}
 
-  document.getElementById("clear-button").disabled = true;
-  document.getElementById("submit-button").disabled = true;
-  document.getElementById("reel-button").disabled = false;
-  document.getElementById("feed-button").disabled = false;
-  document.getElementById("cut-button").disabled = false;
-  document.getElementById("hint").style.color = "#777777";
-  document.getElementById("text-input").style.color = "#ffffff";
-  document.getElementById("submit-button").value = " ... ";
+// The way out of a roll that is spent, on a line of its own under what is
+// wrong with it.
+const LOAD_NEW_ROLL = "\nLoad a new roll in Setup.";
 
-  labelInput.value = "";
+// The line under the quantity: what the choice will take out of the roll.
+// A warning, not a refusal, when the choice is more than the roll is
+// estimated to hold -- the estimate is a count of feeds against a length
+// somebody typed in, and the tape on the spool is the better judge.
+function quantityNote(mode) {
+  const remaining = remainingRollMm();
+  if (remaining === null || device === null) {
+    return { text: "", tone: null };
+  }
+  if (remaining <= 0) {
+    return { text: "The roll is estimated to be empty." + LOAD_NEW_ROLL, tone: "warning" };
+  }
+  const left = formatLength(remaining);
+  if (!isValidLabelText()) {
+    return { text: left + " of tape left on the roll.", tone: null };
+  }
 
-  drawHelper();
-  calculateLength();
+  const length = codePoints(buildTreatedLabel());
+  const fit = labelsThatFit(remaining, length);
+  if (fit === 0) {
+    return {
+      text: "Only " + left + " left, not enough for a label this long." + LOAD_NEW_ROLL,
+      tone: "warning",
+    };
+  }
 
-  labelInput.focus();
+  if (mode === "multiple") {
+    const copies = typedCopies();
+    if (copies === null) {
+      return { text: "Enter a number from " + MIN_MULTIPLE + " to " + device.copies.maximum + ".", tone: "warning" };
+    }
+    if (copies > fit) {
+      return { text: "Only about " + plural(fit, "fits", "fit") + " on the " + left + " left.", tone: "warning" };
+    }
+    return {
+      text: "Uses about " + formatLength(copies * labelLengthMm(length)) + " of the " + left + " left.",
+      tone: null,
+    };
+  }
+  if (mode === "max") {
+    if (fit > device.copies.maximum) {
+      return {
+        text: plural(device.copies.maximum, "label", "labels") + ", the most one run prints. About " + fit + " fit.",
+        tone: null,
+      };
+    }
+    return { text: plural(fit, "label", "labels") + ", to the end of the roll.", tone: null };
+  }
+  return {
+    text: "About " + plural(fit, "label this long fits", "labels this long fit") + " on the " + left + " left.",
+    tone: null,
+  };
+}
+
+function printButtonText(copies) {
+  if (quantityMode() === "one" || copies === 1) {
+    return "Print label";
+  }
+  return copies === null ? "Print labels" : "Print " + copies + " labels";
+}
+
+//--------------//
+//   commands   //
+//--------------//
+
+// Sends one command to the device. The name is a key in COMMAND_LABELS,
+// which is also the path it posts to. Returns whether the device accepted
+// it; if it did not, the page says why.
+async function send(name, data = {}) {
+  state.problem = null;
+  state.posting = name;
+  render();
+  let accepted = false;
+  try {
+    const response = await postJson("api/" + name, data);
+    if (response.ok) {
+      accepted = true;
+      state.pending = { name: name, acceptedAt: performance.now() };
+    } else {
+      const reply = await readJson(response);
+      const reason = reply && typeof reply.error === "string" ? reply.error : null;
+      console.error("Unable to " + name);
+      console.error(reason ?? response.status);
+      showProblem(reason ?? "The label maker refused that, and did not say why (HTTP " + response.status + ").");
+    }
+  } catch (error) {
+    console.error("Unable to " + name);
+    console.error(error);
+    showProblem("Couldn’t reach the label maker. Check that it’s switched on, then try again.");
+  } finally {
+    state.posting = null;
+    render();
+  }
+  if (accepted) {
+    // Now rather than on the next tick, so what the device is doing shows as
+    // soon as it has started doing it.
+    poll();
+  }
+  return accepted;
+}
+
+function canPrint() {
+  return (
+    runningCommand() === null &&
+    state.missedPolls < OFFLINE_AFTER_MISSES &&
+    isValidLabelText() &&
+    requestedCopies() !== null
+  );
+}
+
+// sends the label to the device
+async function printLabels() {
+  if (!canPrint()) {
+    return;
+  }
+  const copies = requestedCopies();
+  // Puts a phone's keyboard away, so the label printing is what is on screen.
+  el.input.blur();
+  state.stopRequested = false;
+  await send("tag", { tag: buildTreatedLabel().toLowerCase(), copies: copies });
+}
+
+// Asks the run to end after the label it is on. The device only looks at
+// this between one cut and the next label, so nothing is cut short.
+async function stopRun() {
+  state.stopRequested = true;
+  render();
+  try {
+    const response = await fetchWithTimeout("api/stop", { method: "POST" });
+    if (!response.ok) {
+      const reply = await readJson(response);
+      state.stopRequested = false;
+      showProblem(reply && typeof reply.error === "string" ? reply.error : "The label maker would not stop.");
+    }
+    // A "result" of "idle" is not a failure: the run finished while the tap
+    // was on its way, and the next poll says so.
+  } catch (error) {
+    console.error("Unable to stop");
+    console.error(error);
+    state.stopRequested = false;
+    showProblem("Couldn’t reach the label maker to stop it. The rest of the labels will still print.");
+  }
+  render();
 }
 
 // The device rejects any align or force outside the range it served. The
-// fields are disabled and only ever written by changeField() or
-// retrieveSettings(), so an out-of-range value means a fetch has not landed
-// yet -- sending it anyway would draw a 400 that nothing surfaces to the
-// user.
+// values are only ever set from /api/status or by the steppers, which keep
+// to the range, so an out-of-range value means a fetch has not landed yet --
+// sending it anyway would draw a 400 for something the person did not do.
 function calibrationValuesReady(...values) {
-  if (calibrationRange === null) {
+  if (device === null) {
     return false;
   }
   return values.every(
-    (value) =>
-      Number.isInteger(value) && value >= calibrationRange.min && value <= calibrationRange.max
+    (value) => Number.isInteger(value) && value >= device.calibration.min && value <= device.calibration.max,
   );
 }
 
-function updateTempValues() {
-  // updates the temporary setting values
-
-  // Number() here so the values POST as JSON numbers rather than strings. The
-  // device rejects anything outside the range it served, and a stray string
-  // would be parsed as 0 and refused.
-  align = Number(document.getElementById("align-field").value);
-  force = Number(document.getElementById("force-field").value);
-}
-
-function changeField(action, fieldName) {
-  // incremental / decremental buttons for the align and force settings
-
-  const field = document.getElementById(fieldName);
-  // field.value and the min/max attributes are all strings. "9" + 1 is "91",
-  // not 10, so the add branch was doing a lexicographic string comparison
-  // while the remove branch coerced to numbers -- it only stayed in range
-  // because "91" happens to sort after "9". Parse everything up front.
-  //
-  // The bounds come from api/capabilities, written onto the inputs by
-  // retrieveCapabilities(). Before that lands both read as 0 and neither
-  // button moves, which is the right answer: nothing here knows yet what
-  // the device would accept.
-  const min = Number(field.min);
-  const max = Number(field.max);
-  let currentValue = Number(field.value);
-
-  if (action == "add" && currentValue + 1 <= max) {
-    currentValue++;
-    field.value = currentValue;
-  } else if (action == "remove" && currentValue - 1 >= min) {
-    currentValue--;
-    field.value = currentValue;
-  }
-  updateTempValues();
-}
-
-function insertIntoField(specialChar) {
-  // inserts special emoji character in the label form
-
-  const labelInput = document.getElementById("text-input");
-  labelInput.focus();
-
-  let insertStartPoint;
-  let insertEndPoint;
-  let value = labelInput.value;
-
-  if (labelInput.selectionStart == labelInput.selectionEnd) {
-    insertStartPoint = labelInput.selectionStart;
-    insertEndPoint = insertStartPoint;
-  } else {
-    insertStartPoint = labelInput.selectionStart;
-    insertEndPoint = labelInput.selectionEnd;
-  }
-
-  // text before cursor/highlighted text + special character + text after cursor/highlighted text
-  value = value.slice(0, insertStartPoint) + specialChar + value.slice(insertEndPoint);
-  labelInput.value = value;
-
-  labelInput.setSelectionRange(insertStartPoint + 1, insertStartPoint + 1);
-  validateField();
-  labelInput.focus();
-}
-
-async function toggleSettings(safe = true) {
-  // shows/hide settings page
-
-  let state = document.getElementById("settings-frame").style.visibility;
-
-  // console.log(state);
-  // console.log(align + " / " + alignTemp + " / / " + force + " / " + forceTemp);
-
-  if (state === "hidden") {
-    // Must be awaited: alignTemp/forceTemp below are the snapshot the "discard
-    // unsaved changes?" check compares against, so taking it before the fetch
-    // lands captures the previous values and reports a spurious edit.
-    await retrieveSettings();
-    alignTemp = align;
-    forceTemp = force;
-    document.getElementById("settings-frame").style.visibility = "visible";
-    document.getElementById("main-frame").style.visibility = "hidden";
-  } else {
-    if (!safe || (align == alignTemp && force == forceTemp) || confirm("Discard unsaved changes?")) {
-      document.getElementById("settings-frame").style.visibility = "hidden";
-      document.getElementById("main-frame").style.visibility = "visible";
-      alignTemp = align;
-      forceTemp = force;
-    }
-  }
-}
-
-async function reelCommand() {
-  // sends reel command to the device
-  let prompt = confirm(
-    "Confirm loading a new reel?\n\nPlease make sure the tape is touching the cog.\n\nImportant: unsaved align and force settings will be lost."
-  );
-  if (prompt) {
-    toggleSettings(false);
-    setUiBusy(true);
-    document.getElementById("submit-button").value = COMMAND_LABELS.reel.busyLabel;
-    await sendCommand("reel");
-  }
-}
-
-async function feedCommand() {
-  // sends feed command to the device
-  setUiBusy(true);
-  document.getElementById("submit-button").value = COMMAND_LABELS.feed.busyLabel;
-  await sendCommand("feed");
-}
-
-async function cutCommand() {
-  // sends cut command to the device
-  setUiBusy(true);
-  document.getElementById("submit-button").value = COMMAND_LABELS.cut.busyLabel;
-  await sendCommand("cut");
-}
-
-async function testAlignCommand() {
-  // sends test command to the device
-  updateTempValues();
-  if (!calibrationValuesReady(align)) {
+// no force: this test always presses at the minimum, slowly and lightly, so
+// the alignment can be checked without embossing anything
+function testAlignCommand() {
+  const draft = state.draft;
+  if (draft === null || !calibrationValuesReady(draft.align)) {
     console.error("Cannot run the alignment test: align not loaded from the device yet");
     return;
   }
-  // no force: this test always presses at the minimum, slowly and lightly, so
-  // the alignment can be checked without embossing anything
-  let data = {
-    align: align,
-  };
-  setUiBusy(true);
-  await sendCommand("testalign", data);
+  send("testalign", { align: draft.align });
 }
 
-async function testFullCommand() {
-  // sends test command to the device
-  updateTempValues();
-  if (!calibrationValuesReady(align, force)) {
+function testFullCommand() {
+  const draft = state.draft;
+  if (draft === null || !calibrationValuesReady(draft.align, draft.force)) {
     console.error("Cannot run the full test: align/force not loaded from the device yet");
     return;
   }
-  let data = {
-    align: align,
-    force: force,
-  };
-  setUiBusy(true);
-  await sendCommand("testfull", data);
+  send("testfull", { align: draft.align, force: draft.force });
 }
 
+// sends settings save command to the device, and reloads once it has
+// restarted
 async function settingsCommand() {
-  // sends settings save command to the device, and triggers self restart in 15 seconds
-
-  updateTempValues();
-
-  // console.log("settings / align (" + align + ") force (" + force + ")");
-
-  if (!calibrationValuesReady(align, force)) {
+  const draft = state.draft;
+  if (draft === null || !calibrationValuesReady(draft.align, draft.force)) {
     console.error("Cannot save: align/force not loaded from the device yet");
     return;
   }
+  if (!(await send("save", { align: draft.align, force: draft.force }))) {
+    return;
+  }
+  state.restarting = true;
+  render();
 
-  if (confirm("Confirm saving align [" + align + "] and force [" + force + "] settings?")) {
-    setUiBusy(true);
-    document.getElementById("submit-button").value = COMMAND_LABELS.save.busyLabel;
-    if (!(await sendCommand("save", { align: align, force: force }))) {
-      return;
+  let count = RESTART_SECONDS;
+  const showCount = () => {
+    el.countdown.textContent = plural(Math.max(count, 0), "second", "seconds");
+  };
+  showCount();
+  el.restartDialog.showModal();
+  setInterval(() => {
+    count -= 1;
+    showCount();
+    if (count <= 0) {
+      window.location.reload();
     }
+  }, 1000);
+}
 
-    document.getElementById("settings-frame").style.visibility = "hidden";
-    document.getElementById("refresh-frame").style.visibility = "visible";
+//-----------//
+//   setup   //
+//-----------//
 
-    let count = 15;
-    document.getElementById("countdown").textContent = count;
+function openSetup() {
+  state.view = "setup";
+  state.problem = null;
+  // What the device has now, not what it had when the page loaded: another
+  // phone may have saved since.
+  state.draft = state.saved === null ? null : { ...state.saved };
+  render();
+  window.scrollTo(0, 0);
+  el.setupView.focus({ preventScroll: true });
+}
 
-    setInterval(function () {
-      count = count - 1;
-      document.getElementById("countdown").textContent = count;
+function leaveSetup() {
+  if (hasUnsavedChanges()) {
+    const { draft, saved } = state;
+    const changed = ["align", "force"].filter((name) => draft[name] !== saved[name]);
+    const [change, have] = changed.length > 1 ? ["changes", "have"] : ["change", "has"];
+    el.discardSummary.textContent = `Your ${change} to ${changed.join(" and ")} ${have} not been saved.`;
+    openDialog(el.discardDialog);
+    return;
+  }
+  closeSetup();
+}
 
-      // console.log(count);
+function closeSetup() {
+  state.view = "print";
+  state.draft = null;
+  state.problem = null;
+  render();
+  // Measured again now it is on screen: hidden, the track had no width.
+  drawTape();
+  window.scrollTo(0, 0);
+  el.setupButton.focus({ preventScroll: true });
+}
 
-      if (count == 0) {
-        window.location.reload();
-      }
-    }, 1000);
+function hasUnsavedChanges() {
+  const { draft, saved } = state;
+  return draft !== null && saved !== null && (draft.align !== saved.align || draft.force !== saved.force);
+}
+
+// The steppers for align and force. The values are held as numbers here
+// and never read back off the page: an input's value and its min and max
+// are all strings, "9" + 1 is "91", and the steppers that used to read
+// them compared strings and only stayed in range because "91" happens to
+// sort after "9".
+function stepSetting(name, step) {
+  if (state.draft === null || device === null) {
+    return;
+  }
+  const next = state.draft[name] + step;
+  if (next < device.calibration.min || next > device.calibration.max) {
+    return;
+  }
+  state.draft[name] = next;
+  render();
+}
+
+function confirmSave() {
+  const draft = state.draft;
+  if (draft === null || !calibrationValuesReady(draft.align, draft.force)) {
+    return;
+  }
+  el.saveSummary.textContent =
+    "Align " +
+    draft.align +
+    " and force " +
+    draft.force +
+    " are saved, then the label maker restarts to use them. It takes about " +
+    RESTART_SECONDS +
+    " seconds.";
+  openDialog(el.saveDialog);
+}
+
+function openDialog(dialog) {
+  // A dialog keeps the last answer it was closed with. Cleared, so Escape
+  // this time is not read as whatever was pressed last time.
+  dialog.returnValue = "";
+  dialog.showModal();
+}
+
+function openReelDialog() {
+  if (device === null) {
+    return;
+  }
+  const roll = device.roll;
+  const current = state.status && state.status.roll ? state.status.roll.length_mm : roll.default_mm;
+  el.reelLength.min = roll.minimum_mm / 1000;
+  el.reelLength.max = roll.maximum_mm / 1000;
+  el.reelLength.value = clamp(current, roll.minimum_mm, roll.maximum_mm) / 1000;
+  renderReelDialog();
+  openDialog(el.reelDialog);
+}
+
+// The roll length typed into the dialog, in millimetres, or null while it
+// is not one the device would take.
+function typedRollLength() {
+  const lengthMm = typedRollLengthUnchecked();
+  if (lengthMm === null || device === null) {
+    return null;
+  }
+  return lengthMm >= device.roll.minimum_mm && lengthMm <= device.roll.maximum_mm ? lengthMm : null;
+}
+
+function typedRollLengthUnchecked() {
+  const text = el.reelLength.value.trim();
+  const metres = Number(text);
+  return text === "" || !Number.isFinite(metres) ? null : Math.round(metres * 1000);
+}
+
+// Moves to the next half metre up or down, rather than by half a metre from
+// wherever the field is, so a typed 2.7 steps to 3 and not to 3.2.
+function stepReel(direction) {
+  if (device === null) {
+    return;
+  }
+  const roll = device.roll;
+  const current = typedRollLengthUnchecked() ?? roll.default_mm;
+  const next =
+    direction > 0
+      ? (Math.floor(current / ROLL_STEP_MM) + 1) * ROLL_STEP_MM
+      : (Math.ceil(current / ROLL_STEP_MM) - 1) * ROLL_STEP_MM;
+  el.reelLength.value = clamp(next, roll.minimum_mm, roll.maximum_mm) / 1000;
+  renderReelDialog();
+}
+
+function renderReelDialog() {
+  if (device === null) {
+    return;
+  }
+  const roll = device.roll;
+  const lengthMm = typedRollLength();
+  const typed = typedRollLengthUnchecked();
+  el.reelLength.setAttribute("aria-invalid", lengthMm === null ? "true" : "false");
+  el.reelConfirm.disabled = lengthMm === null;
+  el.reelLess.disabled = typed !== null && typed <= roll.minimum_mm;
+  el.reelMore.disabled = typed !== null && typed >= roll.maximum_mm;
+  setText(
+    el.reelRange,
+    "From " +
+      roll.minimum_mm / 1000 +
+      " to " +
+      roll.maximum_mm / 1000 +
+      " m. A new roll is usually " +
+      formatLength(roll.default_mm) +
+      ".",
+  );
+  setTone(el.reelRange, lengthMm === null ? "warning" : null);
+}
+
+//-------------//
+//   polling   //
+//-------------//
+
+let pollTimer = null;
+let polling = false;
+
+async function poll() {
+  if (polling || state.restarting) {
+    return;
+  }
+  polling = true;
+  clearTimeout(pollTimer);
+  const requestedAt = performance.now();
+  try {
+    const response = await fetchWithTimeout("api/status", { timeout: 5000 });
+    if (!response.ok) {
+      throw new Error("api/status answered " + response.status);
+    }
+    applyStatus(await response.json(), requestedAt);
+    state.missedPolls = 0;
+  } catch (error) {
+    state.missedPolls += 1;
+    // Once, when the page starts saying so, rather than every second after.
+    if (state.missedPolls === OFFLINE_AFTER_MISSES) {
+      console.error("Lost touch with the label maker");
+      console.error(error);
+    }
+  } finally {
+    polling = false;
+    render();
+    if (!state.restarting) {
+      pollTimer = setTimeout(poll, document.hidden ? HIDDEN_POLL_MS : POLL_MS);
+    }
   }
 }
 
-// Helper method to amke fetch requests with a configurable timeout.
+function applyStatus(status, requestedAt) {
+  state.status = status;
+  if (state.pending !== null && requestedAt >= state.pending.acceptedAt) {
+    state.pending = null;
+  }
+  if (!(status.busy && status.command === "tag")) {
+    state.stopRequested = false;
+  }
+  if (Number.isInteger(status.align) && Number.isInteger(status.force)) {
+    const before = state.saved;
+    state.saved = { align: status.align, force: status.force };
+    if (state.view === "setup" && state.draft === null) {
+      state.draft = { ...state.saved };
+    } else if (state.draft !== null && before !== null) {
+      // A value not changed here follows the device, when another phone
+      // saves one or the label maker comes back up with its own.
+      for (const name of ["align", "force"]) {
+        if (state.draft[name] === before[name]) {
+          state.draft[name] = state.saved[name];
+        }
+      }
+    }
+  }
+}
+
+// The command the device is running, or about to, or null when it is idle.
+function runningCommand() {
+  if (state.posting !== null) {
+    return state.posting;
+  }
+  if (state.pending !== null) {
+    return state.pending.name;
+  }
+  if (state.status !== null && state.status.busy) {
+    return state.status.command;
+  }
+  return null;
+}
+
+function busyLabel(command) {
+  const spec = COMMAND_LABELS[command];
+  return spec ? spec.busyLabel : UNKNOWN_BUSY_LABEL;
+}
+
+//------------//
+//   render   //
+//------------//
+
+function render() {
+  const command = runningCommand();
+  const busy = command !== null;
+  const offline = state.missedPolls >= OFFLINE_AFTER_MISSES;
+  // Read before anything is disabled or hidden: either can take focus away,
+  // and then there is no telling where it was.
+  const focused = document.activeElement;
+
+  el.offline.hidden = !offline || state.restarting;
+  el.printView.hidden = state.view !== "print";
+  el.setupView.hidden = state.view !== "setup";
+  setText(el.viewName, state.view === "setup" ? "Setup" : "Label maker");
+
+  renderPrintView(command, busy, offline, focused);
+  renderSetupView(command, busy, offline);
+  renderProblems();
+}
+
+function renderPrintView(command, busy, offline, focused) {
+  const status = state.status;
+  const run = status !== null && status.busy && status.command === "tag" ? status : null;
+
+  const wasPrinting = document.body.dataset.printing === "true";
+  document.body.dataset.printing = run !== null ? "true" : "false";
+  if (run !== null) {
+    drawPrinting(run);
+  } else if (wasPrinting) {
+    // The input is back, and it was not measured while it was hidden.
+    drawTape();
+  }
+
+  // the label
+  const typed = el.input.value;
+  const valid = isValidLabelText();
+  el.input.disabled = busy;
+  el.input.setAttribute("aria-invalid", unprintableCharacters(typed).length > 0 ? "true" : "false");
+  const hint = hintFor(typed);
+  setText(el.hint, hint.text);
+  setTone(el.hint, hint.tone);
+  setText(el.length, valid ? Math.round(labelLengthMm(codePoints(buildTreatedLabel()))) + " mm" : "");
+  for (const key of el.keys) {
+    key.disabled = busy;
+  }
+  el.clearButton.disabled = busy || typed === "";
+  for (const radio of el.form.elements.margin) {
+    radio.disabled = busy;
+  }
+
+  // how many
+  const remaining = remainingRollMm();
+  const fit = labelsFitting();
+  const maxAvailable = !(remaining !== null && remaining <= 0) && fit !== 0;
+  const multipleAvailable = device === null || device.copies.maximum >= MIN_MULTIPLE;
+  if (!maxAvailable && quantityMode() === "max") {
+    // Nothing left to print to the end of. Back to one, rather than leave a
+    // choice selected that cannot be made.
+    el.form.elements.quantity.value = "one";
+  }
+  for (const radio of el.form.elements.quantity) {
+    radio.disabled =
+      busy || (radio.value === "max" && !maxAvailable) || (radio.value === "multiple" && !multipleAvailable);
+  }
+  const mode = quantityMode();
+  const copiesRaw = rawCopies();
+  el.copiesStepper.hidden = mode !== "multiple";
+  el.copiesInput.disabled = busy;
+  el.copiesInput.setAttribute("aria-invalid", mode === "multiple" && typedCopies() === null ? "true" : "false");
+  el.copiesLess.disabled = busy || (copiesRaw !== null && copiesRaw <= MIN_MULTIPLE);
+  el.copiesMore.disabled = busy || device === null || (copiesRaw !== null && copiesRaw >= device.copies.maximum);
+  const note = quantityNote(mode);
+  setText(el.quantityNote, note.text);
+  setTone(el.quantityNote, note.tone);
+
+  // print, or what the machine is doing instead
+  const copies = requestedCopies();
+  setText(el.printButton, printButtonText(copies));
+  el.printButton.disabled = busy || offline || !valid || copies === null;
+  el.printButton.hidden = busy;
+  el.activity.hidden = !busy;
+  if (busy) {
+    renderActivity(command, run);
+  }
+  // The button a keyboard was on goes away under it while the machine runs.
+  // Focus goes to what took its place, and back again after.
+  if (busy && focused === el.printButton) {
+    el.activity.focus({ preventScroll: true });
+  } else if (!busy && focused === el.activity) {
+    el.printButton.focus({ preventScroll: true });
+  }
+
+  // under the card
+  const batch = run !== null && run.copies > 1;
+  el.machineActions.hidden = batch;
+  el.runActions.hidden = !batch;
+  el.feedButton.disabled = busy || offline;
+  el.cutButton.disabled = busy || offline;
+  el.setupButton.disabled = busy;
+  if (batch) {
+    const stopping = run.stopping === true || state.stopRequested;
+    setText(el.stopButton, stopping ? "Stopping after this label…" : "Stop after this label");
+    el.stopButton.disabled = stopping || offline || run.copy >= run.copies;
+    el.stopButton.toggleAttribute("data-running", stopping);
+  } else if (focused === el.stopButton) {
+    (busy ? el.activity : el.printButton).focus({ preventScroll: true });
+  }
+}
+
+function renderActivity(command, run) {
+  let text = busyLabel(command);
+  let percentage = null;
+  if (command === "tag" && run !== null) {
+    percentage = printPercentage(run);
+    if (Number.isInteger(run.copies) && Number.isInteger(run.copy) && run.copies > 1) {
+      const stopping = run.stopping === true || state.stopRequested;
+      text = (stopping ? "Stopping after label " : "Printing label ") + run.copy + " of " + run.copies;
+      // The whole run, not the label it is on: the tape above already shows
+      // how far into this label it is, and a bar that emptied at every cut
+      // would say nothing about when the run ends.
+      percentage = Math.floor(((clamp(run.copy, 1, run.copies) - 1) * 100 + percentage) / run.copies);
+    }
+  }
+  setText(el.activityText, text);
+  setText(el.activityPercent, percentage === null ? "" : percentage + "%");
+  el.activityFill.style.width = (percentage ?? 0) + "%";
+  // Breathes while there is no number to watch go up instead.
+  el.activity.toggleAttribute("data-breathing", percentage === null);
+}
+
+function renderSetupView(command, busy, offline) {
+  const roll = state.status !== null ? state.status.roll : null;
+  if (roll) {
+    setText(el.rollRemaining, formatLength(roll.remaining_mm));
+    setText(el.rollOf, "left of " + formatLength(roll.length_mm));
+    const share = roll.length_mm > 0 ? clamp(roll.remaining_mm / roll.length_mm, 0, 1) : 0;
+    el.rollMeter.style.width = share * 100 + "%";
+    setTone(el.rollMeter, share < 0.1 ? "warning" : null);
+  } else {
+    setText(el.rollRemaining, "–");
+    setText(el.rollOf, "");
+    el.rollMeter.style.width = "0";
+  }
+  el.reelButton.disabled = busy || offline || device === null;
+  showRunning(el.reelButton, command === "reel");
+
+  const draft = state.draft;
+  setText(el.alignValue, draft === null ? "–" : String(draft.align));
+  setText(el.forceValue, draft === null ? "–" : String(draft.force));
+  for (const button of el.stepButtons) {
+    const next = draft === null ? null : draft[button.dataset.setting] + Number(button.dataset.step);
+    // Held while anything runs, so the number beside a test is the one it
+    // is testing.
+    button.disabled = busy || !calibrationValuesReady(next);
+  }
+  const alignReady = draft !== null && calibrationValuesReady(draft.align);
+  const bothReady = draft !== null && calibrationValuesReady(draft.align, draft.force);
+  el.testAlignButton.disabled = busy || offline || !alignReady;
+  showRunning(el.testAlignButton, command === "testalign");
+  el.testFullButton.disabled = busy || offline || !bothReady;
+  showRunning(el.testFullButton, command === "testfull");
+  // Saving restarts the label maker, which is not worth doing for the
+  // numbers it already has.
+  el.saveButton.disabled = busy || offline || !bothReady || !hasUnsavedChanges() || state.restarting;
+  el.cancelButton.disabled = state.restarting;
+  setText(el.setupStatus, busy && !SETUP_COMMANDS.includes(command) ? busyLabel(command) : "");
+}
+
+// A setup button says what its command is doing while it runs. The page
+// has both of its labels, and style.css shows the one this picks.
+function showRunning(button, running) {
+  button.toggleAttribute("data-running", running);
+}
+
+function renderProblems() {
+  for (const box of el.problems) {
+    const view = box.closest(".view") === el.setupView ? "setup" : "print";
+    const message = state.problem !== null && state.problem.view === view ? state.problem.message : "";
+    box.hidden = message === "";
+    setText(box.querySelector(".problem-text"), message);
+  }
+}
+
+// source names what raised it, for whatever has to take it down again when
+// that same thing goes right.
+function showProblem(message, source = null) {
+  state.problem = { view: state.view, message: message, source: source };
+}
+
+function dismissProblem() {
+  state.problem = null;
+  render();
+  (state.view === "setup" ? el.setupView : el.printView).focus({ preventScroll: true });
+}
+
+// Writes only what has changed. render() runs on every poll, and a live
+// region given the same words again is read out again.
+function setText(element, text) {
+  if (element.textContent !== text) {
+    element.textContent = text;
+  }
+}
+
+function setTone(element, tone) {
+  if (tone === null) {
+    delete element.dataset.tone;
+  } else {
+    element.dataset.tone = tone;
+  }
+}
+
+//-----------//
+//   utils   //
+//-----------//
+
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+
+// Helper method to make fetch requests with a configurable timeout.
 // See: https://dmitripavlutin.com/timeout-fetch-request/
 async function fetchWithTimeout(resource, options = {}) {
   const { timeout = 8000 } = options;
 
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeout);
-  const response = await fetch(resource, {
-    ...options,
-    signal: controller.signal,
-  });
-  clearTimeout(id);
-  return response;
-}
-
-// Sends one command to the device and reports a refusal to the console. The
-// name is a key in COMMAND_LABELS, which is also the path it posts to. Returns
-// whether the device accepted it.
-async function sendCommand(name, data = {}) {
-  const response = await postJson("api/" + name, data);
-  if (!response.ok) {
-    console.error("Unable to " + name);
-    console.error((await response.json())["error"]);
+  try {
+    return await fetch(resource, {
+      ...options,
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(id);
   }
-  return response.ok;
 }
 
 // Helper method to post a json request, supports timeouts.
@@ -788,90 +1608,16 @@ async function postJson(url, data, options = {}) {
   return await fetchWithTimeout(url, options);
 }
 
-async function getStatus() {
+// The body of a reply as JSON, or null when it is not any: a 404 from older
+// firmware is plain text, and a reply cut off by a timeout is nothing.
+async function readJson(response) {
   try {
-    let request = await fetchWithTimeout("api/status", { timeout: 5000 });
-    handleData(await request.json());
+    return await response.json();
   } catch (error) {
-    // TODO: Add some UI treatment for when there are communication errors, eg
-    // a "Reconnecting..." toast message or something.
-    console.error("Problem ");
-    console.error(error);
-  } finally {
-    setTimeout(getStatus, 1000);
+    return null;
   }
 }
 
-let wasBusy = false;
-
-// Enables or disables UI elements to prevent intercations while the printer is printing,
-// reeling, cutting, etc.
-function setUiBusy(busy) {
-  if (busy && !wasBusy) {
-    // Disable UI elements
-    wasBusy = true;
-    Array.from(document.querySelectorAll("input")).forEach((element) => {
-      element.disabled = true;
-    });
-    document.getElementById("mode-dropdown").disabled = true;
-  } else if (!busy && wasBusy) {
-    // Enable UI elements
-    wasBusy = false;
-    let body = document.getElementsByTagName("body")[0];
-    body.dataset.printing = "false";
-    const labelInput = document.getElementById("text-input");
-    Array.from(document.querySelectorAll("input")).forEach((element) => {
-      element.disabled = false;
-    });
-    document.getElementById("mode-dropdown").disabled = false;
-    document.getElementById("submit-button").disabled = labelInput.value == "";
-    document.getElementById("clear-button").disabled = labelInput.value == "";
-    validateField();
-  }
-}
-
-function handleData(data_json) {
-  setUiBusy(data_json.busy);
-
-  if (!data_json.busy) {
-    return;
-  }
-  // The device already holds the last point back while it finishes feeding
-  // and cutting (see Progress.h). Subtracting another one here is what made
-  // the browser read a point below the OLED beside it.
-  let percentage = parseInt(data_json.progress);
-
-  const submitButton = document.getElementById("submit-button");
-  const spec = COMMAND_LABELS[data_json.command];
-  submitButton.value = spec ? spec.busyLabel : UNKNOWN_BUSY_LABEL;
-
-  // tag is the only command with more to show than its own name: it scrolls
-  // the label past a progress bar as the characters go down, and it counts
-  // the percentage into the button. Everything else has said its piece.
-  if (data_json.command !== "tag") {
-    return;
-  }
-
-  let scroll = document.getElementById("text-form-scroll"); // picks up the parent scroll element
-
-  submitButton.value = " printing " + percentage + "% ";
-  let body = document.getElementsByTagName("body")[0];
-  body.dataset.printing = "true";
-  const label = data_json.current_label || "unknown";
-  const printingLabel = document.getElementById("printing-label");
-  printingLabel.style.width = getLabelWidth(printingLabel, label) + "px";
-  // textContent, not innerHTML: this is current_label off api/status, which
-  // is whatever was posted to api/tag, and a label is text.
-  printingLabel.textContent = label;
-  const printed = label.substring(0, Math.round(label.length * (percentage / 100)));
-  const progressLength = measureText(printingLabel, printed) + 3;
-  document.getElementById("progress-bar").style.width = progressLength + "px";
-
-  if (progressLength < scroll.clientWidth / 2) {
-    scroll.scrollLeft = 0;
-  } else if (progressLength > scroll.scrollWidth - scroll.clientWidth / 2) {
-    scroll.scrollLeft = scroll.scrollWidth;
-  } else {
-    scroll.scrollLeft = progressLength - scroll.clientWidth / 2;
-  }
-}
+// Last, once everything above it exists: startup() draws the tape straight
+// away, and that reaches for bindings further down this file.
+startup();
