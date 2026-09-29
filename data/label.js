@@ -4,10 +4,14 @@
 // readCapabilities() in status.js returns them, or null while
 // api/capabilities has not answered yet.
 
+// The spaces a side for each margin the page offers, by the value of its
+// button in data/index.html.
+const MARGINS = { tight: 0, loose: 1 };
+
 // The widest margin paddedLabel() adds to a label that is already long
 // enough on its own, per side. Short labels get more, to reach the minimum,
 // but a label near the maximum never does.
-const WIDEST_MARGIN = 1;
+const WIDEST_MARGIN = Math.max(...Object.values(MARGINS));
 
 // How long a label may be typed: what the device will actually take, less
 // the margin this panel is about to add to it. The number used to be
@@ -35,7 +39,7 @@ export function paddedLabelTarget(device) {
 // The label as it will be sent, with the margin, "tight" or "loose", on both
 // sides so the text stays centred.
 export function paddedLabel(text, margin, device) {
-  let multiplier = margin === "tight" ? 0 : 1;
+  let perSide = MARGINS[margin];
 
   // No fallback when the device has not said yet: a guessed minimum is the
   // same drift in a different place, so only the margin's own padding is
@@ -44,16 +48,16 @@ export function paddedLabel(text, margin, device) {
   // sent before then, because isValidLabelText() refuses until it has.
   const target = paddedLabelTarget(device);
   if (target !== null) {
-    const printLength = codePoints(text) + multiplier * 2;
+    const printLength = codePoints(text) + perSide * 2;
     if (printLength < target) {
       // Added to the margin the mode already asked for, not put in its place.
       // Assigning here discarded the loose mode's own space on each side, so
       // every short label in that mode went out two characters under the
       // minimum the device had just asked for.
-      multiplier += Math.ceil((target - printLength) / 2);
+      perSide += Math.ceil((target - printLength) / 2);
     }
   }
-  return " ".repeat(multiplier) + text + " ".repeat(multiplier);
+  return " ".repeat(perSide) + text + " ".repeat(perSide);
 }
 
 // Characters as the device counts them. Four of the wheel's are more than

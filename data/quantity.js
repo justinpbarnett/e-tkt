@@ -3,7 +3,7 @@
 // capabilities come in as `device`, as readCapabilities() in status.js
 // returns them, or null while api/capabilities has not answered yet.
 
-import { formatLength, labelLengthMm, labelsThatFit } from "./tape.js";
+import { clamp, formatLength, labelLengthMm, labelsThatFit } from "./tape.js";
 
 // The smallest run the Multiple option offers. One label is the One option.
 export const MIN_MULTIPLE = 2;
@@ -126,10 +126,6 @@ export function steppedCopies(text, step, device) {
   const copies = wholeNumber(text);
   const next = copies === null ? MIN_MULTIPLE : copies + step;
   return clamp(next, MIN_MULTIPLE, device.copies.maximum);
-}
-
-function clamp(value, min, max) {
-  return Math.min(Math.max(value, min), max);
 }
 
 // The whole number in the Multiple field, in range or not, or null while it

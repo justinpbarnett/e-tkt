@@ -5,6 +5,8 @@
 // and nothing here touches the page, so node tests every answer in
 // test/panel/status.test.js.
 
+import { clamp } from "./tape.js";
+
 // Raised when api/capabilities answers but leaves out something this page
 // needs, which means the device is running older firmware than this page.
 // Named, so the console says which of the two went wrong.
@@ -205,7 +207,7 @@ export function activity(running, device) {
 // the OLED beside it.
 export function printPercentage(status) {
   const percentage = parseInt(status.progress, 10);
-  return Number.isNaN(percentage) ? 0 : Math.min(Math.max(percentage, 0), 100);
+  return Number.isNaN(percentage) ? 0 : clamp(percentage, 0, 100);
 }
 
 // The stops the page offers while a command runs, or null when it offers
@@ -283,8 +285,4 @@ function stoppedWhat(stopped, device) {
     return "Stopped before the " + words.pressed + " was started.";
   }
   return words.stopped;
-}
-
-function clamp(value, min, max) {
-  return Math.min(Math.max(value, min), max);
 }

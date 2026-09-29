@@ -129,7 +129,10 @@ export function rollRange(device) {
   );
 }
 
-function clamp(value, min, max) {
+// The value, moved into min..max when it is outside. The other modules take
+// it from here: this one imports nothing, so importing it cannot make a
+// cycle, and a file of its own would be one more request for the device.
+export function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
 }
 
