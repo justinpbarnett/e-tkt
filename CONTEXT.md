@@ -167,7 +167,7 @@ The motors halt within a step and a tune within a note.
 The press is the exception: once it is on its way down it finishes the stroke and comes back up, because a servo stopped partway is a press held against the wheel.
 Whatever was being pressed is left on the tape as far as it got, uncut.
 A command can be stopped when its row says it is **stoppable**, which is anything but a save, since a save moves nothing and ends in a reboot.
-The panel offers it, as the red stop button, for printing, the two tests and loading a roll; a feed or a cut is over before a finger could get there.
+The panel offers it, as the red stop button, whenever a stoppable command runs.
 It is not a command: it does not wait its turn, because it is about the command that is running.
 A stop with nothing running is not an error, since the job may have just ended.
 `/api/status` reports one that has been asked for and not yet obeyed as `stop`, so a panel opened partway through a stop says so too.
