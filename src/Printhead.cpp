@@ -27,7 +27,7 @@ void Printhead::initialize(const Calibration& calibration) {
 
 Turn Printhead::stopIfLost(Turn turn) {
   if (turn == Turn::LOST) {
-    this->stop->raise(StopCause::HOMING);
+    this->stop->raise(StopCause::LOST_WHEEL);
     // Obeyed as it is raised. The turn was the work, and it has been
     // dropped, so a home or a move that ends here was cut short too.
     this->stop->shouldStop();

@@ -8,9 +8,10 @@ enum class StopCause {
   NONE,
   // The operator, with the stop button.
   OPERATOR,
-  // The daisy wheel, which turned without finding its magnet. Nothing it
-  // turned to from there would have put the right slot under the press.
-  HOMING,
+  // The daisy wheel, which turned without finding its magnet and so is
+  // lost. Nothing it turned to from there would have put the right slot
+  // under the press.
+  LOST_WHEEL,
 };
 
 /**

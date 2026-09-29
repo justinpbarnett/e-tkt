@@ -67,7 +67,7 @@ class Printhead {
    *
    * This and every call below that turns the wheel homes first. One that
    * finds no magnet presses nothing and stops the job, with
-   * StopCause::HOMING, and the stop counts as obeyed.
+   * StopCause::LOST_WHEEL, and the stop counts as obeyed.
    */
   void home(const Calibration& calibration);
 

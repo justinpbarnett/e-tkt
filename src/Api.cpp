@@ -317,8 +317,9 @@ Reply Api::status() {
     const JsonObject stopped = doc.createNestedObject("stopped");
     stopped["id"] = status.stopped.id;
     stopped["command"] = commandName(status.stopped.command);
-    stopped["cause"] =
-        status.stopped.cause == StopCause::HOMING ? "homing" : "operator";
+    stopped["cause"] = status.stopped.cause == StopCause::LOST_WHEEL
+                           ? "lost_wheel"
+                           : "operator";
     const CommandSpec* cutShort = commandSpec(status.stopped.command);
     if (cutShort != NULL && cutShort->printsRun) {
       stopped["printed"] = status.stopped.printed;

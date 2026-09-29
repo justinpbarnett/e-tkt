@@ -170,7 +170,7 @@ function stopKey(stopped) {
 // operator who pressed that knows why.
 function stoppedText(stopped) {
   const lost =
-    stopped.cause === "homing"
+    stopped.cause === "lost_wheel"
       ? " The daisy wheel could not find its home. Check the magnet on the wheel and the hall sensor."
       : "";
   return stoppedWhat(stopped) + lost;

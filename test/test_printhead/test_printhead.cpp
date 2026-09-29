@@ -220,7 +220,7 @@ void test_a_lost_wheel_presses_nothing_and_stops_the_job(void) {
   printhead->stamp("A", {5, 5});
 
   TEST_ASSERT_EQUAL_INT(0, (int)strokes->strokes.size());
-  TEST_ASSERT_TRUE(stopSignal->cause() == StopCause::HOMING);
+  TEST_ASSERT_TRUE(stopSignal->cause() == StopCause::LOST_WHEEL);
   TEST_ASSERT_TRUE(stopSignal->cutShort());
 }
 
@@ -244,7 +244,7 @@ void test_every_turn_of_a_lost_wheel_stops_the_job(void) {
   for (size_t i = 0; i < sizeof(turnings) / sizeof(turnings[0]); i++) {
     stopSignal->clear();
     turnings[i].turn();
-    TEST_ASSERT_TRUE_MESSAGE(stopSignal->cause() == StopCause::HOMING,
+    TEST_ASSERT_TRUE_MESSAGE(stopSignal->cause() == StopCause::LOST_WHEEL,
                              turnings[i].name);
     TEST_ASSERT_TRUE_MESSAGE(stopSignal->cutShort(), turnings[i].name);
   }

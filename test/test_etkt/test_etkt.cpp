@@ -456,7 +456,7 @@ void test_a_lost_wheel_ends_the_run_and_says_why(void) {
 
   const StatusUpdate status = etkt->createStatus();
   TEST_ASSERT_EQUAL_INT(Command::TAG, status.stopped.command);
-  TEST_ASSERT_TRUE(status.stopped.cause == StopCause::HOMING);
+  TEST_ASSERT_TRUE(status.stopped.cause == StopCause::LOST_WHEEL);
   TEST_ASSERT_EQUAL_INT(0, status.stopped.printed);
   // Found out by the home before the lead feed, so no tape has moved and
   // there is nothing to cut off.
@@ -479,7 +479,7 @@ void test_each_stop_is_told_apart_from_the_last(void) {
   etkt->loop();
 
   const StoppedCommand second = etkt->createStatus().stopped;
-  TEST_ASSERT_TRUE(second.cause == StopCause::HOMING);
+  TEST_ASSERT_TRUE(second.cause == StopCause::LOST_WHEEL);
   TEST_ASSERT_TRUE(first.id != 0);
   TEST_ASSERT_TRUE(second.id != 0);
   TEST_ASSERT_TRUE(first.id != second.id);

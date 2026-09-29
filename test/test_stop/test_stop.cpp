@@ -74,17 +74,17 @@ void test_clearing_forgets_both(void) {
 // The operator is told why the job ended, so a stop keeps what raised it.
 void test_a_stop_says_what_raised_it(void) {
   TEST_ASSERT_TRUE(stop->cause() == StopCause::NONE);
-  stop->raise(StopCause::HOMING);
+  stop->raise(StopCause::LOST_WHEEL);
   TEST_ASSERT_TRUE(stop->raised());
-  TEST_ASSERT_TRUE(stop->cause() == StopCause::HOMING);
+  TEST_ASSERT_TRUE(stop->cause() == StopCause::LOST_WHEEL);
 }
 
 // A lost wheel stops the job, and the operator may press stop while the
 // machine parks. What ended the job was the wheel, so the first cause stands.
 void test_the_first_cause_of_a_stop_stands(void) {
-  stop->raise(StopCause::HOMING);
+  stop->raise(StopCause::LOST_WHEEL);
   stop->raise(StopCause::OPERATOR);
-  TEST_ASSERT_TRUE(stop->cause() == StopCause::HOMING);
+  TEST_ASSERT_TRUE(stop->cause() == StopCause::LOST_WHEEL);
 }
 
 // The next job starts with no stop, and no reason for one.
@@ -92,8 +92,8 @@ void test_clearing_forgets_the_cause(void) {
   stop->raise(StopCause::OPERATOR);
   stop->clear();
   TEST_ASSERT_TRUE(stop->cause() == StopCause::NONE);
-  stop->raise(StopCause::HOMING);
-  TEST_ASSERT_TRUE(stop->cause() == StopCause::HOMING);
+  stop->raise(StopCause::LOST_WHEEL);
+  TEST_ASSERT_TRUE(stop->cause() == StopCause::LOST_WHEEL);
 }
 
 // --- moving --------------------------------------------------------------

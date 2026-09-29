@@ -552,7 +552,7 @@ void test_a_lost_wheel_is_reported_as_the_cause(void) {
 
   const JsonObject stopped = json(get("/api/status"))["stopped"];
   TEST_ASSERT_EQUAL_STRING("home", stopped["command"].as<const char*>());
-  TEST_ASSERT_EQUAL_STRING("homing", stopped["cause"].as<const char*>());
+  TEST_ASSERT_EQUAL_STRING("lost_wheel", stopped["cause"].as<const char*>());
   TEST_ASSERT_FALSE(stopped.containsKey("printed"));
   TEST_ASSERT_FALSE(stopped.containsKey("copies"));
   TEST_ASSERT_FALSE(stopped["unfinished"].as<bool>());

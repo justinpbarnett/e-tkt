@@ -245,7 +245,7 @@ test("a stop that cut a test or a new roll short says what it left", () => {
 test("a stop by a lost wheel says what to check", () => {
   // Whoever pressed the stop button knows why they did. A job that found
   // the wheel lost stopped itself, and the notice is all there is to say so.
-  const notice = new Stops().notice(stoppedBy({ command: "testalign", cause: "homing" }));
+  const notice = new Stops().notice(stoppedBy({ command: "testalign", cause: "lost_wheel" }));
   assert.equal(
     notice.text,
     "Stopped the alignment test. The daisy wheel could not find its home. Check the magnet on the wheel and the hall sensor.",
