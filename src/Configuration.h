@@ -32,8 +32,9 @@
  * ok but lower values will slow down printing, if you're having trouble start
  * by halving them and move up from there.  The speed you can reliably achieve
  * depends on the quality of the motor, how much current you've set it up to
- * use, and how fast the ESP-32 can talk with it. 1600 steps is a full
- * revolution of the daisy wheel.
+ * use, and how fast the ESP-32 can talk with it. 3200 steps is a full
+ * revolution of the daisy wheel: CHAR_STEP_COUNT full steps of
+ * CHAR_MICROSTEPS each.
  */
 #define CHARACTER_STEPPER_MAX_SPEED 320000
 #define CHARACTER_STEPPER_MAX_ACCELERATION 16000

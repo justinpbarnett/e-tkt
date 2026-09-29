@@ -99,10 +99,11 @@
 
 // The two mistakes that stop the press working without stopping the build.
 //
-// Equal angles make the press travel nowhere: pressDirection() returns 0 and
-// every force computes the same peak. A bite of zero does the same thing to
-// the force slider on its own, leaving all nine values landing on
-// STAMP_ANGLE.
+// Equal angles leave the press resting where it just touches the wheel, so
+// it has no stroke to press with. They also give pressDirection() no side to
+// find the wheel on: it answers 1, and the bite past the touch point goes
+// that way whichever side the wheel is. A bite of zero leaves all nine forces
+// landing on STAMP_ANGLE, so the force slider does nothing.
 static_assert(REST_ANGLE != STAMP_ANGLE,
               "REST_ANGLE and STAMP_ANGLE must differ, or the press has no "
               "stroke at all");
