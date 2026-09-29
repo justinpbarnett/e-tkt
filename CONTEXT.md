@@ -123,10 +123,29 @@ The machine runs one at a time, and a second request is refused with a 409: the 
 **Quantity** - the panel's way of asking for a run: one, multiple (2 up to `MAX_COPIES`), or max.
 Max is the labels that fit, capped at `MAX_COPIES`, worked out in the panel and sent as a number; the device has no idea of the end of the roll.
 
-**Stop** - `POST /api/stop`, which ends a run once the label being pressed is cut, and never partway through one.
+**Stop** - `POST /api/stop`, for when something has gone wrong: it stops what the machine is doing, now.
+The motors halt within a step and a tune within a note.
+The press is the exception: once it is on its way down it finishes the stroke and comes back up, because a servo stopped partway is a press held against the wheel.
+Whatever was being pressed is left on the tape as far as it got, uncut.
+Anything but a save can be stopped, since a save moves nothing and ends in a reboot.
+The panel offers it, as the red stop button, for printing, the two tests and loading a roll; a feed or a cut is over before a finger could get there.
 It is not a command: it does not wait its turn, because it is about the command that is running.
-Anything but printing is over in seconds and cannot be stopped, and a stop with nothing running is not an error, since the run may have just ended.
-`ETKT::stop()`.
+A stop with nothing running is not an error, since the job may have just ended.
+`/api/status` reports one that has been asked for and not yet obeyed as `stop`, so a panel opened partway through a stop says so too.
+`ETKT::stop()`, and `StopSignal`, which carries it from the web server's task to the command loop.
+
+**Stop after this label** - `POST /api/stop?after=label`, for a run that is going fine and is longer than it needs to be.
+The run ends once the label being pressed is cut, so no tape is spent on a label nobody finishes.
+Only a run of labels has a label to stop after, and anything else is refused with a 409.
+Nothing is cut short, so it leaves no stopped record, and the run ends with the usual celebration.
+`ETKT::stopAfterLabel()`.
+
+**Stopped** - what the last stop cut short: the command, how many of a run's labels were finished, and whether it left a label **unfinished** on the tape.
+An unfinished label is still joined to the roll and would come out on the front of the next one, so the panel offers to cut it off.
+`/api/status` reports it as `stopped` until the next command is accepted, so a panel that was not watching when a job was stopped can still say it was.
+A stop that arrived as the job was finishing anyway, on the last press of the last cut or during the celebration after it, cut nothing short and leaves no record; the machine still skips what is left of the celebration, because a stop was asked for.
+The OLED says stopped where it would say ready.
+`StoppedCommand`.
 
 ## Where the parts meet
 

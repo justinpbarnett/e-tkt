@@ -61,10 +61,11 @@ class Network {
   void statusGetHandler(AsyncWebServerRequest* request);
 
   /**
-   * Handles a POST to /api/stop, which asks a run of labels to end once the
-   * label being pressed is cut. Answered while the machine is busy, which is
-   * the only time anyone asks, so it cannot be a row in ETKT::COMMANDS: those
-   * are refused while another command runs.
+   * Handles a POST to /api/stop, which stops what the machine is doing now,
+   * or with ?after=label asks a run of labels to end once the label being
+   * pressed is cut. Answered while the machine is busy, which is the only time
+   * anyone asks, so it cannot be a row in ETKT::COMMANDS: those are refused
+   * while another command runs.
    */
   void stopPostHandler(AsyncWebServerRequest* request);
   void capabilitiesGetHandler(AsyncWebServerRequest* request);

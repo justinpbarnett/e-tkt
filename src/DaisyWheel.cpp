@@ -6,15 +6,19 @@
 #include "Drivers.h"
 #include "HallSwitch.h"
 #include "Logger.h"
+#include "Motion.h"
 #include "Settings.h"
+#include "StopSignal.h"
 
 DaisyWheel::DaisyWheel(Logger* logger, HallSwitch* hall, Characters* characters,
-                       Settings* settings, StepperDriver* stepper) {
+                       Settings* settings, StepperDriver* stepper,
+                       StopSignal* stop) {
   this->logger = logger;
   this->hall = hall;
   this->characters = characters;
   this->settings = settings;
   this->stepper = stepper;
+  this->stop = stop;
 }
 
 DaisyWheel::~DaisyWheel() {
@@ -34,6 +38,12 @@ void DaisyWheel::initialize() {
 }
 
 void DaisyWheel::home(int align) {
+  // Before the coils are powered, so a stop that is already up leaves the
+  // wheel as it was.
+  if (this->stop->shouldStop()) {
+    this->lose();
+    return;
+  }
   this->stepper->enableOutputs();
   // runs the char stepper clockwise until triggering the hall sensor, then call
   // it home at char 21
@@ -48,8 +58,10 @@ void DaisyWheel::home(int align) {
     long position = -this->stepsPerChar * 4;
     logger->log(String("Moving to position: ") + position +
                 " because the hall sensor is already triggered.");
-    this->stepper->runToNewPosition(-this->stepsPerChar * 4);
-    this->stepper->run();
+    if (!runToNewPosition(this->stepper, position, this->stop)) {
+      this->lose();
+      return;
+    }
   }
 
   // TODO: Change the above to only move as long as the hall sensor is
@@ -63,6 +75,11 @@ void DaisyWheel::home(int align) {
   // here forever: the stepper has stopped by then, so the hall reading can no
   // longer change and the original loop could never exit.
   while (!hallState && this->stepper->distanceToGo() != 0) {
+    if (this->stop->shouldStop()) {
+      halt(this->stepper);
+      this->lose();
+      return;
+    }
     this->stepper->run();
     // TODO: less intrusive way to avoid triggering watchdog?
     delayMicroseconds(100);
@@ -81,9 +98,13 @@ void DaisyWheel::home(int align) {
 
   this->stepper->setCurrentPosition(0);
 
-  this->stepper->runToNewPosition(-stepsPerChar + (stepsPerChar * a) +
-                                  (ASSEMBLY_CALIBRATION_ALIGN * stepsPerChar));
-  this->stepper->run();
+  if (!runToNewPosition(this->stepper,
+                        -stepsPerChar + (stepsPerChar * a) +
+                            (ASSEMBLY_CALIBRATION_ALIGN * stepsPerChar),
+                        this->stop)) {
+    this->lose();
+    return;
+  }
   this->stepper->setCurrentPosition(0);
   // Where the wheel now is, asked of the same table every move consults.
   const int homeChar = this->characters->getCharacterIndex(CHAR_HOME_CHARACTER);
@@ -104,6 +125,11 @@ bool DaisyWheel::move(String c, int alignFactor) {
   if (!ENABLE_DAISYWHEEL) {
     delay(500);
     return true;
+  }
+  // Before the coils are powered, so a stop that is already up leaves the
+  // wheel as it was.
+  if (this->stop->shouldStop()) {
+    return false;
   }
 
   // reaches out for a specific character
@@ -126,6 +152,10 @@ bool DaisyWheel::move(String c, int alignFactor) {
 
   // calls home everytime to avoid accumulating errors
   this->home(alignFactor);
+  if (this->stop->shouldStop()) {
+    // home() gave up partway, so there is nowhere to count from.
+    return false;
+  }
 
   auto charDelta = charIndex - this->currentChar;
   logger->log(String("New character index is ") + charIndex +
@@ -145,11 +175,19 @@ bool DaisyWheel::move(String c, int alignFactor) {
   long position = -this->stepsPerChar * charDelta;
   logger->log(String("Moving ") + charDelta + " characters to position " +
               position);
-  this->stepper->runToNewPosition(position);
+  if (!runToNewPosition(this->stepper, position, this->stop)) {
+    this->currentChar = -1;
+    return false;
+  }
   this->currentChar = charIndex;
 
   delay(25);
   return true;
+}
+
+void DaisyWheel::lose() {
+  this->homed = false;
+  this->currentChar = -1;
 }
 
 void DaisyWheel::deenergize() {

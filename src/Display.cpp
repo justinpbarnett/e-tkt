@@ -217,13 +217,17 @@ void Display::render(Screen screen) {
   // instead of one that went dark.
 }
 
-void Display::renderIdle() {
+void Display::renderIdle(bool stopped) {
   // main screen with qr code, network and attributed ip
 
   this->clear();
   this->u8g2->setFont(u8g2_font_nine_by_five_nbp_t_all);
 
   uint8_t qrcodeData[qrcode_getBufferSize(this->QRcode_Version)];
+
+  // The QR code has the right half of the screen to itself. Everything else
+  // has to end before it.
+  const uint8_t qrLeft = SCREEN_WIDTH - 64;
 
   if (this->ip != "") {
     this->u8g2->setDrawColor(1);
@@ -233,7 +237,7 @@ void Display::renderIdle() {
     this->u8g2->drawFrame(3, 3, 50, 15);
     this->u8g2->setDrawColor(1);
 
-    this->u8g2->drawStr(14, 31, "ready");
+    this->u8g2->drawStr(14, 31, stopped ? "stopped" : "ready");
 
     String resizeSSID;
     if (this->ssid.length() > 8) {
@@ -244,12 +248,27 @@ void Display::renderIdle() {
     const char* d = resizeSSID.c_str();
     this->u8g2->drawStr(14, 46, d);
 
+    // The address is the way in when the QR code will not scan, so it has to
+    // show whole. The house font fits a short one, but a long one like
+    // 192.168.254.165 runs under the QR code, so it steps down to the first
+    // of these it fits in. The last one fits any address there is.
     const char* b = this->ip.c_str();
+    const uint8_t* const addressFonts[] = {u8g2_font_nine_by_five_nbp_t_all,
+                                           u8g2_font_miranda_nbp_tn,
+                                           u8g2_font_squeezed_r7_tn};
+    for (const uint8_t* font : addressFonts) {
+      this->u8g2->setFont(font);
+      if (3 + this->u8g2->getStrWidth(b) <= qrLeft) {
+        break;
+      }
+    }
     this->u8g2->drawStr(3, 61, b);
 
     this->u8g2->setFont(u8g2_font_open_iconic_all_1x_t);
     this->u8g2->drawGlyph(3, 46, 0x00f8);
-    this->u8g2->drawGlyph(3, 31, 0x0073);
+    // A tick when the last job finished, the media stop square when it was
+    // stopped partway.
+    this->u8g2->drawGlyph(3, 31, stopped ? 0x00d9 : 0x0073);
 
     String ipFull = "http://" + this->ip;
     qrcode_initText(qrcode, qrcodeData, QRcode_Version, QRcode_ECC,
@@ -259,12 +278,12 @@ void Display::renderIdle() {
     for (uint8_t y = 0; y < 64; y++) {
       for (uint8_t x = 0; x < 64; x++) {
         this->u8g2->setDrawColor(0);
-        this->u8g2->drawPixel(x + 128 - 64, y);
+        this->u8g2->drawPixel(x + qrLeft, y);
       }
     }
 
     // setup the top right corner of the QRcode
-    uint8_t x0 = 128 - 64 + 6;
+    uint8_t x0 = qrLeft + 6;
     uint8_t y0 = 3;
 
     // display QRcode

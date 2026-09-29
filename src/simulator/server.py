@@ -35,8 +35,24 @@ PRINT_CHARACTER_SECONDS = 1
 # device's cap through this, which is what the cap is for.
 FINISH_SECONDS = 2
 
+# The last of the cut's three presses, the end of FINISH_SECONDS rather than
+# more on top of it. Like every press, once it is on its way down it finishes
+# its stroke, so a stop that arrives during it finds the label cut and ends
+# the run between two labels, with nothing left on the tape.
+CUT_STROKE_SECONDS = 0.5
+
 # How long it should take to simulate any other action (eg cut, feed, etc)
 OTHER_COMMAND_SECONDS = 5
+
+# The finish LED's blink and fade once the last label of a run is cut, which
+# the device stays busy through. A stop ends it early, but too late to cut
+# anything short: the label is already cut.
+CELEBRATION_SECONDS = 4
+
+# How long the machine takes to come to rest once a stop is obeyed: a press
+# on its way down finishes its stroke, and the motors are let go. The device
+# goes on saying it is busy, with the stop, until it has.
+STOPPING_SECONDS = 0.5
 
 # The one command that walks a label character by character, which makes it
 # the only one with progress worth reporting and the only one whose label
@@ -63,8 +79,18 @@ COMMAND_FEEDS = {
     "testfull": 1 + len("E-TKT") + 1,
 }
 
+# The two commands that press a label, and so the only two a stop can leave
+# one on the tape for. See StoppedCommand::unfinished.
+LABEL_COMMANDS = (PRINTING_COMMAND, "testfull")
+
 # Word for word what PrinterBusyException says in src/ETKT.h.
 BUSY_MESSAGE = "The printer is already busy executing a command."
+
+# Word for word what Network::stopPostHandler() answers.
+STOP_AFTER_MESSAGE = ("Please provide after=label to stop once the label "
+                      "being pressed is cut, or leave it out to stop now")
+UNSTOPPABLE_SAVE_MESSAGE = "Saving cannot be stopped"
+UNSTOPPABLE_AFTER_LABEL_MESSAGE = "Only a run of labels can stop after a label"
 
 # As deep as the device's Logger. Nothing depends on the two agreeing.
 LOG_LINES = 32
@@ -107,13 +133,28 @@ class Server:
         # meaning as long as the last one.
         self.copies = 1
         self.new_roll_mm = 0
-        # Where a run of labels has got to. Both are cleared with the command.
+        # Where a run of labels has got to: the label being pressed, and how
+        # many are finished and cut. Both are cleared with the command.
         self.copy = 0
-        self.stopping = False
+        self.printed = 0
+        # The two ways to stop, as ETKT keeps them. A stop now ends whatever
+        # the machine is waiting on. A stop after the label is only looked
+        # at between one label and the next.
+        self.stop_now = asyncio.Event()
+        self.stopping_after_label = False
+        # Whether a stop has cut the running command short, as against
+        # arriving while it was finishing anyway: StopSignal::cutShort().
+        self.cut_short = False
+        # What the last stop cut short, until the next command is accepted,
+        # as ETKT keeps lastStopped. None when there is nothing to say.
+        self.stopped = None
         # What Roll keeps in EEPROM. Kept in memory here, so every start of
         # the simulator is a device that has never counted a roll.
         self.roll_mm = device.default_roll_mm
         self.feeds_used = 0
+        # The count of feeds used at the last cut, as ETKT keeps
+        # feedsAtLastCut: a stop that finds more has left a label on the tape.
+        self.feeds_at_last_cut = 0
         self.log = deque(maxlen=LOG_LINES)
         self.started = time.monotonic()
 
@@ -170,7 +211,14 @@ class Server:
             body['current_label'] = self.label
             body['copy'] = self.copy
             body['copies'] = self.copies
-            body['stopping'] = self.stopping
+        # A stop asked for and not yet obeyed. A stop now outranks a stop
+        # after the label, which it overtakes.
+        if running is not None and self.stop_now.is_set():
+            body['stop'] = 'now'
+        elif running is not None and self.stopping_after_label:
+            body['stop'] = 'after_label'
+        if self.stopped is not None:
+            body['stopped'] = self.stopped
         # Busy or not, as the device sends it.
         body['roll'] = {
             'length_mm': self.roll_mm,
@@ -183,15 +231,30 @@ class Server:
         return web.json_response(body)
 
     async def stop(self, request):
-        """Mirrors Network::stopPostHandler() and ETKT::stop()."""
+        """Mirrors Network::stopPostHandler(), ETKT::stop() and
+        ETKT::stopAfterLabel()."""
+        # In the query string rather than a body, so a stop is one bare POST.
+        after = request.query.get('after')
+        if after is not None and after != 'label':
+            return self.refuse(STOP_AFTER_MESSAGE)
         if self.command is None:
-            # Not an error. The run most likely finished while the tap was
-            # on its way.
+            # Not an error. The job most likely finished while the tap was on
+            # its way.
             return web.json_response({'result': 'idle'})
-        if self.command.name != PRINTING_COMMAND:
-            return self.refuse("Only printing can be stopped", status=409)
-        self.stopping = True
-        self.record("INFO", "Stopping after this label")
+        if after is None:
+            # Saving writes the settings and reboots, and a stop partway
+            # through that would leave the device neither one way nor the
+            # other.
+            if self.command.name == SAVE_COMMAND:
+                return self.refuse(UNSTOPPABLE_SAVE_MESSAGE, status=409)
+            self.stop_now.set()
+            self.record("INFO", "Stopping now")
+        else:
+            if self.command.name != PRINTING_COMMAND:
+                return self.refuse(UNSTOPPABLE_AFTER_LABEL_MESSAGE,
+                                   status=409)
+            self.stopping_after_label = True
+            self.record("INFO", "Stopping after this label")
         return web.json_response({'result': 'stopping'})
 
     async def capabilities(self, request):
@@ -310,6 +373,8 @@ class Server:
             self.record("INFO", "Saved align %d" % self.align)
             self.record("INFO", "Saved force %d" % self.force)
 
+        # A new job, so the last one's stop is old news.
+        self.stopped = None
         self.command = spec
         self.label = label
         self.copies = copies
@@ -344,22 +409,45 @@ class Server:
         return web.json_response({'error': message}, status=status)
 
     async def run(self, spec):
+        # The commands that press labels count from here, as they do on the
+        # device, so tape fed before them is not taken for theirs.
+        self.feeds_at_last_cut = self.feeds_used
         if spec.name == PRINTING_COMMAND:
             await self.print_labels()
         elif spec.name == REEL_COMMAND:
             await self.reel()
         else:
-            # Any other command takes the same amount of time
-            await self.pause(OTHER_COMMAND_SECONDS)
+            # Any other command takes the same amount of time. A stop cuts it
+            # short and it is charged all its feeds all the same: the
+            # simulator cannot tell how many the device would have made
+            # first, and a count that runs out a little early is better than
+            # one that runs out late.
+            await self.work(OTHER_COMMAND_SECONDS)
             self.use(COMMAND_FEEDS.get(spec.name, 0))
+
+        if self.cut_short:
+            # Word for word what ETKT::loop() logs.
+            self.record("INFO", "Stopped " + spec.name)
+            await self.pause(STOPPING_SECONDS)
+            stopped = {'command': spec.name}
+            if spec.name == PRINTING_COMMAND:
+                stopped['printed'] = self.printed
+                stopped['copies'] = self.copies
+            # Tape fed since the last cut is a label nothing has cut off.
+            stopped['unfinished'] = (spec.name in LABEL_COMMANDS and
+                                     self.feeds_used > self.feeds_at_last_cut)
+            self.stopped = stopped
         # All together, as ETKT::loop() does when it clears the command:
         # leaving progress behind reports an idle printer stuck at 99%, and
-        # leaving the stop behind would end the next run after one label.
+        # leaving a stop behind would stop the next job before it began.
         self.command = None
         self.running_task = None
         self.progress = 0
         self.copy = 0
-        self.stopping = False
+        self.printed = 0
+        self.stopping_after_label = False
+        self.cut_short = False
+        self.stop_now.clear()
 
     async def reel(self):
         # ETKT::reelCommandInternal(). The new roll is as long as the request
@@ -369,7 +457,9 @@ class Server:
         self.feeds_used = 0
         # Word for word what Roll::load() logs.
         self.record("INFO", "New roll: %d mm" % self.roll_mm)
-        await self.pause(OTHER_COMMAND_SECONDS)
+        # Charged in full even when a stop cuts it short, for the reason in
+        # run().
+        await self.work(OTHER_COMMAND_SECONDS)
         self.use(self.device.reel_feeds)
 
     async def print_labels(self):
@@ -399,23 +489,56 @@ class Server:
         for copy in range(1, copies + 1):
             self.copy = copy
             self.progress = 0
-            for done in range(1, total + 1):
-                await self.pause(PRINT_CHARACTER_SECONDS)
-                self.progress = self.device.progress_percent(done, total)
+            if not await self.print_label(total):
+                # Stopped partway through this label, which is left on the
+                # tape.
+                break
+            self.feeds_at_last_cut = self.feeds_used
+            self.printed = copy
+            if copy == copies:
+                break
 
-            # The top-up and the cut, which is the stretch the device holds
-            # its last percentage point back for.
-            await self.pause(FINISH_SECONDS)
-            # Charged a label at a time, as the device charges it, so what
-            # /api/status says is left steps down once per cut.
-            self.use(self.device.label_feeds(total))
-
-            # A stop is only ever looked at here, between one cut and the
-            # next label, as ETKT::tagCommandInternal() looks at it.
-            if self.stopping and copy < copies:
+            # Between one cut and the next label, where both kinds of stop
+            # can end a run without leaving anything on the tape, as
+            # ETKT::tagCommandInternal() looks at them. A stop now obeyed
+            # here still counts as cutting the run short.
+            if self.should_stop():
+                break
+            if self.stopping_after_label:
                 self.record("INFO", "Stopped after %d of %d" % (copy, copies))
                 break
+
+        if self.cut_short:
+            return
         self.record("INFO", "Printing Complete")
+        await self.wait(CELEBRATION_SECONDS)
+
+    async def print_label(self, total):
+        """One label of a run, as ETKT::printLabel() presses it. Says whether
+        it was finished and cut, which a stop can keep it from being."""
+        # Charged once the label is over, cut or stopped, as the device
+        # charges it, so what /api/status says is left steps down once per
+        # label. A step's feeds count from the moment the step begins: the
+        # simulator cannot tell how far into one a stop landed, and a count
+        # that runs out a little early is better than one that runs out late.
+        fed = self.device.lead_feeds
+        for done in range(1, total + 1):
+            fed += 1
+            if not await self.work(PRINT_CHARACTER_SECONDS):
+                self.use(fed)
+                return False
+            self.progress = self.device.progress_percent(done, total)
+
+        # The top-up and the cut, which is the stretch the device holds its
+        # last percentage point back for. The cut's last press finishes its
+        # stroke whatever happens, so a stop that arrives during it is only
+        # seen once the label is cut, between it and the next.
+        fed += self.device.top_up_feeds(total)
+        finished = await self.work(FINISH_SECONDS - CUT_STROKE_SECONDS)
+        if finished:
+            await self.pause(CUT_STROKE_SECONDS)
+        self.use(fed)
+        return finished
 
     def use(self, feeds):
         """Counts feeds taken from the roll. Mirrors Roll::use()."""
@@ -425,6 +548,37 @@ class Server:
         """Every wait the simulated machine makes goes through here, so a test
         can hold it part way through a job."""
         await asyncio.sleep(seconds)
+
+    async def wait(self, seconds):
+        """A pause that a stop now ends early, whether it is already up or
+        arrives partway. Says whether the pause ran its course."""
+        if self.stop_now.is_set():
+            return False
+        pausing = asyncio.ensure_future(self.pause(seconds))
+        stopping = asyncio.ensure_future(self.stop_now.wait())
+        done, pending = await asyncio.wait(
+            {pausing, stopping}, return_when=asyncio.FIRST_COMPLETED)
+        for task in pending:
+            task.cancel()
+        # A stop that lands as the pause ends is left to the next one, the way
+        # the device looks for a stop before each step and not after it.
+        return pausing in done
+
+    async def work(self, seconds):
+        """A wait that is part of the job, so a stop that ends it cuts the
+        job short."""
+        if await self.wait(seconds):
+            return True
+        self.cut_short = True
+        return False
+
+    def should_stop(self):
+        """Mirrors StopSignal::shouldStop(): whether to drop the work in
+        hand, and from a yes on, the job counts as cut short."""
+        if not self.stop_now.is_set():
+            return False
+        self.cut_short = True
+        return True
 
     def record(self, level, message):
         """One line of the log, formatted the way Logger::recent() is."""

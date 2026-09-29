@@ -13,16 +13,33 @@
 
 #include "Arduino.h"
 #include "Light.h"
+#include "StopSignal.h"
 
 static const uint8_t PIN = 5;
+static StopSignal* stop;
 static Light* led;
 
 void setUp(void) {
   stubReset();
-  led = new Light(PIN);
+  stop = new StopSignal();
+  led = new Light(PIN, stop);
 }
 
-void tearDown(void) { delete led; }
+void tearDown(void) {
+  delete led;
+  delete stop;
+}
+
+// Raises the stop once the virtual clock reaches atMs, from inside the first
+// wait that gets there, the way it arrives from the webserver's task on the
+// board while the LED is between one write and the next.
+static void stopAt(unsigned long atMs) {
+  stubAfterDelay() = [atMs]() {
+    if (millis() >= atMs) {
+      stop->raise();
+    }
+  };
+}
 
 // Every value written to the LED's pin, in order.
 static std::vector<int> written(void) {
@@ -201,6 +218,51 @@ void test_fade_uses_every_level_it_has(void) {
                            "a full fade must be smooth, not stepped");
 }
 
+// --- stopping ------------------------------------------------------------
+// The finish LED's celebration is four seconds of blinking and fading after a
+// label is cut, and the machine is busy for all of it. A stop that arrives
+// then has nothing left to cut short, but it should still leave the machine
+// idle straight away rather than after the show.
+
+void test_a_stop_ends_a_blink_dark_at_the_end_of_the_half_cycle(void) {
+  // Raised during the first lit half, which then ends dark rather than lit,
+  // and nothing more is written.
+  stopAt(150);
+  led->blink(5, LIGHT_HALF, 100, 100);
+  const std::vector<int> values = written();
+  TEST_ASSERT_EQUAL_INT(3, (int)values.size());
+  TEST_ASSERT_TRUE(values[1] > 0);
+  TEST_ASSERT_EQUAL_INT(0, values[2]);
+  TEST_ASSERT_EQUAL_UINT32(200, millis());
+}
+
+void test_a_stop_during_a_dark_half_leaves_it_dark(void) {
+  stopAt(250);
+  led->blink(5, LIGHT_HALF, 100, 100);
+  TEST_ASSERT_EQUAL_INT(0, written().back());
+  TEST_ASSERT_EQUAL_UINT32(300, millis());
+}
+
+void test_a_stop_ends_a_fade_dark_at_the_end_of_the_step(void) {
+  stopAt(1000);
+  led->fadeOut(LIGHT_FULL, 3225);
+  const std::vector<int> values = written();
+  TEST_ASSERT_EQUAL_INT(0, values.back());
+  // Straight to dark from where it had got to, not a level at a time.
+  TEST_ASSERT_TRUE(values[values.size() - 2] > 1);
+  TEST_ASSERT_EQUAL_UINT32(1000, millis());
+}
+
+void test_ending_a_pattern_is_not_cutting_the_job_short(void) {
+  // The label the celebration is for has already been cut, so the command
+  // loop must not report it as stopped partway.
+  stopAt(150);
+  led->blink(5, LIGHT_HALF, 100, 100);
+  led->fadeOut(LIGHT_FULL, 3225);
+  TEST_ASSERT_TRUE(stop->raised());
+  TEST_ASSERT_FALSE(stop->cutShort());
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_full_brightness_is_the_top_of_the_range);
@@ -222,5 +284,9 @@ int main(int, char**) {
   RUN_TEST(test_a_shorter_fade_is_shorter);
   RUN_TEST(test_fade_from_dark_just_goes_dark);
   RUN_TEST(test_fade_uses_every_level_it_has);
+  RUN_TEST(test_a_stop_ends_a_blink_dark_at_the_end_of_the_half_cycle);
+  RUN_TEST(test_a_stop_during_a_dark_half_leaves_it_dark);
+  RUN_TEST(test_a_stop_ends_a_fade_dark_at_the_end_of_the_step);
+  RUN_TEST(test_ending_a_pattern_is_not_cutting_the_job_short);
   return UNITY_END();
 }

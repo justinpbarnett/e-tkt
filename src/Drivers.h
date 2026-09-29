@@ -44,11 +44,12 @@ class ServoDriver {
  * enableOutputs() before the motor will hold or move at all. Both callers do
  * this in their initialize().
  *
- * Two kinds of motion sit behind this interface and they behave very
- * differently. runToNewPosition() blocks until it arrives. move() only sets a
- * target, and the caller then drives run() round a loop until distanceToGo()
- * reaches zero -- which is what lets DaisyWheel watch the hall sensor while
- * the wheel is still turning.
+ * All motion is the one kind: move() only sets a target, and the caller then
+ * drives run() round a loop until it returns false. That loop is what lets
+ * DaisyWheel watch the hall sensor while the wheel is still turning, and what
+ * lets a stop halt a motor partway (Motion.h). AccelStepper's own blocking
+ * runToNewPosition() is left out on purpose, because nothing can interrupt
+ * it once it starts.
  *
  * disableOutputs() drops the holding current. The motor is then free to be
  * turned by the tape or by hand, so any position it was holding is no longer
@@ -66,16 +67,14 @@ class StepperDriver {
   virtual void setEnablePin(uint8_t enablePin) = 0;
 
   // Position, in steps. setCurrentPosition() renames where the motor is now
-  // without moving it, which is how homing establishes a zero.
+  // without moving it, which is how homing establishes a zero. It also makes
+  // that the target and zeroes the speed, which is how Motion.h halts one.
   virtual long currentPosition() = 0;
   virtual void setCurrentPosition(long position) = 0;
 
-  // Blocking motion: returns once the motor has arrived.
-  virtual void runToNewPosition(long position) = 0;
-
-  // Non-blocking motion: move() sets the target, run() advances at most one
-  // step and returns true while the motor is still stepping, and
-  // distanceToGo() counts down to zero.
+  // Motion: move() sets the target, run() advances at most one step and
+  // returns true while the motor is still stepping, and distanceToGo()
+  // counts down to zero.
   virtual void move(long relative) = 0;
   virtual bool run() = 0;
   virtual long distanceToGo() = 0;

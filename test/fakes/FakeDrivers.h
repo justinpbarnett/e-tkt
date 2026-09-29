@@ -10,6 +10,7 @@
 
 #include <stdint.h>
 
+#include <functional>
 #include <vector>
 
 #include "Arduino.h"
@@ -132,9 +133,11 @@ class FakeServo : public ServoDriver {
 /**
  * @brief Every stepper call, in order.
  *
- * Position is tracked so currentPosition() and the non-blocking move/run/
- * distanceToGo loop behave the way a caller expects; nothing else is
- * simulated.
+ * Position is tracked so currentPosition() and the move/run/distanceToGo loop
+ * behave the way a caller expects; nothing else is simulated. run() takes one
+ * step a call and returns false on the call that takes the last one, the way
+ * AccelStepper's does, so a loop over it ends exactly where the real one
+ * would.
  */
 struct StepperCall {
   enum Kind {
@@ -143,7 +146,6 @@ struct StepperCall {
     SET_PINS_INVERTED,
     SET_ENABLE_PIN,
     SET_CURRENT_POSITION,
-    RUN_TO_NEW_POSITION,
     MOVE,
     RUN,
     ENABLE_OUTPUTS,
@@ -169,6 +171,11 @@ class FakeStepper : public StepperDriver {
   bool energized = false;
   float maxSpeed = 0;
   float acceleration = 0;
+
+  // Called after every step run() takes, which is where a test raises a stop
+  // partway through a move: on the board the stop arrives from another task
+  // while the motor turns, and here nothing else is running.
+  std::function<void()> afterStep;
 
   void setMaxSpeed(float speed) override {
     this->maxSpeed = speed;
@@ -200,12 +207,6 @@ class FakeStepper : public StepperDriver {
     this->record(StepperCall::SET_CURRENT_POSITION, position);
   }
 
-  void runToNewPosition(long position) override {
-    this->record(StepperCall::RUN_TO_NEW_POSITION, position);
-    this->position = position;
-    this->target = position;
-  }
-
   void move(long relative) override {
     this->record(StepperCall::MOVE, relative);
     this->target = this->position + relative;
@@ -217,7 +218,10 @@ class FakeStepper : public StepperDriver {
       return false;
     }
     this->position += (this->target > this->position) ? 1 : -1;
-    return true;
+    if (this->afterStep) {
+      this->afterStep();
+    }
+    return this->position != this->target;
   }
 
   long distanceToGo() override { return this->target - this->position; }
@@ -260,6 +264,16 @@ class FakeStepper : public StepperDriver {
     for (size_t i = 0; i < this->calls.size(); i++) {
       if (this->calls[i].kind == kind) {
         return (int)i;
+      }
+    }
+    return -1;
+  }
+
+  /** @brief Index of the last call of that kind, or -1. */
+  int lastIndexOf(StepperCall::Kind kind) const {
+    for (size_t i = this->calls.size(); i > 0; i--) {
+      if (this->calls[i - 1].kind == kind) {
+        return (int)(i - 1);
       }
     }
     return -1;

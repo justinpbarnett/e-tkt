@@ -51,8 +51,6 @@ class ArduinoStepper : public StepperDriver {
   long currentPosition() override;
   void setCurrentPosition(long position) override;
 
-  void runToNewPosition(long position) override;
-
   void move(long relative) override;
   bool run() override;
   long distanceToGo() override;

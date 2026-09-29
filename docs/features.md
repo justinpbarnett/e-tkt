@@ -24,7 +24,9 @@ description: "E-TKT"
 - Automatic text centering;
 - Margin: none or 1 space on each side;
 - Buttons for special characters: ♡  ☆  ♪  $ @
-- Quantity: one label, several (up to 500) or as many as fit on the rest of the roll, and a stop after the label being printed;
+- Quantity: one label, several (up to 500) or as many as fit on the rest of the roll;
+- A big red stop button for when something goes wrong, which stops the machine at once and offers to cut off a half-pressed label;
+- Stop after this label, to end a run of labels early without wasting tape;
 - Estimate of the tape left on the roll, counted from what the machine has fed since the roll went in;
 - "LOAD NEW ROLL" function to install a new tape reel, of 3 m or any length from 0.5 to 10 m;
 - Manual commands: feed & cut;

@@ -46,8 +46,8 @@ enum class Screen {
 };
 
 /**
- * Renders various screens on the OLED device, such asprinting progress,
- * boot splash animation, QR Code, etc. Its hard coded to use a 128x64 OLED,
+ * Renders various screens on the OLED device, such as printing progress,
+ * boot splash animation, QR Code, etc. It's hard coded to use a 128x64 OLED,
  * but could be sub-classed to use different sized screens.
  */
 class Display {
@@ -86,7 +86,7 @@ class Display {
 
   /**
    * Renders the E-TKT logo, and plays the startup melody.  Blocks until the
-   * animation is comeplete.
+   * animation is complete.
    */
   void playSplashScreen();
 
@@ -102,13 +102,19 @@ class Display {
   void render(Screen screen);
 
   /**
-   * Renders a screen with a QR code and high level info abotu the device.  Thsi
-   * is the screen displayed msot ofte, when the device is idle.
+   * @brief Renders the screen the machine shows most often, when it is idle:
+   * the network it is on, its address, and a QR code of that address.
+   *
+   * @param stopped true when the job before was stopped partway. The screen
+   *        then says "stopped" in place of "ready", with the square stop
+   *        symbol in place of the tick, until the next job takes the screen
+   *        over. An operator looking at the machine rather than the panel can
+   *        tell a label that was cut short from one that finished.
    */
-  void renderIdle();
+  void renderIdle(bool stopped = false);
 
   /**
-   * Upadtes network info for display on the idle screen.
+   * Updates network info for display on the idle screen.
    */
   void setConnectionInfo(String ip, String ssid);
 

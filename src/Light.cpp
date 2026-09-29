@@ -10,7 +10,10 @@
 // private to this file on purpose -- see the class comment in Light.h.
 static const int LIGHT_PWM_FULL = 128;
 
-Light::Light(uint8_t pin) { this->pin = pin; }
+Light::Light(uint8_t pin, const StopSignal* stop) {
+  this->pin = pin;
+  this->stop = stop;
+}
 
 void Light::initialize() {
   pinMode(this->pin, OUTPUT);
@@ -33,12 +36,25 @@ void Light::on(float brightness) {
 
 void Light::off() { analogWrite(this->pin, LOW); }
 
+bool Light::hold(int ms) {
+  delay(ms);
+  if (!this->stop->raised()) {
+    return true;
+  }
+  this->off();
+  return false;
+}
+
 void Light::blink(int times, float brightness, int onMs, int offMs) {
   for (int i = 0; i < times; i++) {
     this->off();
-    delay(offMs);
+    if (!this->hold(offMs)) {
+      return;
+    }
     this->on(brightness);
-    delay(onMs);
+    if (!this->hold(onMs)) {
+      return;
+    }
   }
 }
 
@@ -61,7 +77,9 @@ void Light::fadeOut(float from, int overMs) {
     analogWrite(this->pin, (uint16_t)value);
     const int done = start - value + 1;
     const int due = (int)((long)overMs * done / steps);
-    delay(due - elapsed);
+    if (!this->hold(due - elapsed)) {
+      return;
+    }
     elapsed = due;
   }
 }

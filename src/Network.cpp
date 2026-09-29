@@ -146,7 +146,8 @@ void Network::initialize() {
       "/api/status", HTTP_GET,
       std::bind(&Network::statusGetHandler, this, std::placeholders::_1));
 
-  // End a run of labels early. Not in the loop above; see stopPostHandler.
+  // Stop what is running, now or after the label. Not in the loop above; see
+  // stopPostHandler.
   this->server->on(
       "/api/stop", HTTP_POST,
       std::bind(&Network::stopPostHandler, this, std::placeholders::_1));
@@ -357,7 +358,25 @@ void Network::statusGetHandler(AsyncWebServerRequest* request) {
     root["current_label"] = status.currentLabel;
     root["copy"] = status.copy;
     root["copies"] = status.copies;
-    root["stopping"] = status.stopping;
+  }
+
+  // A stop that has been asked for and not yet obeyed, so a panel opened
+  // partway through a stop says so too. Left out when there is none.
+  if (status.stop != PendingStop::NONE) {
+    root["stop"] = status.stop == PendingStop::NOW ? "now" : "after_label";
+  }
+
+  // What the last stop cut short, until the next command is accepted. Left
+  // out when the last command was not stopped, or stopped with nothing left
+  // to cut short.
+  if (status.stopped.command != Command::IDLE) {
+    const JsonObject stopped = root.createNestedObject("stopped");
+    stopped["command"] = commandName(status.stopped.command);
+    if (status.stopped.command == Command::TAG) {
+      stopped["printed"] = status.stopped.printed;
+      stopped["copies"] = status.stopped.copies;
+    }
+    stopped["unfinished"] = status.stopped.unfinished;
   }
 
   // What is estimated to be left on the roll, busy or not, so the panel can
@@ -379,17 +398,30 @@ void Network::stopPostHandler(AsyncWebServerRequest* request) {
   AsyncJsonResponse* response = new AsyncJsonResponse();
   const JsonObject& root = response->getRoot();
 
-  switch (this->etkt->stop()) {
+  // In the query string rather than a body, so a stop is one bare POST.
+  const bool afterLabel = request->hasParam("after");
+  if (afterLabel && request->getParam("after")->value() != "label") {
+    root["error"] =
+        "Please provide after=label to stop once the label being pressed is "
+        "cut, or leave it out to stop now";
+    response->setCode(400);
+    response->setLength();
+    request->send(response);
+    return;
+  }
+
+  switch (afterLabel ? this->etkt->stopAfterLabel() : this->etkt->stop()) {
     case StopResult::STOPPING:
       root["result"] = "stopping";
       break;
     case StopResult::IDLE:
-      // Not an error. The run most likely finished while the tap was on its
+      // Not an error. The job most likely finished while the tap was on its
       // way, and the panel is about to see that on its next poll anyway.
       root["result"] = "idle";
       break;
     case StopResult::UNSTOPPABLE:
-      root["error"] = "Only printing can be stopped";
+      root["error"] = afterLabel ? "Only a run of labels can stop after a label"
+                                 : "Saving cannot be stopped";
       response->setCode(409);
       break;
   }

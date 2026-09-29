@@ -87,6 +87,12 @@
   --focus-ring: #0a74a4;
   --danger: #c1121f;
   --warning: #b45309;
+  /* The stop, the one button that is not cyan: white on red, the red dark
+     enough that the white reads on it. */
+  --stop: #c1121f;
+  --stop-hover: #a50f1a;
+  --stop-press: #8a0c16;
+  --on-stop: #ffffff;
   --activity-fill: rgba(0, 0, 0, 0.08);
   --backdrop: rgba(0, 0, 0, 0.4);
   --scroll-thumb: rgba(0, 0, 0, 0.3);
@@ -147,6 +153,10 @@
   --focus-ring: #5cd8f7;
   --danger: #f87171;
   --warning: #f59e0b;
+  /* Brighter than the light theme's, which is lost on a near-black page. */
+  --stop: #dc2626;
+  --stop-hover: #b91c1c;
+  --stop-press: #991b1b;
   --activity-fill: rgba(255, 255, 255, 0.1);
   --backdrop: rgba(0, 0, 0, 0.6);
   --scroll-thumb: rgba(255, 255, 255, 0.3);
@@ -453,6 +463,25 @@ a {
   }
 }
 
+/* Taller and in larger type than any other button, so it is the one a
+   finger finds without looking. */
+.btn-stop {
+  min-height: 56px;
+  background: var(--stop);
+  color: var(--on-stop);
+  font-size: 15px;
+}
+
+@media (hover: hover) {
+  .btn-stop:hover:not(:disabled) {
+    background: var(--stop-hover);
+  }
+}
+
+.btn-stop:active:not(:disabled) {
+  background: var(--stop-press);
+}
+
 /* The round ones: the symbol keys and the steppers' minus and plus. */
 .btn-key {
   display: inline-flex;
@@ -535,6 +564,14 @@ a {
   width: 14px;
   height: 14px;
   stroke-width: 1.5;
+}
+
+/* The square every stop button has had since tape recorders. */
+.icon-stop {
+  width: 12px;
+  height: 12px;
+  fill: currentColor;
+  stroke: none;
 }
 
 /* The button shows where it goes, not where the page is. */
@@ -1066,8 +1103,39 @@ input.stepper-value,
   margin-top: 12px;
 }
 
-#run-actions {
+/* The stops, while something that can be stopped runs. However far down
+   the page they are, they stay in sight: stuck to the bottom of the screen
+   until the page is scrolled down to where they are. */
+.run-actions {
+  position: sticky;
+  bottom: max(16px, env(safe-area-inset-bottom));
+  z-index: 1;
+  display: grid;
   grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  margin-top: 12px;
+}
+
+/* Stuck over the page, they stand on its own grey, faded in from a little
+   above them and running out to the bottom and sides of the screen, so
+   what scrolls under them does not show between and around them. The
+   script says when they are stuck. */
+.run-actions::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  top: -24px;
+  right: calc(-1 * max(16px, env(safe-area-inset-right)));
+  bottom: calc(-1 * max(16px, env(safe-area-inset-bottom)));
+  left: calc(-1 * max(16px, env(safe-area-inset-left)));
+  background: linear-gradient(to bottom, transparent, var(--page) 24px);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--fast) var(--ease);
+}
+
+.run-actions[data-stuck]::before {
+  opacity: 1;
 }
 
 /*-----------*/
@@ -1099,6 +1167,43 @@ input.stepper-value,
 
 .problem .btn {
   flex: none;
+}
+
+/* What a stop left behind. Laid out like a problem, but not one: the
+   operator asked for it. With a label left half pressed it has a way to
+   deal with that as well, and goes over two lines to have room for it. */
+.notice {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-right: 8px;
+  border-color: var(--hairline);
+}
+
+.notice-text {
+  flex: 1;
+}
+
+.notice-actions {
+  display: flex;
+  flex: none;
+  gap: 8px;
+}
+
+.notice[data-unfinished] {
+  flex-direction: column;
+  align-items: stretch;
+  border-color: var(--warning);
+}
+
+/* Over the buttons, the text keeps as far from the right as from the left.
+   The buttons keep to the right edge, as a problem's Dismiss does. */
+.notice[data-unfinished] .notice-text {
+  padding-right: 12px;
+}
+
+.notice[data-unfinished] .notice-actions {
+  justify-content: flex-end;
 }
 
 /*----------*/

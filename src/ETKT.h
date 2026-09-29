@@ -20,6 +20,7 @@
 #include "Roll.h"
 #include "Settings.h"
 #include "Sound.h"
+#include "StopSignal.h"
 
 /**
  * @brief The different types of command the E-TKT can execute.
@@ -136,6 +137,38 @@ struct CommandOptions {
 };
 
 /**
+ * @brief A stop the running command has been asked for and not yet obeyed.
+ */
+enum class PendingStop {
+  NONE,
+  // Once the label being pressed is cut. See ETKT::stopAfterLabel().
+  AFTER_LABEL,
+  // Now. See ETKT::stop().
+  NOW,
+};
+
+/**
+ * @brief What a stop cut short.
+ *
+ * Only a stop that cut work short is recorded. One that arrived as a job was
+ * finishing anyway has nothing to explain, and the command is then IDLE.
+ */
+struct StoppedCommand {
+  Command command = Command::IDLE;
+  // For a run of labels, how many were finished and cut before the stop, and
+  // how many the run was. Both 0 for anything but a tag.
+  int printed = 0;
+  int copies = 0;
+  // Whether the stop left a label on the tape: pressed as far as it got, or
+  // only begun, and not cut off. It is still joined to the roll, so the next
+  // label out would bring it along, and the panel offers to cut it off first.
+  // Only a tag and the full test press labels, so it is false for anything
+  // else; and false for a run stopped between two labels, before the next
+  // one had fed any tape.
+  bool unfinished = false;
+};
+
+/**
  * @brief One consistent look at what the device is doing right now.
  *
  * A snapshot, not a view: the command and its progress are read together
@@ -158,9 +191,14 @@ struct StatusUpdate {
   // run is. Both 0 unless a tag is running.
   int copy = 0;
   int copies = 0;
-  // Whether a stop has been asked for. A run ends only once the label being
-  // pressed is cut, so this can read true for a label's worth of time.
-  bool stopping = false;
+  // Whether a stop has been asked for, and which. A stop after the label can
+  // be waiting for a label's worth of time; a stop now for as long as the
+  // press takes to finish its stroke.
+  PendingStop stop = PendingStop::NONE;
+  // What the last stop cut short. Filled in whether or not anything is
+  // running, and kept until the next command is accepted, so a panel that
+  // was not watching when a job was stopped can still say it was.
+  StoppedCommand stopped;
   RollState roll;
 };
 
@@ -168,14 +206,14 @@ struct StatusUpdate {
  * @brief What asking the device to stop did.
  */
 enum class StopResult {
-  // A run of labels will end once the one being pressed is cut.
+  // The command will end at the next point it can. See ETKT::stop() and
+  // ETKT::stopAfterLabel() for where that is.
   STOPPING,
-  // Nothing was running. Not an error: the run may have finished between the
+  // Nothing was running. Not an error: the job may have finished between the
   // tap and the request arriving.
   IDLE,
-  // Something other than printing is running. A cut or a feed is over in
-  // seconds, and stopping one partway would leave the machine in a state
-  // nothing else expects.
+  // What is running cannot be stopped that way: saving cannot be stopped at
+  // all, and only a run of labels has a label to stop after.
   UNSTOPPABLE,
 };
 
@@ -207,14 +245,29 @@ class ETKT {
 
   // Device state, which should only ever be modified inside an exclusive lock.
   CommandOptions* command = NULL;
-  int progress;   // percent, 0 to 99. See Progress.h.
-  int copy;       // which label of a run, from 1; 0 when no tag is running
-  bool stopping;  // a stop has been asked for; see stop()
+  int progress;  // percent, 0 to 99. See Progress.h.
+  int copy;      // which label of a run, from 1; 0 when no tag is running
+  int printed;   // labels of the run finished and cut; 0 when no tag is
+                 // running
+  bool stoppingAfterLabel;     // see stopAfterLabel()
+  StoppedCommand lastStopped;  // see StatusUpdate::stopped
   std::mutex* lock;
+
+  // Raised by stop() and obeyed all the way down, in the wheel, the feeder
+  // and the tune. It keeps its own synchronisation, but it is raised and
+  // cleared only under the lock above, against the command it is about.
+  StopSignal* stopSignal;
 
   // How many of the feeder's feeds have been charged to the roll. Only the
   // command loop reads or writes it, so it is not behind the lock.
   long accountedFeeds;
+
+  // The feeder's count at the last cut, which is how a stop tells whether it
+  // left a label on the tape: see StoppedCommand::unfinished. The two
+  // commands that press labels also set it as they begin, so tape fed before
+  // them is not taken for theirs. Like accountedFeeds, only ever touched by
+  // the command loop.
+  long feedsAtLastCut;
 
   // Event group that the main loop blocks on for new commands.
   EventGroupHandle_t eventGroup;
@@ -232,6 +285,9 @@ class ETKT {
    * The full test button is the one caller that has a force of its own --
    * the one being trialled -- so the cut is made at the same setting as the
    * characters it just stamped.
+   *
+   * A stop is obeyed between the three presses, so it can leave the tape
+   * partly cut.
    */
   void cutAt(int force);
 
@@ -251,6 +307,9 @@ class ETKT {
    *
    * `copy` of `copies`, counting from 1, is only there to be shown on the
    * OLED beside the label.
+   *
+   * A stop leaves the label on the tape as far as it got. Whether one did is
+   * the StopSignal's cutShort(), rather than anything this returns.
    */
   void printLabel(const String& label, int labelLength, int copy, int copies);
 
@@ -277,7 +336,7 @@ class ETKT {
   ETKT(Logger* logger, Settings* settings, Characters* characters,
        Display* display, DaisyWheel* daisywheel, HallSwitch* hall,
        Feeder* feeder, Roll* roll, Press* press, Sound* sound, Light* ledFinish,
-       Light* ledChar, BenchRigs* benchRigs);
+       Light* ledChar, StopSignal* stopSignal, BenchRigs* benchRigs);
   ~ETKT();
 
   /**
@@ -305,14 +364,32 @@ class ETKT {
   void submit(const CommandOptions& options);
 
   /**
-   * @brief Asks a run of labels to stop once the label being pressed is cut.
+   * @brief Stops what the machine is doing, now.
    *
-   * Never partway through a label: a label abandoned mid-press is tape spent
-   * on nothing, and the cut is what separates it from the next. Safe to call
-   * from the webserver's task while the command loop prints -- the loop
-   * reads the request between labels.
+   * For when something has gone wrong. The motors halt within a step and the
+   * tune within a note; the press, if it is on its way down, finishes the
+   * stroke and comes back up, because a servo stopped partway is a press
+   * held against the wheel. Then every motor lets go, and whatever was being
+   * pressed is left on the tape as far as it got, uncut.
+   *
+   * Anything but saving can be stopped. Saving moves nothing and ends in a
+   * reboot, so there is nothing to stop.
+   *
+   * Safe to call from the webserver's task while the command loop runs: it
+   * only raises the StopSignal, which the loop obeys.
    */
   StopResult stop();
+
+  /**
+   * @brief Asks a run of labels to stop once the label being pressed is cut.
+   *
+   * For a run that is going fine and is longer than it needs to be: no tape
+   * is spent on a label nobody finishes, and the cut is what separates the
+   * last label from the next. Only a run of labels has a label to stop
+   * after. Safe to call from the webserver's task while the command loop
+   * prints -- the loop reads the request between labels.
+   */
+  StopResult stopAfterLabel();
 
   /**
    * @brief One row per Command: the firmware's only list of what exists.

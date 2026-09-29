@@ -9,7 +9,8 @@
 //   - delay() does not sleep. It advances a virtual clock, which millis()
 //     reads back. A test can therefore assert how long the press holds at its
 //     peak -- the stall-current question in Press.h that nothing could check
-//     before -- and the whole suite still finishes in milliseconds.
+//     before -- and the whole suite still finishes in milliseconds. A test can
+//     also hook it, to make something happen partway through a wait.
 //   - analogWrite() records every write, so the LED behaviour Press documents
 //     can be asserted rather than assumed.
 //
@@ -20,6 +21,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -38,7 +40,22 @@ inline unsigned long& stubClockMs() {
   return ms;
 }
 
-inline void delay(unsigned long ms) { stubClockMs() += ms; }
+// Called after every delay(), which is where a test raises a stop partway
+// through something that only waits, such as a blink: on the board the stop
+// arrives from another task while the command loop sleeps, and here nothing
+// else is running.
+inline std::function<void()>& stubAfterDelay() {
+  static std::function<void()> hook;
+  return hook;
+}
+
+inline void delay(unsigned long ms) {
+  stubClockMs() += ms;
+  if (stubAfterDelay()) {
+    stubAfterDelay()();
+  }
+}
+inline void yield() {}
 inline unsigned long millis() { return stubClockMs(); }
 inline unsigned long micros() { return stubClockMs() * 1000UL; }
 
@@ -67,6 +84,7 @@ inline std::vector<std::string>& stubSerialLines() {
 
 inline void stubReset() {
   stubClockMs() = 0;
+  stubAfterDelay() = nullptr;
   stubAnalogWrites().clear();
   stubDigitalWrites().clear();
   stubSerialLines().clear();

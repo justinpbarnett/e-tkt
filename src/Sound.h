@@ -5,6 +5,7 @@
 
 #include "Characters.h"
 #include "Configuration.h"
+#include "StopSignal.h"
 #include "Utility.h"
 #include "pitches.h"  // list of notes and their frequencies
 
@@ -19,9 +20,10 @@
 class Sound {
  private:
   Characters* characters;
+  StopSignal* stop;
 
  public:
-  Sound(Characters* characters);
+  Sound(Characters* characters, StopSignal* stop);
   ~Sound();
 
   /**
@@ -41,6 +43,8 @@ class Sound {
 
   /**
    * @brief Plays a tune on the buzzer based on the label text.
+   *
+   * A stop ends it after the note that is sounding.
    */
   void playLabel(String label);
 
@@ -48,6 +52,8 @@ class Sound {
    * @brief Plays a melody on the buzzer.
    * @details ♪ By pressing down a special key ♪
    *          ♪ It plays a little melody ♪
+   *
+   * A stop ends it after the note that is sounding.
    */
   void playMelody(String notes, String durations);
 };

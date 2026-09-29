@@ -19,8 +19,10 @@
 #include "Logger.h"
 #include "Press.h"
 #include "PressGeometry.h"
+#include "StopSignal.h"
 
 static Logger* logger;
+static StopSignal* stop;
 static Light* charLed;
 static FakeServo* servo;
 static Press* press;
@@ -28,7 +30,8 @@ static Press* press;
 void setUp(void) {
   stubReset();
   logger = new Logger();
-  charLed = new Light(CHARACTER_LED_PIN);
+  stop = new StopSignal();
+  charLed = new Light(CHARACTER_LED_PIN, stop);
   servo = new FakeServo();
   press = new Press(logger, SERVO_PIN, charLed, servo);
 }
@@ -37,6 +40,7 @@ void tearDown(void) {
   delete press;
   delete servo;
   delete charLed;
+  delete stop;
   delete logger;
 }
 

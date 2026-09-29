@@ -20,6 +20,7 @@
 #include "Roll.h"
 #include "Settings.h"
 #include "Sound.h"
+#include "StopSignal.h"
 #include "Tape.h"
 
 // How the finish LED celebrates a finished label: five half-brightness
@@ -111,7 +112,8 @@ const char* commandName(Command command) {
 ETKT::ETKT(Logger* logger, Settings* settings, Characters* characters,
            Display* display, DaisyWheel* daisywheel, HallSwitch* hall,
            Feeder* feeder, Roll* roll, Press* press, Sound* sound,
-           Light* ledFinish, Light* ledChar, BenchRigs* benchRigs) {
+           Light* ledFinish, Light* ledChar, StopSignal* stopSignal,
+           BenchRigs* benchRigs) {
   // Upstream never assigned this one, and initialize() dereferences it on its
   // first line. It only ever worked because Logger holds no state, so the
   // uninitialised pointer was never actually read through.
@@ -127,14 +129,17 @@ ETKT::ETKT(Logger* logger, Settings* settings, Characters* characters,
   this->ledFinish = ledFinish;
   this->ledChar = ledChar;
   this->characters = characters;
+  this->stopSignal = stopSignal;
   this->benchRigs = benchRigs;
 
   this->command = NULL;
   this->progress = 0;
   this->copy = 0;
-  this->stopping = false;
+  this->printed = 0;
+  this->stoppingAfterLabel = false;
   // Nothing has fed yet, so there is nothing to charge.
   this->accountedFeeds = 0;
+  this->feedsAtLastCut = 0;
   this->lock = new std::mutex();
   this->eventGroup = xEventGroupCreate();
 }
@@ -187,9 +192,15 @@ StatusUpdate ETKT::createStatus() {
     if (this->command->command == Command::TAG) {
       status.copy = this->copy;
       status.copies = this->command->copies;
-      status.stopping = this->stopping;
+    }
+    // A stop now outranks a stop after the label, which it overtakes.
+    if (this->stopSignal->raised()) {
+      status.stop = PendingStop::NOW;
+    } else if (this->stoppingAfterLabel) {
+      status.stop = PendingStop::AFTER_LABEL;
     }
   }
+  status.stopped = this->lastStopped;
   this->lock->unlock();
 
   return status;
@@ -209,6 +220,8 @@ void ETKT::submit(const CommandOptions& options) {
     throw PrinterBusyException();
   }
   this->command = queued;
+  // A new job, so the last one's stop is old news.
+  this->lastStopped = StoppedCommand();
   xEventGroupSetBits(this->eventGroup, BIT0);
   this->lock->unlock();
 }
@@ -219,11 +232,30 @@ StopResult ETKT::stop() {
     this->lock->unlock();
     return StopResult::IDLE;
   }
+  if (this->command->command == Command::SAVE) {
+    this->lock->unlock();
+    return StopResult::UNSTOPPABLE;
+  }
+  // Under the lock, so the stop can only land on the command it was meant
+  // for: loop() clears it under the same lock as it lets that command go.
+  this->stopSignal->raise();
+  this->lock->unlock();
+
+  this->logger->log("Stopping now");
+  return StopResult::STOPPING;
+}
+
+StopResult ETKT::stopAfterLabel() {
+  this->lock->lock();
+  if (this->command == NULL) {
+    this->lock->unlock();
+    return StopResult::IDLE;
+  }
   if (this->command->command != Command::TAG) {
     this->lock->unlock();
     return StopResult::UNSTOPPABLE;
   }
-  this->stopping = true;
+  this->stoppingAfterLabel = true;
   this->lock->unlock();
 
   this->logger->log("Stopping after this label");
@@ -252,11 +284,17 @@ void ETKT::cutAt(int force) {
     // move() cuts the coil current when it refuses, so the wheel is now both
     // unreferenced and free to turn. Pressing three times at full force into
     // whatever slot it stopped at would emboss a letter where the cut mark
-    // belongs, and leave the tape uncut anyway.
-    this->logger->warn("Skipped the cut: the wheel would not reach the mark");
+    // belongs, and leave the tape uncut anyway. A stop is the other reason
+    // move() says no, and that one was asked for.
+    if (!this->stopSignal->raised()) {
+      this->logger->warn("Skipped the cut: the wheel would not reach the mark");
+    }
     return;
   }
   for (int i = 0; i < 3; i++) {
+    if (this->stopSignal->shouldStop()) {
+      return;
+    }
     this->press->press(true, force, false);
   }
 }
@@ -294,24 +332,48 @@ void ETKT::loop() {
   // the slot is released, so the first idle status already shows it.
   this->accountForTape();
 
+  // Whether a stop cut this command short, as against arriving while it was
+  // finishing anyway.
+  const bool stopped = this->stopSignal->cutShort();
+  if (stopped) {
+    this->logger->log(String("Stopped ") + commandName(running));
+  }
+
   // Park the machine before the command slot is released. Everything below
-  // talks to hardware -- a full OLED redraw with a QR code on it, then three
-  // motors -- and it used to run with the lock held, which stalled every
+  // talks to hardware -- three motors, then a full OLED redraw with a QR code
+  // on it -- and it used to run with the lock held, which stalled every
   // status poll from the web task for as long as that took. Parking first
   // also closes a gap: submit() goes on refusing new work until the
   // slot is genuinely clear, so nothing can begin against a machine that is
-  // still being put away.
-  this->display->renderIdle();
+  // still being put away. The motors go before the screen, so a stop lets go
+  // of the tape as soon as it can rather than a redraw later.
   this->daisywheel->deenergize();
   this->press->rest();
   this->feeder->deenergize();
+  this->display->renderIdle(stopped);
 
   this->lock->lock();
+  if (stopped) {
+    StoppedCommand record;
+    record.command = running;
+    if (running == Command::TAG) {
+      record.printed = this->printed;
+      record.copies = this->command->copies;
+    }
+    if (running == Command::TAG || running == Command::TEST_FULL) {
+      // Tape fed since the last cut is a label nothing has cut off.
+      record.unfinished = this->feeder->feeds() > this->feedsAtLastCut;
+    }
+    this->lastStopped = record;
+  }
   delete this->command;
   this->command = NULL;
   this->progress = 0;
   this->copy = 0;
-  this->stopping = false;
+  this->printed = 0;
+  this->stoppingAfterLabel = false;
+  // Down again before the slot opens, so no stop outlives its command.
+  this->stopSignal->clear();
   this->lock->unlock();
 }
 
@@ -386,7 +448,8 @@ void ETKT::testCommandInternal() {
   display->render(Screen::TESTING);
   ledFinish->off();
 
-  if (!this->daisywheel->move("M", this->command->align)) {
+  if (!this->daisywheel->move("M", this->command->align) ||
+      this->stopSignal->shouldStop()) {
     return;
   }
   // Deliberately the minimum force, matching docs/diy/calibration.md: this
@@ -406,13 +469,21 @@ void ETKT::testCommandInternal() {
 
 void ETKT::testCommandFullInternal() {
   String label = "E-TKT";
+  this->feedsAtLastCut = this->feeder->feeds();
   this->feeder->feed();
   for (int i = 0; i < label.length(); i++) {
+    if (this->stopSignal->shouldStop()) {
+      return;
+    }
     auto character = label.substring(i, i + 1);
     this->feeder->feed();
-    if (this->daisywheel->move(character, this->command->align)) {
+    if (this->daisywheel->move(character, this->command->align) &&
+        !this->stopSignal->shouldStop()) {
       this->press->press(false, this->command->force, false);
     }
+  }
+  if (this->stopSignal->shouldStop()) {
+    return;
   }
   this->feeder->feed();
   this->cutAt(this->command->force);
@@ -433,8 +504,10 @@ void ETKT::moveCommandInternal() {
   // Nothing presses after this one, so a refused move costs no tape -- but it
   // leaves the wheel parked somewhere other than the slot that was asked for,
   // and saying so is the difference between a stuck wheel and a quiet one.
+  // Unless it was stopped, which is the operator's doing and no surprise.
   if (!this->daisywheel->move(this->command->label,
-                              this->settings->getAlignFactor())) {
+                              this->settings->getAlignFactor()) &&
+      !this->stopSignal->raised()) {
     this->logger->warn(String("The wheel would not reach '") +
                        this->command->label + "'");
   }
@@ -461,6 +534,7 @@ void ETKT::tagCommandInternal() {
 
   this->ledChar->on(LIGHT_DIM);
 
+  this->feedsAtLastCut = this->feeder->feeds();
   for (int copy = 1; copy <= copies; copy++) {
     this->lock->lock();
     this->copy = copy;
@@ -478,18 +552,47 @@ void ETKT::tagCommandInternal() {
 
     this->printLabel(label, labelLength, copy, copies);
     this->accountForTape();
-
-    // Only ever read here, between one cut and the next feed. See stop().
+    if (this->stopSignal->cutShort()) {
+      // Stopped partway through this label, which is left on the tape.
+      break;
+    }
+    this->feedsAtLastCut = this->feeder->feeds();
     this->lock->lock();
-    const bool stopRequested = this->stopping;
+    this->printed = copy;
     this->lock->unlock();
-    if (stopRequested && copy < copies) {
+    if (copy == copies) {
+      break;
+    }
+
+    // Between one cut and the next feed, where both kinds of stop can end a
+    // run without leaving anything on the tape. A stop now, obeyed here,
+    // still counts as cutting the run short.
+    if (this->stopSignal->shouldStop()) {
+      break;
+    }
+    // Only ever read here. See stopAfterLabel().
+    this->lock->lock();
+    const bool afterThisLabel = this->stoppingAfterLabel;
+    this->lock->unlock();
+    if (afterThisLabel) {
       this->logger->log(String("Stopped after ") + copy + " of " + copies);
       break;
     }
   }
 
   this->ledChar->off();
+  if (this->stopSignal->cutShort()) {
+    return;
+  }
+  this->logger->log("Printing Complete");
+  // A stop that came as the last label was being cut was too late to cut
+  // anything short. The operator still asked for the machine to stop, so it
+  // does, and skips the four seconds of celebration. One that comes during
+  // them ends them; see Light.
+  if (this->stopSignal->raised()) {
+    return;
+  }
+
   display->render(Screen::FINISHED);
 
   // Blink, then fade out. blink() leaves the LED lit at LIGHT_HALF and the
@@ -498,7 +601,6 @@ void ETKT::tagCommandInternal() {
   this->ledFinish->blink(FINISH_BLINK_TIMES, LIGHT_HALF, FINISH_BLINK_MS,
                          FINISH_BLINK_MS);
   this->ledFinish->fadeOut(LIGHT_FULL, FINISH_FADE_MS);
-  this->logger->log("Printing Complete");
 }
 
 void ETKT::playTune(const String& label) {
@@ -521,6 +623,9 @@ void ETKT::printLabel(const String& label, int labelLength, int copy,
   this->daisywheel->home(this->settings->getAlignFactor());
 
   this->feeder->feed(LEAD_FEEDS);
+  if (this->stopSignal->shouldStop()) {
+    return;
+  }
 
   for (int i = 0; i < labelLength; i++) {
     auto character = Utility::utf8CharAt(label, i);
@@ -528,13 +633,19 @@ void ETKT::printLabel(const String& label, int labelLength, int copy,
     // it could not find and cuts the coil current, which leaves the wheel
     // unreferenced and free to turn; pressing anyway embosses whichever slot
     // it stopped at. readCommandOptions() refuses such a label at the door,
-    // so reaching here means a caller inside the device asked for it.
+    // so reaching here means a caller inside the device asked for it. A stop
+    // is the other reason the wheel may not have got there, and one that
+    // lands after it did still keeps the press up.
     if (character != " " &&
-        this->daisywheel->move(character, this->settings->getAlignFactor())) {
+        this->daisywheel->move(character, this->settings->getAlignFactor()) &&
+        !this->stopSignal->shouldStop()) {
       this->press->press(false, this->settings->getForceFactor(), false);
     }
 
     this->feeder->feed();
+    if (this->stopSignal->shouldStop()) {
+      return;
+    }
     delay(500);
 
     this->display->renderProgress(i + 1, label, copy, copies);
@@ -542,6 +653,10 @@ void ETKT::printLabel(const String& label, int labelLength, int copy,
     this->lock->lock();
     this->progress = progressPercent(i + 1, labelLength);
     this->lock->unlock();
+  }
+
+  if (this->stopSignal->shouldStop()) {
+    return;
   }
 
   // Top the tape up to something the user can take hold of. topUpFeeds()

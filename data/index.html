@@ -226,22 +226,40 @@
               </div>
             </div>
 
+            <!-- What the last stop left behind, until the next command. One
+                 in each view, like the problem box, for whichever is open. -->
+            <div class="alert notice" data-stop-notice role="alert" hidden>
+              <p class="notice-text"></p>
+              <div class="notice-actions">
+                <button type="button" class="btn btn-secondary btn-compact" data-stop-cut>Cut</button>
+                <button type="button" class="btn btn-ghost btn-compact" data-stop-dismiss>Dismiss</button>
+              </div>
+            </div>
+
             <div class="alert problem" data-problem role="alert" hidden>
               <p class="problem-text"></p>
               <button type="button" class="btn btn-ghost btn-compact" data-dismiss>Dismiss</button>
             </div>
           </form>
 
-          <!-- While a run of labels prints, the stop takes this row's place
-               rather than appearing under the print button, where a second
-               tap meant for the print button would land on it. -->
+          <!-- While anything that can be stopped runs, the stop takes this
+               row's place rather than appearing under the print button,
+               where a second tap meant for the print button would land on
+               it. A run of labels can also be let finish the label it is
+               on. -->
           <div class="machine-actions" id="machine-actions">
             <button type="button" class="btn btn-secondary btn-compact" id="feed-button">Feed</button>
             <button type="button" class="btn btn-secondary btn-compact" id="cut-button">Cut</button>
             <button type="button" class="btn btn-secondary btn-compact" id="setup-button">Setup</button>
           </div>
-          <div class="machine-actions" id="run-actions" hidden>
-            <button type="button" class="btn btn-secondary btn-compact btn-block" id="stop-button">
+          <div class="run-actions" id="run-actions" hidden>
+            <button type="button" class="btn btn-stop btn-block" id="stop-now-button">
+              <svg class="icon icon-stop" viewBox="0 0 10 10" aria-hidden="true" focusable="false">
+                <rect width="10" height="10" rx="1.5" />
+              </svg>
+              <span id="stop-now-text">Stop printing</span>
+            </button>
+            <button type="button" class="btn btn-secondary btn-compact btn-block" id="stop-button" hidden>
               Stop after this label
             </button>
           </div>
@@ -323,8 +341,26 @@
           </div>
 
           <!-- What the machine is doing, when it is something none of the
-               buttons above started: a label sent from another phone, say. -->
+               buttons above started and nothing here can stop: a feed from
+               another phone, say. Anything that can be stopped, from here
+               or from anywhere else, gets the stop instead. -->
           <p class="note setup-status" id="setup-status" role="status"></p>
+          <div class="run-actions" id="setup-run-actions" hidden>
+            <button type="button" class="btn btn-stop btn-block" id="setup-stop-button">
+              <svg class="icon icon-stop" viewBox="0 0 10 10" aria-hidden="true" focusable="false">
+                <rect width="10" height="10" rx="1.5" />
+              </svg>
+              <span id="setup-stop-text">Stop test print</span>
+            </button>
+          </div>
+
+          <div class="alert notice" data-stop-notice role="alert" hidden>
+            <p class="notice-text"></p>
+            <div class="notice-actions">
+              <button type="button" class="btn btn-secondary btn-compact" data-stop-cut>Cut</button>
+              <button type="button" class="btn btn-ghost btn-compact" data-stop-dismiss>Dismiss</button>
+            </div>
+          </div>
 
           <div class="alert problem" data-problem role="alert" hidden>
             <p class="problem-text"></p>

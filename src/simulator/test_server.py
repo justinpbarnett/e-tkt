@@ -33,14 +33,39 @@ from src.simulator import firmware, server  # noqa: E402  (needs the path)
 
 class Gate:
     """Stands in for the simulator's waits. Open, every wait is over at once.
-    Closed, the machine stops where it is until the test opens it again."""
+    Closed, the machine stops where it is until the test opens it again.
+    close_after() shuts it partway into a job instead: that many more waits
+    go through, and the one after them is held."""
 
     def __init__(self):
         self.opened = asyncio.Event()
         self.opened.set()
+        self.holding = asyncio.Event()
+        self.through = None
+
+    def close_after(self, waits):
+        self.through = waits
+
+    async def held(self):
+        """Returns once the machine is held at a wait."""
+        await self.holding.wait()
 
     async def pause(self, seconds):
+        if self.through is not None:
+            if self.through == 0:
+                self.opened.clear()
+                self.through = None
+            else:
+                self.through -= 1
+        if not self.opened.is_set():
+            self.holding.set()
         await self.opened.wait()
+
+
+def label_waits(label):
+    """The waits one label takes: one for each character, one for the top-up
+    and the cut, and one for the cut's last press, which no stop cuts short."""
+    return len(label) + 2
 
 
 class SimulatorTestCase(unittest.IsolatedAsyncioTestCase):
@@ -182,23 +207,43 @@ class Runs(SimulatorTestCase):
         self.assertEqual("tag", body["command"])
         self.assertEqual(1, body["copy"])
         self.assertEqual(4, body["copies"])
-        self.assertFalse(body["stopping"])
+        self.assertNotIn("stop", body)
 
     async def test_a_run_is_not_reported_once_it_is_over(self):
         await self.post("/api/tag", {"tag": "HI", "copies": 2})
         await self.finish()
         body = await self.status()
         self.assertFalse(body["busy"])
-        for field in ("copy", "copies", "stopping", "current_label"):
+        for field in ("copy", "copies", "stop", "stopped", "current_label"):
             self.assertNotIn(field, body)
 
-    async def test_a_stop_ends_the_run_after_the_label_being_pressed(self):
+    async def test_the_machine_is_busy_until_the_celebration_is_over(self):
+        # The finish LED blinks and fades once the last label is cut, and
+        # the device goes on saying so until it has.
+        self.gate.close_after(label_waits("HI"))
+        await self.post("/api/tag", {"tag": "HI"})
+        await self.gate.held()
+        self.assertTrue(self.logged("Printing Complete"))
+        body = await self.status()
+        self.assertTrue(body["busy"])
+        self.assertEqual(99, body["progress"])
+
+    async def test_a_run_holds_the_machine_until_its_last_label(self):
+        self.gate.opened.clear()
+        await self.post("/api/tag", {"tag": "HI", "copies": 2})
+        status, body = await self.post("/api/feed", {})
+        self.assertEqual(409, status)
+        self.assertEqual(server.BUSY_MESSAGE, body["error"])
+
+
+class StopsAfterTheLabel(SimulatorTestCase):
+    async def test_the_run_ends_once_the_label_being_pressed_is_cut(self):
         self.gate.opened.clear()
         await self.post("/api/tag", {"tag": " HELLO ", "copies": 5})
-        status, body = await self.post("/api/stop")
+        status, body = await self.post("/api/stop?after=label")
         self.assertEqual(200, status)
         self.assertEqual({"result": "stopping"}, body)
-        self.assertTrue((await self.status())["stopping"])
+        self.assertEqual("after_label", (await self.status())["stop"])
 
         self.gate.opened.set()
         await self.finish()
@@ -208,20 +253,22 @@ class Runs(SimulatorTestCase):
         body = await self.status()
         self.assertEqual(3000 - self.device.label_feeds(7) * 4,
                          body["roll"]["remaining_mm"])
+        # Every label it printed is whole and cut, so nothing was cut short.
+        self.assertNotIn("stopped", body)
 
-    async def test_a_stop_during_the_last_label_changes_nothing(self):
+    async def test_during_the_last_label_it_changes_nothing(self):
         self.gate.opened.clear()
         await self.post("/api/tag", {"tag": "HI"})
-        await self.post("/api/stop")
+        await self.post("/api/stop?after=label")
         self.gate.opened.set()
         await self.finish()
         self.assertFalse(any("Stopped after" in line
                              for line in self.sim.log))
 
-    async def test_a_stop_is_forgotten_with_the_run_it_stopped(self):
+    async def test_it_is_forgotten_with_the_run_it_stopped(self):
         self.gate.opened.clear()
         await self.post("/api/tag", {"tag": "HI", "copies": 3})
-        await self.post("/api/stop")
+        await self.post("/api/stop?after=label")
         self.gate.opened.set()
         await self.finish()
         await self.post("/api/tag", {"tag": "HI", "copies": 3})
@@ -229,24 +276,197 @@ class Runs(SimulatorTestCase):
         self.assertEqual(1, sum("Stopped after" in line
                                 for line in self.sim.log))
 
-    async def test_stopping_an_idle_machine_is_not_an_error(self):
+    async def test_only_a_run_of_labels_can_stop_after_a_label(self):
+        self.gate.opened.clear()
+        await self.post("/api/feed", {})
+        status, body = await self.post("/api/stop?after=label")
+        self.assertEqual(409, status)
+        self.assertEqual("Only a run of labels can stop after a label",
+                         body["error"])
+        self.assertNotIn("stop", await self.status())
+
+    async def test_anything_but_label_after_it_is_refused_in_the_devices_words(
+            self):
+        # Checked before anything else, so an idle machine says so too.
+        status, body = await self.post("/api/stop?after=cut")
+        self.assertEqual(400, status)
+        self.assertEqual("Please provide after=label to stop once the label "
+                         "being pressed is cut, or leave it out to stop now",
+                         body["error"])
+        status, _ = await self.post("/api/stop?after")
+        self.assertEqual(400, status)
+
+
+class Stops(SimulatorTestCase):
+    async def test_a_stop_ends_the_label_being_pressed(self):
+        self.gate.opened.clear()
+        await self.post("/api/tag", {"tag": " HELLO ", "copies": 3})
         status, body = await self.post("/api/stop")
         self.assertEqual(200, status)
-        self.assertEqual({"result": "idle"}, body)
+        self.assertEqual({"result": "stopping"}, body)
+        # Busy still, while the machine comes to rest, and saying why.
+        body = await self.status()
+        self.assertTrue(body["busy"])
+        self.assertEqual("now", body["stop"])
+        self.assertNotIn("stopped", body)
 
-    async def test_only_printing_can_be_stopped(self):
+        self.gate.opened.set()
+        await self.finish()
+        self.assertTrue(self.logged("Stopping now"))
+        self.assertTrue(self.logged("Stopped tag"))
+        self.assertFalse(self.logged("Printing Complete"))
+        body = await self.status()
+        self.assertFalse(body["busy"])
+        self.assertNotIn("stop", body)
+        # The label being pressed is left on the tape, uncut.
+        self.assertEqual({"command": "tag", "printed": 0, "copies": 3,
+                          "unfinished": True}, body["stopped"])
+        # The lead, and the character that was being pressed.
+        self.assertEqual(3000 - 2 * 4, body["roll"]["remaining_mm"])
+
+    async def test_the_labels_already_cut_are_counted(self):
+        # Held at the third character of the second label.
+        self.gate.close_after(label_waits(" HELLO ") + 2)
+        await self.post("/api/tag", {"tag": " HELLO ", "copies": 3})
+        await self.gate.held()
+        self.assertEqual(2, (await self.status())["copy"])
+        await self.post("/api/stop")
+        self.gate.opened.set()
+        await self.finish()
+        body = await self.status()
+        self.assertEqual({"command": "tag", "printed": 1, "copies": 3,
+                          "unfinished": True}, body["stopped"])
+        # The first label whole, then the second's lead and the three
+        # characters it got to.
+        used = self.device.label_feeds(7) + 1 + 3
+        self.assertEqual(3000 - used * 4, body["roll"]["remaining_mm"])
+
+    async def test_a_stop_during_the_cut_leaves_that_label_uncut(self):
+        self.gate.close_after(len("HI"))
+        await self.post("/api/tag", {"tag": "HI", "copies": 2})
+        await self.gate.held()
+        await self.post("/api/stop")
+        self.gate.opened.set()
+        await self.finish()
+        body = await self.status()
+        self.assertEqual({"command": "tag", "printed": 0, "copies": 2,
+                          "unfinished": True}, body["stopped"])
+        self.assertEqual(3000 - self.device.label_feeds(2) * 4,
+                         body["roll"]["remaining_mm"])
+
+    async def test_a_stop_as_the_cut_comes_down_ends_the_run_between_labels(
+            self):
+        # Held at the last press of the first label's cut, which finishes its
+        # stroke: the label is cut before the stop is seen.
+        self.gate.close_after(label_waits("HI") - 1)
+        await self.post("/api/tag", {"tag": "HI", "copies": 3})
+        await self.gate.held()
+        await self.post("/api/stop")
+        self.gate.opened.set()
+        await self.finish()
+        self.assertTrue(self.logged("Stopped tag"))
+        body = await self.status()
+        # Cut short, but with nothing left on the tape.
+        self.assertEqual({"command": "tag", "printed": 1, "copies": 3,
+                          "unfinished": False}, body["stopped"])
+        self.assertEqual(3000 - self.device.label_feeds(2) * 4,
+                         body["roll"]["remaining_mm"])
+
+    async def test_after_the_last_cut_it_is_too_late_to_cut_anything_short(
+            self):
+        self.gate.close_after(label_waits("HI"))
+        await self.post("/api/tag", {"tag": "HI"})
+        await self.gate.held()
+        status, body = await self.post("/api/stop")
+        self.assertEqual({"result": "stopping"}, body)
+        # Over at once, with the gate still shut: the celebration is all
+        # that was left, and a stop ends it.
+        await self.finish()
+        body = await self.status()
+        self.assertFalse(body["busy"])
+        self.assertNotIn("stopped", body)
+        self.assertTrue(self.logged("Printing Complete"))
+        self.assertFalse(self.logged("Stopped tag"))
+
+    async def test_it_overtakes_a_stop_after_the_label(self):
+        self.gate.opened.clear()
+        await self.post("/api/tag", {"tag": "HI", "copies": 3})
+        await self.post("/api/stop?after=label")
+        await self.post("/api/stop")
+        self.assertEqual("now", (await self.status())["stop"])
+        self.gate.opened.set()
+        await self.finish()
+        body = await self.status()
+        self.assertEqual({"command": "tag", "printed": 0, "copies": 3,
+                          "unfinished": True}, body["stopped"])
+        self.assertFalse(any("Stopped after" in line
+                             for line in self.sim.log))
+
+    async def test_any_job_but_saving_can_be_stopped(self):
         self.gate.opened.clear()
         await self.post("/api/feed", {})
         status, body = await self.post("/api/stop")
-        self.assertEqual(409, status)
-        self.assertEqual("Only printing can be stopped", body["error"])
+        self.assertEqual(200, status)
+        self.gate.opened.set()
+        await self.finish()
+        self.assertTrue(self.logged("Stopped feed"))
+        body = await self.status()
+        # Only a run of labels says how far it got, and a feed presses no
+        # label to leave behind.
+        self.assertEqual({"command": "feed", "unfinished": False},
+                         body["stopped"])
+        # Charged in full: the simulator cannot tell whether the feed had
+        # begun.
+        self.assertEqual(3000 - 1 * 4, body["roll"]["remaining_mm"])
 
-    async def test_a_run_holds_the_machine_until_its_last_label(self):
+    async def test_a_stopped_full_test_leaves_its_label_on_the_tape(self):
         self.gate.opened.clear()
-        await self.post("/api/tag", {"tag": "HI", "copies": 2})
-        status, body = await self.post("/api/feed", {})
+        await self.post("/api/testfull", {"align": 5, "force": 5})
+        await self.post("/api/stop")
+        self.gate.opened.set()
+        await self.finish()
+        self.assertTrue(self.logged("Stopped testfull"))
+        self.assertEqual({"command": "testfull", "unfinished": True},
+                         (await self.status())["stopped"])
+
+    async def test_saving_cannot_be_stopped(self):
+        self.gate.opened.clear()
+        await self.post("/api/save", {"align": 5, "force": 5})
+        status, body = await self.post("/api/stop")
         self.assertEqual(409, status)
-        self.assertEqual(server.BUSY_MESSAGE, body["error"])
+        self.assertEqual("Saving cannot be stopped", body["error"])
+        self.assertNotIn("stop", await self.status())
+
+    async def test_what_it_stopped_is_forgotten_once_a_job_is_accepted(self):
+        self.gate.opened.clear()
+        await self.post("/api/feed", {})
+        await self.post("/api/stop")
+        self.gate.opened.set()
+        await self.finish()
+        self.assertIn("stopped", await self.status())
+        # A refused request is not a job.
+        await self.post("/api/tag", {"tag": "HI", "copies": 0})
+        self.assertIn("stopped", await self.status())
+        self.gate.opened.clear()
+        await self.post("/api/feed", {})
+        self.assertNotIn("stopped", await self.status())
+
+    async def test_the_next_job_runs_to_the_end(self):
+        self.gate.opened.clear()
+        await self.post("/api/feed", {})
+        await self.post("/api/stop")
+        self.gate.opened.set()
+        await self.finish()
+        await self.post("/api/tag", {"tag": "HI"})
+        await self.finish()
+        self.assertTrue(self.logged("Printing Complete"))
+        self.assertNotIn("stopped", await self.status())
+
+    async def test_stopping_an_idle_machine_is_not_an_error(self):
+        for path in ("/api/stop", "/api/stop?after=label"):
+            status, body = await self.post(path)
+            self.assertEqual(200, status)
+            self.assertEqual({"result": "idle"}, body)
 
 
 if __name__ == "__main__":

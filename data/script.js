@@ -41,16 +41,20 @@
 // because the device can still be running one, and the panel has to be able
 // to say so.
 //
+// A stopLabel is what the stop button says while that command runs, and
+// only the commands with one are offered a stop. The device stops anything
+// but a save, but a cut or a feed is over before a finger could get there.
+//
 // One entry to a line: src/simulator/test_firmware.py reads the names out of
 // this table to hold them to the firmware's.
 const COMMAND_LABELS = {
   cut: { busyLabel: "Cutting…" },
   feed: { busyLabel: "Feeding…" },
-  reel: { busyLabel: "Loading the new roll…" },
-  testalign: { busyLabel: "Testing the alignment…" },
-  testfull: { busyLabel: "Printing a test label…" },
+  reel: { busyLabel: "Loading the new roll…", stopLabel: "Stop loading" },
+  testalign: { busyLabel: "Testing the alignment…", stopLabel: "Stop test" },
+  testfull: { busyLabel: "Printing a test label…", stopLabel: "Stop test print" },
   save: { busyLabel: "Saving…" },
-  tag: { busyLabel: "Printing…" },
+  tag: { busyLabel: "Printing…", stopLabel: "Stop printing" },
   home: { busyLabel: "Finding home…" },
   move: { busyLabel: "Moving the wheel…" },
 };
@@ -60,7 +64,8 @@ const COMMAND_LABELS = {
 const UNKNOWN_BUSY_LABEL = "Working…";
 
 // The commands setup starts, each of which says so on its own button while
-// it runs. Anything else running while setup is open gets a line of its own.
+// it runs. Anything else running while setup is open is named by the stop
+// it gets, or if it cannot be stopped, by a line of its own.
 const SETUP_COMMANDS = ["reel", "testalign", "testfull"];
 
 // How often /api/status is asked, and how often while the page is in the
@@ -72,6 +77,20 @@ const HIDDEN_POLL_MS = 5000;
 // Polls in a row that can fail before the page says the device is gone. One
 // is a dropped packet on a busy access point; two is worth saying out loud.
 const OFFLINE_AFTER_MISSES = 2;
+
+// How long a stop button, or what takes its place once the stop is done,
+// ignores taps after it comes up. The stop comes up where the finger that
+// started the command may still be tapping, and the page may scroll to it;
+// a tap that soon was meant for what was there before.
+const STOP_ARMING_MS = 700;
+
+// What the page says when a stop reaches the device after the command it
+// was meant for has finished.
+const TOO_LATE_TO_STOP = "Too late to stop: the label maker had already finished.";
+
+// How close to the top of the screen scrolling to the stops may take the
+// button that started the command.
+const SCROLL_ROOM = 16;
 
 // How long the device takes to come back after a save, which restarts it.
 const RESTART_SECONDS = 15;
@@ -121,9 +140,24 @@ const state = {
   // the device says yes until a status asked for after that says what
   // became of it.
   pending: null,
-  // Whether this page has asked the run to stop. The device says so as well,
-  // in status.stopping, but not until the next poll.
-  stopRequested: false,
+  // The copies this page last asked the device for, so the stops are laid
+  // out for a run of labels from the tap rather than from the first poll.
+  sentCopies: null,
+  // A stop this page has asked for: its kind, "now" or "after_label",
+  // whether it has been sent, and when the device took it. A stop tapped
+  // while the command is still on its way waits for the device to have
+  // the command. The device says a stop is coming too, in status.stop, but
+  // not until the next poll.
+  stopRequest: null,
+  // What the page has to say about a stop when the device has no record of
+  // one to say it with: that it came too late to stop anything.
+  stopNote: null,
+  // The device's record of the last stop, as stopKey() has it, once it has
+  // been dismissed here, so the next poll does not bring it straight back.
+  dismissedStop: null,
+  // From a tap on a stop until what it came to is brought into view: the
+  // end of the command it stopped, or a problem stopping it.
+  revealStop: false,
   view: "print",
   // align and force as the device has them, and as setup has them now.
   saved: null,
@@ -170,6 +204,8 @@ const el = {
   feedButton: $("feed-button"),
   cutButton: $("cut-button"),
   setupButton: $("setup-button"),
+  stopNowButton: $("stop-now-button"),
+  stopNowText: $("stop-now-text"),
   stopButton: $("stop-button"),
   rollRemaining: $("roll-remaining"),
   rollOf: $("roll-of"),
@@ -181,8 +217,12 @@ const el = {
   testAlignButton: $("test-align-button"),
   testFullButton: $("test-full-button"),
   setupStatus: $("setup-status"),
+  setupRunActions: $("setup-run-actions"),
+  setupStopButton: $("setup-stop-button"),
+  setupStopText: $("setup-stop-text"),
   cancelButton: $("cancel-button"),
   saveButton: $("save-button"),
+  stopNotices: document.querySelectorAll("[data-stop-notice]"),
   problems: document.querySelectorAll("[data-problem]"),
   reelDialog: $("reel-dialog"),
   reelForm: $("reel-form"),
@@ -272,7 +312,25 @@ function wireEvents() {
   el.feedButton.addEventListener("click", () => send("feed"));
   el.cutButton.addEventListener("click", () => send("cut"));
   el.setupButton.addEventListener("click", openSetup);
-  el.stopButton.addEventListener("click", stopRun);
+  el.stopNowButton.addEventListener("click", () => requestStop("now", el.runActions));
+  el.stopButton.addEventListener("click", () => requestStop("after_label", el.runActions));
+  el.setupStopButton.addEventListener("click", () => requestStop("now", el.setupRunActions));
+  for (const box of el.stopNotices) {
+    box.querySelector("[data-stop-cut]").addEventListener("click", () => {
+      if (settled(box)) {
+        send("cut");
+      }
+    });
+    box.querySelector("[data-stop-dismiss]").addEventListener("click", () => {
+      if (settled(box)) {
+        dismissStopNotice();
+      }
+    });
+  }
+  // The stops are stuck to the bottom of the screen for as long as the page
+  // is short of where they sit, and look it.
+  window.addEventListener("scroll", watchStuck, { passive: true });
+  window.addEventListener("resize", watchStuck);
 
   el.reelButton.addEventListener("click", openReelDialog);
   for (const button of el.stepButtons) {
@@ -303,10 +361,10 @@ function wireEvents() {
       event.preventDefault();
     }
   });
-  el.reelDialog.addEventListener("close", () => {
+  el.reelDialog.addEventListener("close", async () => {
     const lengthMm = typedRollLength();
-    if (el.reelDialog.returnValue === "reel" && lengthMm !== null) {
-      send("reel", { length_mm: lengthMm });
+    if (el.reelDialog.returnValue === "reel" && lengthMm !== null && (await send("reel", { length_mm: lengthMm }))) {
+      scrollStopsIntoPlace(el.setupRunActions, el.reelButton);
     }
   });
   el.discardDialog.addEventListener("close", () => {
@@ -989,6 +1047,10 @@ function printButtonText(copies) {
 // it; if it did not, the page says why.
 async function send(name, data = {}) {
   state.problem = null;
+  // Whatever the last stop had to say, a new command is the end of it.
+  state.stopRequest = null;
+  state.stopNote = null;
+  state.revealStop = false;
   state.posting = name;
   render();
   let accepted = false;
@@ -1002,17 +1064,26 @@ async function send(name, data = {}) {
       const reason = reply && typeof reply.error === "string" ? reply.error : null;
       console.error("Unable to " + name);
       console.error(reason ?? response.status);
+      // Nor is there anything for a stop tapped meanwhile to stop.
+      state.stopRequest = null;
       showProblem(reason ?? "The label maker refused that, and did not say why (HTTP " + response.status + ").");
     }
   } catch (error) {
     console.error("Unable to " + name);
     console.error(error);
+    state.stopRequest = null;
     showProblem("Couldn’t reach the label maker. Check that it’s switched on, then try again.");
   } finally {
     state.posting = null;
     render();
   }
   if (accepted) {
+    // A stop tapped while the command was on its way, sent now that the
+    // device has something to stop.
+    const request = state.stopRequest;
+    if (request !== null && !request.sent) {
+      postStop(request);
+    }
     // Now rather than on the next tick, so what the device is doing shows as
     // soon as it has started doing it.
     poll();
@@ -1037,31 +1108,252 @@ async function printLabels() {
   const copies = requestedCopies();
   // Puts a phone's keyboard away, so the label printing is what is on screen.
   el.input.blur();
-  state.stopRequested = false;
-  await send("tag", { tag: buildTreatedLabel().toLowerCase(), copies: copies });
+  state.sentCopies = copies;
+  if (await send("tag", { tag: buildTreatedLabel().toLowerCase(), copies: copies })) {
+    scrollStopsIntoPlace(el.runActions, el.activity);
+  }
 }
 
-// Asks the run to end after the label it is on. The device only looks at
-// this between one cut and the next label, so nothing is cut short.
-async function stopRun() {
-  state.stopRequested = true;
+// Stops what the device is doing, "now" or "after_label". Now is at the
+// next press or turn of a motor: a press already on its way down always
+// finishes, so the wheel is never left jammed in the tape. After the label
+// is once the label being pressed has been cut, so nothing is cut short.
+//
+// row is the stops the tap was on, which ignore it if they have only just
+// come up.
+function requestStop(kind, row) {
+  if (!settled(row)) {
+    return;
+  }
+  const request = { kind: kind, sent: false, acceptedAt: null };
+  state.problem = null;
+  state.stopNote = null;
+  state.stopRequest = request;
+  state.revealStop = true;
   render();
+  // Still on its way, the command has nothing to stop yet. send() passes
+  // this on once the device has it.
+  if (state.posting === null) {
+    postStop(request);
+  }
+}
+
+async function postStop(request) {
+  request.sent = true;
+  const now = request.kind === "now";
   try {
-    const response = await fetchWithTimeout("api/stop", { method: "POST" });
-    if (!response.ok) {
-      const reply = await readJson(response);
-      state.stopRequested = false;
-      showProblem(reply && typeof reply.error === "string" ? reply.error : "The label maker would not stop.");
+    // A stop is no use late, so the device is given less time than usual
+    // to answer one before the page says it cannot get through.
+    const response = await fetchWithTimeout(now ? "api/stop" : "api/stop?after=label", {
+      method: "POST",
+      timeout: 5000,
+    });
+    const reply = await readJson(response);
+    if (state.stopRequest !== request) {
+      // Overtaken by a command sent since, which is the end of this one.
+    } else if (!response.ok) {
+      const reason = reply && typeof reply.error === "string" ? reply.error : null;
+      console.error("Unable to stop");
+      console.error(reason ?? response.status);
+      state.stopRequest = null;
+      showProblem(reason ?? "The label maker would not stop, and did not say why (HTTP " + response.status + ").");
+    } else if (reply !== null && reply.result === "idle") {
+      // Not a failure: what it was doing finished while the tap was on its
+      // way.
+      state.stopRequest = null;
+      state.stopNote = TOO_LATE_TO_STOP;
+    } else {
+      request.acceptedAt = performance.now();
     }
-    // A "result" of "idle" is not a failure: the run finished while the tap
-    // was on its way, and the next poll says so.
   } catch (error) {
     console.error("Unable to stop");
     console.error(error);
-    state.stopRequested = false;
-    showProblem("Couldn’t reach the label maker to stop it. The rest of the labels will still print.");
+    if (state.stopRequest === request) {
+      state.stopRequest = null;
+      showProblem(
+        now
+          ? "Couldn’t reach the label maker to stop it. If it has to stop now, switch it off."
+          : "Couldn’t reach the label maker to stop it. The rest of the labels will still print.",
+      );
+    }
   }
   render();
+  poll();
+}
+
+// The stop the device has been asked for, by this page or any other, or
+// null. A stop now outranks one after the label.
+function pendingStop() {
+  const status = state.status;
+  const kinds = [
+    state.stopRequest === null ? null : state.stopRequest.kind,
+    status !== null && status.busy ? status.stop : null,
+  ];
+  if (kinds.includes("now")) {
+    return "now";
+  }
+  return kinds.includes("after_label") ? "after_label" : null;
+}
+
+// The device's record of what the last stop cut short, or null. It keeps
+// one until the next command, and has none when nothing was cut short.
+function lastStop() {
+  const stopped = state.status === null ? null : state.status.stopped;
+  return stopped !== null && typeof stopped === "object" ? stopped : null;
+}
+
+function stopKey(stopped) {
+  return [stopped.command, stopped.printed, stopped.copies, stopped.unfinished].join();
+}
+
+// What to say once a stop has ended a command, or null: the device's
+// record, or without one a note of this page's own.
+function stopNotice() {
+  const stopped = lastStop();
+  if (stopped !== null) {
+    if (stopKey(stopped) === state.dismissedStop) {
+      return null;
+    }
+    return { text: stoppedText(stopped), unfinished: stopped.unfinished === true };
+  }
+  return state.stopNote === null ? null : { text: state.stopNote, unfinished: false };
+}
+
+// Tape fed for a label that was then not finished is still in the machine,
+// and comes out on the front of the next label unless it is cut off first.
+function stoppedText(stopped) {
+  const unfinished = stopped.unfinished === true;
+  const cutFirst = " Cut it off before printing again.";
+  switch (stopped.command) {
+    case "tag": {
+      const { printed, copies } = stopped;
+      if (!Number.isInteger(printed) || !Number.isInteger(copies) || copies <= 1) {
+        return unfinished ? "Stopped partway through the label." + cutFirst : "Stopped before the label was started.";
+      }
+      if (unfinished) {
+        return "Stopped partway through label " + (printed + 1) + " of " + copies + "." + cutFirst;
+      }
+      if (printed === 0) {
+        return "Stopped before label 1 of " + copies + " was started.";
+      }
+      return "Stopped after " + printed + " of " + copies + " labels.";
+    }
+    case "testfull":
+      return unfinished
+        ? "Stopped partway through the test label." + cutFirst
+        : "Stopped before the test label was started.";
+    case "testalign":
+      return "Stopped the alignment test.";
+    case "reel":
+      return "Stopped loading the new roll before the tape was all the way through. Load it again to finish.";
+    default:
+      return "The label maker was stopped.";
+  }
+}
+
+function dismissStopNotice() {
+  const stopped = lastStop();
+  if (stopped !== null) {
+    state.dismissedStop = stopKey(stopped);
+  }
+  state.stopNote = null;
+  render();
+  (state.view === "setup" ? el.setupView : el.printView).focus({ preventScroll: true });
+}
+
+// When each set of stops, and each stop notice, last came up.
+const shownAt = new Map();
+
+// Shows or hides a set of stops or a stop notice, noting when it comes up.
+// Each is hidden while its view is, so coming back to the view counts.
+function showArmed(element, shown) {
+  if (shown && element.hidden) {
+    shownAt.set(element, performance.now());
+  }
+  element.hidden = !shown;
+}
+
+// Whether one has been up long enough for a tap on it to have been meant
+// for it. See STOP_ARMING_MS.
+function settled(element) {
+  return !element.hidden && performance.now() - (shownAt.get(element) ?? -Infinity) >= STOP_ARMING_MS;
+}
+
+// Scrolls stops that have come up for a command this page started down to
+// their own place on the page, so they are not stuck over the view of what
+// the command is doing -- as far as that goes without scrolling what
+// started it off the top of the screen.
+function scrollStopsIntoPlace(row, origin) {
+  if (row.hidden) {
+    return;
+  }
+  scrollPage(Math.max(0, Math.min(stuckBy(row), origin.getBoundingClientRect().top - SCROLL_ROOM)));
+}
+
+// Brings what a stop tapped here came to into view, once it has come to
+// something. The stops stay in sight wherever the page is scrolled, but
+// what they come to has its own place on the page, which can be off the
+// screen, or under the stops if they are still up. All of it, and clear of
+// the stops, as far as that goes without taking its top off the screen.
+function revealStopOutcome() {
+  const view = state.view === "setup" ? el.setupView : el.printView;
+  const box =
+    view.querySelector("[data-problem]:not([hidden])") ?? view.querySelector("[data-stop-notice]:not([hidden])");
+  if (box === null) {
+    return;
+  }
+  const row = state.view === "setup" ? el.setupRunActions : el.runActions;
+  const { top, bottom } = box.getBoundingClientRect();
+  const down = Math.max(0, bottom + SCROLL_ROOM - innerHeight, row.hidden ? 0 : stuckBy(row));
+  scrollPage(Math.min(down, top - SCROLL_ROOM));
+}
+
+// How far down the page has to scroll for a set of stops stuck at the
+// bottom of the screen to be back in their own place. Nothing stuck is in
+// the way of anything above that place.
+function stuckBy(row) {
+  return naturalBottom(row) - (innerHeight - parseFloat(getComputedStyle(row).bottom));
+}
+
+function scrollPage(by) {
+  if (Math.abs(by) >= 1) {
+    const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    window.scrollBy({ top: by, behavior: reduce ? "auto" : "smooth" });
+  }
+}
+
+// Where the bottom of a set of stops is in the flow of the page, however
+// far up from there it is stuck: the top of what follows it less the gap
+// between them, or the bottom of what it is in.
+function naturalBottom(row) {
+  let next = row.nextElementSibling;
+  while (next !== null && next.hidden) {
+    next = next.nextElementSibling;
+  }
+  if (next === null) {
+    return row.parentElement.getBoundingClientRect().bottom;
+  }
+  return next.getBoundingClientRect().top - parseFloat(getComputedStyle(next).marginTop);
+}
+
+let stuckFrame = 0;
+
+function watchStuck() {
+  if (stuckFrame === 0) {
+    stuckFrame = requestAnimationFrame(() => {
+      stuckFrame = 0;
+      markStuck();
+    });
+  }
+}
+
+// Marks a set of stops stuck while it is held at the bottom of the screen
+// over the page, up from its own place. style.css puts a scrim behind it.
+function markStuck() {
+  for (const row of [el.runActions, el.setupRunActions]) {
+    const stuck = !row.hidden && row.getBoundingClientRect().bottom < naturalBottom(row) - 0.5;
+    row.toggleAttribute("data-stuck", stuck);
+  }
 }
 
 // The device rejects any align or force outside the range it served. The
@@ -1079,22 +1371,26 @@ function calibrationValuesReady(...values) {
 
 // no force: this test always presses at the minimum, slowly and lightly, so
 // the alignment can be checked without embossing anything
-function testAlignCommand() {
+async function testAlignCommand() {
   const draft = state.draft;
   if (draft === null || !calibrationValuesReady(draft.align)) {
     console.error("Cannot run the alignment test: align not loaded from the device yet");
     return;
   }
-  send("testalign", { align: draft.align });
+  if (await send("testalign", { align: draft.align })) {
+    scrollStopsIntoPlace(el.setupRunActions, el.testAlignButton);
+  }
 }
 
-function testFullCommand() {
+async function testFullCommand() {
   const draft = state.draft;
   if (draft === null || !calibrationValuesReady(draft.align, draft.force)) {
     console.error("Cannot run the full test: align/force not loaded from the device yet");
     return;
   }
-  send("testfull", { align: draft.align, force: draft.force });
+  if (await send("testfull", { align: draft.align, force: draft.force })) {
+    scrollStopsIntoPlace(el.setupRunActions, el.testFullButton);
+  }
 }
 
 // sends settings save command to the device, and reloads once it has
@@ -1320,8 +1616,23 @@ function applyStatus(status, requestedAt) {
   if (state.pending !== null && requestedAt >= state.pending.acceptedAt) {
     state.pending = null;
   }
-  if (!(status.busy && status.command === "tag")) {
-    state.stopRequested = false;
+  // A stop the device took is over once a status asked for after that no
+  // longer says one is coming. One to stop now that left no record behind
+  // had nothing left to stop.
+  const request = state.stopRequest;
+  if (request !== null && request.acceptedAt !== null && requestedAt >= request.acceptedAt) {
+    if (!(status.busy && status.stop)) {
+      if (request.kind === "now" && !status.busy && lastStop() === null) {
+        state.stopNote = TOO_LATE_TO_STOP;
+      }
+      state.stopRequest = null;
+    }
+  }
+  if (status.busy) {
+    state.stopNote = null;
+  }
+  if (lastStop() === null) {
+    state.dismissedStop = null;
   }
   if (Number.isInteger(status.align) && Number.isInteger(status.force)) {
     const before = state.saved;
@@ -1359,6 +1670,13 @@ function busyLabel(command) {
   return spec ? spec.busyLabel : UNKNOWN_BUSY_LABEL;
 }
 
+// What the stop says while the command runs, or null if it is not offered
+// one.
+function stopLabel(command) {
+  const spec = COMMAND_LABELS[command];
+  return spec && spec.stopLabel ? spec.stopLabel : null;
+}
+
 //------------//
 //   render   //
 //------------//
@@ -1377,8 +1695,16 @@ function render() {
   setText(el.viewName, state.view === "setup" ? "Setup" : "Label maker");
 
   renderPrintView(command, busy, offline, focused);
-  renderSetupView(command, busy, offline);
+  renderSetupView(command, busy, offline, focused);
+  renderStopNotices(busy, offline, focused);
   renderProblems();
+  // A stop comes to something when the command it stopped is over, or if
+  // it could not be stopped, when the page says so.
+  if (state.revealStop && (!busy || state.problem !== null)) {
+    state.revealStop = false;
+    revealStopOutcome();
+  }
+  markStuck();
 }
 
 function renderPrintView(command, busy, offline, focused) {
@@ -1453,36 +1779,64 @@ function renderPrintView(command, busy, offline, focused) {
     el.printButton.focus({ preventScroll: true });
   }
 
-  // under the card
-  const batch = run !== null && run.copies > 1;
-  el.machineActions.hidden = batch;
-  el.runActions.hidden = !batch;
+  // under the card, or while something that can be stopped runs, the stops
+  const stopText = busy ? stopLabel(command) : null;
+  el.machineActions.hidden = stopText !== null;
+  showArmed(el.runActions, stopText !== null && state.view === "print");
   el.feedButton.disabled = busy || offline;
   el.cutButton.disabled = busy || offline;
   el.setupButton.disabled = busy;
-  if (batch) {
-    const stopping = run.stopping === true || state.stopRequested;
-    setText(el.stopButton, stopping ? "Stopping after this label…" : "Stop after this label");
-    el.stopButton.disabled = stopping || offline || run.copy >= run.copies;
-    el.stopButton.toggleAttribute("data-running", stopping);
-  } else if (focused === el.stopButton) {
+  if (stopText !== null) {
+    renderStops(command, run, stopText, offline);
+  }
+  // A stop a keyboard was on goes out of reach once it is pressed, and
+  // away once the command is over. Focus goes to what says how it went.
+  if (
+    (focused === el.stopNowButton || focused === el.stopButton) &&
+    (el.runActions.hidden || focused.hidden || focused.disabled)
+  ) {
     (busy ? el.activity : el.printButton).focus({ preventScroll: true });
   }
 }
 
+// Stopping is never held back for the page being out of touch: the tap
+// may still get through, and if it does not, the page says what else to do.
+function renderStops(command, run, stopText, offline) {
+  const stop = pendingStop();
+  const now = stop === "now";
+  setText(el.stopNowText, now ? "Stopping…" : stopText);
+  el.stopNowButton.disabled = now;
+  el.stopNowButton.toggleAttribute("data-running", now);
+
+  // A run of labels can instead be let finish the label it is on. How many
+  // labels it has comes from the device once a poll has it, and until then
+  // from what this page asked for, so the stops come up the right size.
+  const copies = run !== null ? run.copies : command === "tag" ? state.sentCopies : null;
+  const gentle = stop === "after_label";
+  el.stopButton.hidden = !(command === "tag" && Number.isInteger(copies) && copies > 1);
+  setText(el.stopButton, gentle ? "Stopping after this label…" : "Stop after this label");
+  el.stopButton.disabled = stop !== null || offline || (run !== null && run.copy >= run.copies);
+  el.stopButton.toggleAttribute("data-running", gentle);
+}
+
 function renderActivity(command, run) {
+  const stop = pendingStop();
   let text = busyLabel(command);
   let percentage = null;
   if (command === "tag" && run !== null) {
     percentage = printPercentage(run);
     if (Number.isInteger(run.copies) && Number.isInteger(run.copy) && run.copies > 1) {
-      const stopping = run.stopping === true || state.stopRequested;
-      text = (stopping ? "Stopping after label " : "Printing label ") + run.copy + " of " + run.copies;
+      // Kept together when a narrow screen puts the words over two lines.
+      const count = ["label", run.copy, "of", run.copies].join(" ");
+      text = (stop === "after_label" ? "Stopping after " : "Printing ") + count;
       // The whole run, not the label it is on: the tape above already shows
       // how far into this label it is, and a bar that emptied at every cut
       // would say nothing about when the run ends.
       percentage = Math.floor(((clamp(run.copy, 1, run.copies) - 1) * 100 + percentage) / run.copies);
     }
+  }
+  if (stop === "now") {
+    text = "Stopping…";
   }
   setText(el.activityText, text);
   setText(el.activityPercent, percentage === null ? "" : percentage + "%");
@@ -1491,7 +1845,7 @@ function renderActivity(command, run) {
   el.activity.toggleAttribute("data-breathing", percentage === null);
 }
 
-function renderSetupView(command, busy, offline) {
+function renderSetupView(command, busy, offline, focused) {
   const roll = state.status !== null ? state.status.roll : null;
   if (roll) {
     setText(el.rollRemaining, formatLength(roll.remaining_mm));
@@ -1526,13 +1880,47 @@ function renderSetupView(command, busy, offline) {
   // numbers it already has.
   el.saveButton.disabled = busy || offline || !bothReady || !hasUnsavedChanges() || state.restarting;
   el.cancelButton.disabled = state.restarting;
-  setText(el.setupStatus, busy && !SETUP_COMMANDS.includes(command) ? busyLabel(command) : "");
+
+  // the stop, for anything that can be stopped, whoever started it
+  const stopText = busy ? stopLabel(command) : null;
+  showArmed(el.setupRunActions, stopText !== null && state.view === "setup");
+  if (stopText !== null) {
+    const now = pendingStop() === "now";
+    setText(el.setupStopText, now ? "Stopping…" : stopText);
+    el.setupStopButton.disabled = now;
+    el.setupStopButton.toggleAttribute("data-running", now);
+  }
+  if (focused === el.setupStopButton && (el.setupRunActions.hidden || el.setupStopButton.disabled)) {
+    el.setupView.focus({ preventScroll: true });
+  }
+  setText(el.setupStatus, busy && stopText === null && !SETUP_COMMANDS.includes(command) ? busyLabel(command) : "");
 }
 
 // A setup button says what its command is doing while it runs. The page
 // has both of its labels, and style.css shows the one this picks.
 function showRunning(button, running) {
   button.toggleAttribute("data-running", running);
+}
+
+// What the last stop left behind, in whichever view is open, once the
+// machine is done with it.
+function renderStopNotices(busy, offline, focused) {
+  const notice = busy ? null : stopNotice();
+  for (const box of el.stopNotices) {
+    const view = box.closest(".view") === el.setupView ? "setup" : "print";
+    if (notice !== null) {
+      setText(box.querySelector(".notice-text"), notice.text);
+      box.toggleAttribute("data-unfinished", notice.unfinished);
+      const cut = box.querySelector("[data-stop-cut]");
+      cut.hidden = !notice.unfinished;
+      cut.disabled = offline;
+    }
+    showArmed(box, notice !== null && view === state.view);
+    // Cut is the one that goes away under a keyboard, while it cuts.
+    if (box.hidden && box.contains(focused)) {
+      (state.view === "setup" ? el.setupView : busy ? el.activity : el.printButton).focus({ preventScroll: true });
+    }
+  }
 }
 
 function renderProblems() {

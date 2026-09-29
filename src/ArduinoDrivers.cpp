@@ -38,10 +38,6 @@ void ArduinoStepper::setCurrentPosition(long position) {
   this->stepper.setCurrentPosition(position);
 }
 
-void ArduinoStepper::runToNewPosition(long position) {
-  this->stepper.runToNewPosition(position);
-}
-
 void ArduinoStepper::move(long relative) { this->stepper.move(relative); }
 
 bool ArduinoStepper::run() { return this->stepper.run(); }

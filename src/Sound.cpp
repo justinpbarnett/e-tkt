@@ -6,12 +6,16 @@
 #include "Characters.h"
 #include "Configuration.h"
 #include "Melody.h"
+#include "StopSignal.h"
 #include "Utility.h"
 #include "pitches.h"
 
 Sound::~Sound() {}
 
-Sound::Sound(Characters* characters) { this->characters = characters; }
+Sound::Sound(Characters* characters, StopSignal* stop) {
+  this->characters = characters;
+  this->stop = stop;
+}
 
 void Sound::initialize() { pinMode(BUZZER_PIN, OUTPUT); }
 
@@ -38,6 +42,9 @@ void Sound::playLabel(String label) {
   int length = Utility::utf8Length(label);
 
   for (int i = 0; i < length; i++) {
+    if (this->stop->shouldStop()) {
+      return;
+    }
     int duration;
     // If the label is over 16 characters, decrease the note duration every
     // character starting at character 5.
@@ -58,6 +65,9 @@ void Sound::playMelody(String notes, String durations) {
   int length = Utility::utf8Length(notes);
 
   for (int i = 0; i < length; i++) {
+    if (this->stop->shouldStop()) {
+      return;
+    }
     auto character = Utility::utf8CharAt(notes, i);
     auto frequency = this->characters->getCharacterFrequency(character);
     if (frequency == 0) {

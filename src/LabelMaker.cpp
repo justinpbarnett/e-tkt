@@ -49,6 +49,7 @@
 #include "Roll.h"
 #include "Settings.h"
 #include "Sound.h"
+#include "StopSignal.h"
 #include "Utility.h"
 
 // ---------------------------------------------------------------------------
@@ -78,22 +79,25 @@ U8G2_SSD1306_128X64_NONAME_F_HW_I2C* screen =
 
 Logger* logger = new Logger();
 Characters* characters = new Characters();
-Sound* sound = new Sound(characters);
+// Raised by ETKT::stop() from the webserver's task, and obeyed by everything
+// that moves, sounds or blinks for a job, so they all share the one.
+StopSignal* stopSignal = new StopSignal();
+Sound* sound = new Sound(characters, stopSignal);
 Display* display = new Display(sound, characters, screen);
 Settings* settings = new Settings(logger);
 Roll* roll = new Roll(logger);
-Light* ledFinish = new Light(FINISH_LED_PIN);
-Light* ledChar = new Light(CHARACTER_LED_PIN);
+Light* ledFinish = new Light(FINISH_LED_PIN, stopSignal);
+Light* ledChar = new Light(CHARACTER_LED_PIN, stopSignal);
 Press* press = new Press(logger, SERVO_PIN, ledChar, pressServo);
 HallSwitch* hall = new HallSwitch(logger, HALL_PIN);
 DaisyWheel* daisywheel =
-    new DaisyWheel(logger, hall, characters, settings, charStepper);
-Feeder* feeder = new Feeder(logger, feedStepper);
+    new DaisyWheel(logger, hall, characters, settings, charStepper, stopSignal);
+Feeder* feeder = new Feeder(logger, feedStepper, stopSignal);
 BenchRigs* benchRigs =
     new BenchRigs(logger, sound, press, feeder, ledChar, ledFinish);
 ETKT* etkt =
     new ETKT(logger, settings, characters, display, daisywheel, hall, feeder,
-             roll, press, sound, ledFinish, ledChar, benchRigs);
+             roll, press, sound, ledFinish, ledChar, stopSignal, benchRigs);
 Network* network = new Network(logger, display, etkt, WIFI_RESET_PIN);
 
 void setup() {
