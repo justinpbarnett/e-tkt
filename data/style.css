@@ -219,6 +219,11 @@ p {
   text-wrap: pretty;
 }
 
+/* The machine's name, which a line would otherwise break at its hyphen. */
+.machine-name {
+  white-space: nowrap;
+}
+
 button,
 input,
 output {
