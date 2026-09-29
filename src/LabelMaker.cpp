@@ -34,16 +34,15 @@
 #include <U8g2lib.h>
 
 #include "ArduinoDrivers.h"
-#include "Characters.h"
 #include "Configuration.h"
 #include "DaisyWheel.h"
-#include "Display.h"
 #include "ETKT.h"
 #include "Feeder.h"
 #include "HallSwitch.h"
 #include "Light.h"
 #include "Logger.h"
 #include "Network.h"
+#include "OledDisplay.h"
 #include "Press.h"
 #include "Roll.h"
 #include "Settings.h"
@@ -54,12 +53,13 @@
 // ---------------------------------------------------------------------------
 // The composition root.
 //
-// This is the one file that names ESP32Servo, AccelStepper and U8G2. Every
-// module below takes its driver as a constructor parameter and talks to it
-// through the small interfaces in Drivers.h, so replacing a driver -- a
-// different servo library, a bigger screen, a recording fake on a development
-// machine -- is an edit here and nowhere else. The host tests under test/ take
-// the same three modules and hand them fakes instead.
+// This is the one file that builds the ESP32Servo, AccelStepper and U8G2
+// drivers. Every module below takes its driver as a constructor parameter and
+// talks to it through a small interface, the motors through Drivers.h and the
+// screen through Display.h. So replacing a driver -- a different servo
+// library, a bigger screen, a recording fake on a development machine -- is an
+// edit here and nowhere else. The host tests under test/ build the same
+// modules, the job runner among them, and hand them fakes instead.
 //
 // Order matters: a driver has to exist before the module that takes it, and
 // these are file-scope initialisers, so they run top to bottom.
@@ -77,12 +77,13 @@ U8G2_SSD1306_128X64_NONAME_F_HW_I2C* screen =
     new U8G2_SSD1306_128X64_NONAME_F_HW_I2C(U8G2_R0, U8X8_PIN_NONE);
 
 Logger* logger = new Logger();
-Characters* characters = new Characters();
 // Raised by ETKT::stop() from the webserver's task, and obeyed by everything
 // that moves, sounds or blinks for a job, so they all share the one.
 StopSignal* stopSignal = new StopSignal();
-Sound* sound = new Sound(characters, stopSignal);
-Display* display = new Display(sound, characters, screen);
+Sound* sound = new Sound(stopSignal);
+// The one place that knows the screen is an OLED. ETKT and Network take it
+// as a Display, which is all either of them draws through.
+OledDisplay* display = new OledDisplay(sound, screen);
 Settings* settings = new Settings(logger);
 Roll* roll = new Roll(logger);
 Light* ledFinish = new Light(FINISH_LED_PIN, stopSignal);
@@ -90,11 +91,10 @@ Light* ledChar = new Light(CHARACTER_LED_PIN, stopSignal);
 Press* press = new Press(logger, SERVO_PIN, ledChar, pressServo);
 HallSwitch* hall = new HallSwitch(logger, HALL_PIN);
 DaisyWheel* daisywheel =
-    new DaisyWheel(logger, hall, characters, settings, charStepper, stopSignal);
+    new DaisyWheel(logger, hall, settings, charStepper, stopSignal);
 Feeder* feeder = new Feeder(logger, feedStepper, stopSignal);
-ETKT* etkt =
-    new ETKT(logger, settings, characters, display, daisywheel, hall, feeder,
-             roll, press, sound, ledFinish, ledChar, stopSignal);
+ETKT* etkt = new ETKT(logger, settings, display, daisywheel, hall, feeder, roll,
+                      press, sound, ledFinish, ledChar, stopSignal);
 Network* network = new Network(logger, display, etkt, WIFI_RESET_PIN);
 
 void setup() {
@@ -108,7 +108,7 @@ void setup() {
   network->initialize();
 
   // Display the ready "idle" screen.
-  display->renderIdle();
+  display->renderIdle(false);
 }
 
 void loop() { etkt->loop(); }

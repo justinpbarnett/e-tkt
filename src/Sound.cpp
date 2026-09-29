@@ -3,19 +3,15 @@
 #include <Arduino.h>
 #include <ESP32Tone.h>
 
-#include "Characters.h"
+#include "CharacterSet.h"
 #include "Configuration.h"
 #include "Melody.h"
 #include "StopSignal.h"
 #include "Utility.h"
-#include "pitches.h"
 
 Sound::~Sound() {}
 
-Sound::Sound(Characters* characters, StopSignal* stop) {
-  this->characters = characters;
-  this->stop = stop;
-}
+Sound::Sound(StopSignal* stop) { this->stop = stop; }
 
 void Sound::initialize() { pinMode(BUZZER_PIN, OUTPUT); }
 
@@ -28,7 +24,7 @@ void Sound::play(int frequency, int duration) {
 }
 
 void Sound::play(String character, int duration) {
-  auto frequency = this->characters->getCharacterFrequency(character);
+  auto frequency = characterNote(character);
   if (frequency == 0) {
     // The character isn't on the wheel, so just ignore it.
     return;
@@ -69,7 +65,7 @@ void Sound::playMelody(String notes, String durations) {
       return;
     }
     auto character = Utility::utf8CharAt(notes, i);
-    auto frequency = this->characters->getCharacterFrequency(character);
+    auto frequency = characterNote(character);
     if (frequency == 0) {
       continue;
     }

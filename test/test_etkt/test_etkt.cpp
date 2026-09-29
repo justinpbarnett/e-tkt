@@ -1,0 +1,438 @@
+// Host-side tests for the job runner, ETKT, through the four calls the rest
+// of the firmware makes on it: submit, stop, createStatus and loop.
+//
+// Every stop rule the operator relies on lives in ETKT -- what can be
+// stopped, what a stop leaves on the tape, what the panel is told afterwards
+// -- and until these tests the only way to check one was a real machine and
+// a real roll of tape. The machine here is the real one, module for module,
+// with fakes where it meets the hardware: FakeServo and FakeStepper for the
+// three motors, FakeDisplay for the OLED, and the stubs for the core, the
+// sounder and the EEPROM. A stop arrives the way it does on the board, from
+// outside the job while the job waits or turns a motor.
+//
+// Run with:  pio test -e native
+#include <unity.h>
+
+#include <utility>
+#include <vector>
+
+#include "Arduino.h"
+#include "DaisyWheel.h"
+#include "ETKT.h"
+#include "FakeDisplay.h"
+#include "FakeDrivers.h"
+#include "Feeder.h"
+#include "HallSwitch.h"
+#include "Light.h"
+#include "Logger.h"
+#include "Press.h"
+#include "Roll.h"
+#include "Settings.h"
+#include "Sound.h"
+#include "StopSignal.h"
+
+static FakeServo* pressServo;
+static FakeStepper* charStepper;
+static FakeStepper* feedStepper;
+static FakeDisplay* display;
+
+static Logger* logger;
+static StopSignal* stopSignal;
+static Sound* sound;
+static Settings* settings;
+static Roll* roll;
+static Light* ledFinish;
+static Light* ledChar;
+static Press* press;
+static HallSwitch* hall;
+static DaisyWheel* daisywheel;
+static Feeder* feeder;
+static ETKT* etkt;
+
+void setUp(void) {
+  stubReset();
+  pressServo = new FakeServo();
+  charStepper = new FakeStepper();
+  feedStepper = new FakeStepper();
+  display = new FakeDisplay();
+
+  logger = new Logger();
+  stopSignal = new StopSignal();
+  sound = new Sound(stopSignal);
+  settings = new Settings(logger);
+  roll = new Roll(logger);
+  ledFinish = new Light(FINISH_LED_PIN, stopSignal);
+  ledChar = new Light(CHARACTER_LED_PIN, stopSignal);
+  press = new Press(logger, SERVO_PIN, ledChar, pressServo);
+  hall = new HallSwitch(logger, HALL_PIN);
+  daisywheel = new DaisyWheel(logger, hall, settings, charStepper, stopSignal);
+  feeder = new Feeder(logger, feedStepper, stopSignal);
+  etkt = new ETKT(logger, settings, display, daisywheel, hall, feeder, roll,
+                  press, sound, ledFinish, ledChar, stopSignal);
+  etkt->initialize();
+  display->clear();
+}
+
+void tearDown(void) {
+  delete etkt;
+  delete feeder;
+  delete daisywheel;
+  delete hall;
+  delete press;
+  delete ledChar;
+  delete ledFinish;
+  delete roll;
+  delete settings;
+  delete sound;
+  delete stopSignal;
+  delete logger;
+  delete display;
+  delete feedStepper;
+  delete charStepper;
+  delete pressServo;
+}
+
+static void submit(Command command) {
+  CommandOptions options;
+  options.command = command;
+  etkt->submit(options);
+}
+
+static void submitTag(const String& label, int copies) {
+  CommandOptions options;
+  options.command = Command::TAG;
+  options.label = label;
+  options.copies = copies;
+  etkt->submit(options);
+}
+
+static bool refused(Command command) {
+  try {
+    submit(command);
+  } catch (const PrinterBusyException&) {
+    return true;
+  }
+  return false;
+}
+
+// --- running a job -------------------------------------------------------
+
+void test_a_submitted_feed_runs_and_the_machine_goes_idle(void) {
+  submit(Command::FEED);
+  TEST_ASSERT_EQUAL_INT(Command::FEED, etkt->createStatus().currentCommand);
+
+  etkt->loop();
+
+  const StatusUpdate status = etkt->createStatus();
+  TEST_ASSERT_EQUAL_INT(Command::IDLE, status.currentCommand);
+  // One feed is 4 mm off the roll, and the panel's tape gauge reads it here.
+  TEST_ASSERT_EQUAL_UINT32(1, status.roll.feedsUsed);
+}
+
+// A run of labels, start to finish. Each label of "AB" is seven feeds --
+// the lead, one per character, and four more to make it long enough to
+// hold -- and the tape gauge counts every one.
+void test_a_finished_run_shows_finished_and_records_no_stop(void) {
+  submitTag("AB", 2);
+
+  etkt->loop();
+
+  const StatusUpdate status = etkt->createStatus();
+  TEST_ASSERT_EQUAL_INT(Command::IDLE, status.currentCommand);
+  TEST_ASSERT_EQUAL_UINT32(14, status.roll.feedsUsed);
+  TEST_ASSERT_EQUAL_INT(Command::IDLE, status.stopped.command);
+  const DisplayCall* progress = display->last(DisplayCall::RENDER_PROGRESS);
+  TEST_ASSERT_EQUAL_INT(2, progress->copy);
+  TEST_ASSERT_EQUAL_INT(2, progress->copies);
+  const std::vector<Screen> screens = display->screens();
+  TEST_ASSERT_EQUAL_INT(1, (int)screens.size());
+  TEST_ASSERT_EQUAL_INT((int)Screen::FINISHED, (int)screens[0]);
+  TEST_ASSERT_FALSE(display->last(DisplayCall::RENDER_IDLE)->stopped);
+}
+
+// What the panel shows while a run prints: which label of how many, and
+// how far into it. The panel polls once a second and can land anywhere, so
+// every status the run reports has to make sense -- "label 0 of 3" while
+// the press settles did not.
+void test_a_run_reports_which_label_it_is_on_and_how_far_into_it(void) {
+  submitTag("AB", 3);
+  static std::vector<std::pair<int, int>> seen;
+  static int wrongCopies;
+  seen.clear();
+  wrongCopies = 0;
+  stubAfterDelay() = [] {
+    const StatusUpdate status = etkt->createStatus();
+    if (status.currentCommand != Command::TAG) {
+      return;
+    }
+    if (status.copies != 3) {
+      wrongCopies++;
+    }
+    const std::pair<int, int> now(status.copy, status.progress);
+    if (seen.empty() || seen.back() != now) {
+      seen.push_back(now);
+    }
+  };
+
+  etkt->loop();
+
+  TEST_ASSERT_EQUAL_INT(0, wrongCopies);
+  // Half of "AB" is 50%. A finished label reads 99 rather than 100 until
+  // the run is over, so the bar never says done while the press still moves.
+  const int expected[][2] = {{1, 0},  {1, 50}, {1, 99}, {2, 0}, {2, 50},
+                             {2, 99}, {3, 0},  {3, 50}, {3, 99}};
+  const size_t count = sizeof(expected) / sizeof(expected[0]);
+  TEST_ASSERT_EQUAL_INT((int)count, (int)seen.size());
+  for (size_t i = 0; i < count; i++) {
+    TEST_ASSERT_EQUAL_INT(expected[i][0], seen[i].first);
+    TEST_ASSERT_EQUAL_INT(expected[i][1], seen[i].second);
+  }
+}
+
+// A new roll is declared as it goes in, and threading it through to the
+// cutter is the first tape off it.
+void test_a_reel_loads_a_roll_of_the_declared_length(void) {
+  CommandOptions options;
+  options.command = Command::REEL;
+  options.rollLengthMm = 5000;
+  etkt->submit(options);
+
+  etkt->loop();
+
+  const RollState roll = etkt->createStatus().roll;
+  TEST_ASSERT_EQUAL_UINT32(5000, roll.lengthMm);
+  TEST_ASSERT_EQUAL_UINT32(16, roll.feedsUsed);
+}
+
+// Most rolls are the same length as the last one, so the panel lets the
+// length be left out. The tape fed before the reel was off the old roll.
+void test_a_reel_without_a_length_takes_the_last_roll_length(void) {
+  CommandOptions options;
+  options.command = Command::REEL;
+  options.rollLengthMm = 5000;
+  etkt->submit(options);
+  etkt->loop();
+  submit(Command::FEED);
+  etkt->loop();
+
+  submit(Command::REEL);
+  etkt->loop();
+
+  const RollState roll = etkt->createStatus().roll;
+  TEST_ASSERT_EQUAL_UINT32(5000, roll.lengthMm);
+  TEST_ASSERT_EQUAL_UINT32(16, roll.feedsUsed);
+}
+
+// Saving is the one job that ends in a reboot. The calibration has to be in
+// the EEPROM before the restart, or the machine comes back up without it.
+void test_saving_stores_the_calibration_and_reboots(void) {
+  CommandOptions options;
+  options.command = Command::SAVE;
+  options.align = 7;
+  options.force = 3;
+  etkt->submit(options);
+
+  etkt->loop();
+
+  const DisplayCall* saved = display->last(DisplayCall::RENDER_SAVED);
+  TEST_ASSERT_NOT_NULL(saved);
+  TEST_ASSERT_EQUAL_INT(7, saved->align);
+  TEST_ASSERT_EQUAL_INT(3, saved->force);
+  TEST_ASSERT_EQUAL_INT((int)Screen::REBOOTING, (int)display->screens().back());
+  TEST_ASSERT_EQUAL_INT(1, stubRestarts());
+  // What the machine reads when it comes back up.
+  Settings rebooted(logger);
+  rebooted.initialize();
+  TEST_ASSERT_EQUAL_INT(7, rebooted.getAlignFactor());
+  TEST_ASSERT_EQUAL_INT(3, rebooted.getForceFactor());
+}
+
+// A job is one at a time. A second tap while the first job waits its turn
+// must not replace it: the first tap is the one the operator is watching.
+void test_a_second_job_is_refused_while_one_is_queued(void) {
+  submit(Command::FEED);
+
+  TEST_ASSERT_TRUE(refused(Command::CUT));
+  TEST_ASSERT_EQUAL_INT(Command::FEED, etkt->createStatus().currentCommand);
+
+  etkt->loop();
+  TEST_ASSERT_FALSE(refused(Command::CUT));
+  etkt->loop();
+}
+
+// --- stopping -------------------------------------------------------------
+
+// A tap on stop can race the end of the job it was meant for. Arriving to
+// find nothing running is not an error, and the stop must not lie in wait
+// for the next job, which nobody asked to stop.
+void test_a_stop_with_nothing_running_stops_nothing_later(void) {
+  TEST_ASSERT_EQUAL_INT((int)StopResult::IDLE, (int)etkt->stop());
+  TEST_ASSERT_EQUAL_INT((int)StopResult::IDLE, (int)etkt->stopAfterLabel());
+
+  submit(Command::FEED);
+  etkt->loop();
+
+  const StatusUpdate status = etkt->createStatus();
+  TEST_ASSERT_EQUAL_INT(Command::IDLE, status.stopped.command);
+  TEST_ASSERT_EQUAL_UINT32(1, status.roll.feedsUsed);
+}
+
+// Saving writes the calibration and reboots. Nothing moves, and a save cut
+// off partway would leave half a calibration behind, so it is refused.
+void test_saving_cannot_be_stopped(void) {
+  CommandOptions options;
+  options.command = Command::SAVE;
+  options.align = 7;
+  options.force = 3;
+  etkt->submit(options);
+
+  TEST_ASSERT_EQUAL_INT((int)StopResult::UNSTOPPABLE, (int)etkt->stop());
+  TEST_ASSERT_EQUAL_INT((int)PendingStop::NONE, (int)etkt->createStatus().stop);
+
+  etkt->loop();
+  TEST_ASSERT_EQUAL_INT(1, stubRestarts());
+}
+
+// Only a run of labels has a label to stop after. A feed asked to stop
+// after its label would otherwise say "stopping" and then do nothing.
+void test_only_a_run_of_labels_can_stop_after_a_label(void) {
+  submit(Command::FEED);
+
+  TEST_ASSERT_EQUAL_INT((int)StopResult::UNSTOPPABLE,
+                        (int)etkt->stopAfterLabel());
+  TEST_ASSERT_EQUAL_INT((int)PendingStop::NONE, (int)etkt->createStatus().stop);
+
+  etkt->loop();
+}
+
+// The emergency stop. It lands between two steps of the wheel, partway into
+// the first label of three, and the panel is then told what was cut short:
+// no label finished, and one begun and left on the tape for the operator to
+// cut off before the next.
+void test_a_run_stopped_partway_through_a_label_leaves_it_on_the_tape(void) {
+  submitTag("AB", 3);
+  // After the lead feed, so the tape has moved: the wheel is on its way to
+  // the first character.
+  charStepper->afterStep = [] {
+    if (feeder->feeds() > 0) {
+      etkt->stop();
+    }
+  };
+
+  etkt->loop();
+
+  const StatusUpdate status = etkt->createStatus();
+  TEST_ASSERT_EQUAL_INT(Command::IDLE, status.currentCommand);
+  TEST_ASSERT_EQUAL_INT(Command::TAG, status.stopped.command);
+  TEST_ASSERT_EQUAL_INT(0, status.stopped.printed);
+  TEST_ASSERT_EQUAL_INT(3, status.stopped.copies);
+  TEST_ASSERT_TRUE(status.stopped.unfinished);
+  // The press never left rest: nothing came down on a character the wheel
+  // never reached.
+  TEST_ASSERT_EQUAL_INT(REST_ANGLE, pressServo->minAngle());
+  TEST_ASSERT_TRUE(display->last(DisplayCall::RENDER_IDLE)->stopped);
+}
+
+// The panel's stop button says which stop is on its way. A stop now
+// overtakes a stop after the label: an operator who asked for the gentle
+// one and then saw something go wrong gets the hard one.
+void test_a_stop_now_overtakes_a_stop_after_the_label(void) {
+  submitTag("AB", 3);
+
+  TEST_ASSERT_EQUAL_INT((int)StopResult::STOPPING, (int)etkt->stopAfterLabel());
+  TEST_ASSERT_EQUAL_INT((int)PendingStop::AFTER_LABEL,
+                        (int)etkt->createStatus().stop);
+  TEST_ASSERT_EQUAL_INT((int)StopResult::STOPPING, (int)etkt->stop());
+  TEST_ASSERT_EQUAL_INT((int)PendingStop::NOW, (int)etkt->createStatus().stop);
+
+  etkt->loop();
+
+  const StatusUpdate status = etkt->createStatus();
+  TEST_ASSERT_EQUAL_INT(Command::TAG, status.stopped.command);
+  TEST_ASSERT_EQUAL_INT((int)PendingStop::NONE, (int)status.stop);
+}
+
+// A run that is going fine and is longer than it needs to be. The label
+// being pressed is finished and cut, and nothing more is fed. It is a
+// finish, not a stop: nothing was cut short, so there is nothing for the
+// panel to explain.
+void test_a_run_stopped_after_a_label_finishes_that_label_only(void) {
+  submitTag("AB", 3);
+  stubAfterDelay() = [] {
+    if (etkt->createStatus().copy == 1) {
+      etkt->stopAfterLabel();
+    }
+  };
+
+  etkt->loop();
+
+  const StatusUpdate status = etkt->createStatus();
+  TEST_ASSERT_EQUAL_UINT32(7, status.roll.feedsUsed);
+  TEST_ASSERT_EQUAL_INT(1, display->last(DisplayCall::RENDER_PROGRESS)->copy);
+  TEST_ASSERT_EQUAL_INT(Command::IDLE, status.stopped.command);
+  TEST_ASSERT_EQUAL_INT((int)Screen::FINISHED, (int)display->screens().back());
+  TEST_ASSERT_FALSE(display->last(DisplayCall::RENDER_IDLE)->stopped);
+}
+
+// A stop that arrives once the last label is cut is too late to cut
+// anything short, but the operator still asked for the machine to stop. It
+// ends the four seconds of blinking that say the run is done, and the
+// panel is told the run finished.
+void test_a_stop_during_the_finish_ends_the_celebration(void) {
+  submitTag("AB", 1);
+  stubAfterDelay() = [] {
+    if (display->countOf(DisplayCall::RENDER) > 0) {
+      etkt->stop();
+    }
+  };
+
+  etkt->loop();
+
+  const StatusUpdate status = etkt->createStatus();
+  TEST_ASSERT_EQUAL_INT(Command::IDLE, status.stopped.command);
+  const DisplayCall* idle = display->last(DisplayCall::RENDER_IDLE);
+  TEST_ASSERT_FALSE(idle->stopped);
+  // The whole celebration takes 4.2 s.
+  unsigned long finishedAt = 0;
+  for (size_t i = 0; i < display->calls.size(); i++) {
+    if (display->calls[i].kind == DisplayCall::RENDER) {
+      finishedAt = display->calls[i].atMs;
+    }
+  }
+  TEST_ASSERT_LESS_THAN_UINT32(500, idle->atMs - finishedAt);
+}
+
+// The panel goes on saying a job was stopped until a new job is accepted,
+// so a phone that was not watching still hears about it -- but only until
+// then.
+void test_the_next_job_clears_the_last_stop(void) {
+  submitTag("AB", 3);
+  etkt->stop();
+  etkt->loop();
+  TEST_ASSERT_EQUAL_INT(Command::TAG, etkt->createStatus().stopped.command);
+
+  submit(Command::FEED);
+
+  TEST_ASSERT_EQUAL_INT(Command::IDLE, etkt->createStatus().stopped.command);
+  etkt->loop();
+}
+
+int main(int, char**) {
+  UNITY_BEGIN();
+  RUN_TEST(test_a_submitted_feed_runs_and_the_machine_goes_idle);
+  RUN_TEST(test_a_finished_run_shows_finished_and_records_no_stop);
+  RUN_TEST(test_a_run_reports_which_label_it_is_on_and_how_far_into_it);
+  RUN_TEST(test_a_reel_loads_a_roll_of_the_declared_length);
+  RUN_TEST(test_a_reel_without_a_length_takes_the_last_roll_length);
+  RUN_TEST(test_saving_stores_the_calibration_and_reboots);
+  RUN_TEST(test_a_second_job_is_refused_while_one_is_queued);
+  RUN_TEST(test_a_stop_with_nothing_running_stops_nothing_later);
+  RUN_TEST(test_saving_cannot_be_stopped);
+  RUN_TEST(test_only_a_run_of_labels_can_stop_after_a_label);
+  RUN_TEST(test_a_run_stopped_partway_through_a_label_leaves_it_on_the_tape);
+  RUN_TEST(test_a_stop_now_overtakes_a_stop_after_the_label);
+  RUN_TEST(test_a_run_stopped_after_a_label_finishes_that_label_only);
+  RUN_TEST(test_a_stop_during_the_finish_ends_the_celebration);
+  RUN_TEST(test_the_next_job_clears_the_last_stop);
+  return UNITY_END();
+}

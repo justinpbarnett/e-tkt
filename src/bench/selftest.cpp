@@ -13,7 +13,6 @@
 
 #include <Arduino.h>
 
-#include "Characters.h"
 #include "Configuration.h"
 #include "Light.h"
 #include "Logger.h"
@@ -21,17 +20,15 @@
 #include "StopSignal.h"
 
 Logger* logger = new Logger();
-Characters* characters = new Characters();
 // Nothing raises it here. Sound and Light take one because a job can stop
 // them.
 StopSignal* stopSignal = new StopSignal();
-Sound* sound = new Sound(characters, stopSignal);
+Sound* sound = new Sound(stopSignal);
 Light* ledChar = new Light(CHARACTER_LED_PIN, stopSignal);
 Light* ledFinish = new Light(FINISH_LED_PIN, stopSignal);
 
 void setup() {
   logger->initialize();
-  characters->initialize();
   ledFinish->initialize();
   ledChar->initialize();
   sound->initialize();

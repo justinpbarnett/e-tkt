@@ -1,13 +1,12 @@
 #include "ETKT.h"
 
 #include <Arduino.h>
-#include <FreeRTOS.h>
 
-#include <map>
+#include <chrono>
+#include <condition_variable>
 #include <mutex>
-#include <thread>
 
-#include "Characters.h"
+#include "CharacterSet.h"
 #include "Configuration.h"
 #include "DaisyWheel.h"
 #include "Display.h"
@@ -22,6 +21,7 @@
 #include "Sound.h"
 #include "StopSignal.h"
 #include "Tape.h"
+#include "Utility.h"
 
 // How the finish LED celebrates a finished label: five half-brightness
 // flashes, then a slow fade to dark. Timings, not shapes -- Light owns what a
@@ -109,10 +109,10 @@ const char* commandName(Command command) {
   return spec == NULL ? "unknown" : spec->name;
 }
 
-ETKT::ETKT(Logger* logger, Settings* settings, Characters* characters,
-           Display* display, DaisyWheel* daisywheel, HallSwitch* hall,
-           Feeder* feeder, Roll* roll, Press* press, Sound* sound,
-           Light* ledFinish, Light* ledChar, StopSignal* stopSignal) {
+ETKT::ETKT(Logger* logger, Settings* settings, Display* display,
+           DaisyWheel* daisywheel, HallSwitch* hall, Feeder* feeder, Roll* roll,
+           Press* press, Sound* sound, Light* ledFinish, Light* ledChar,
+           StopSignal* stopSignal) {
   // Upstream never assigned this one, and initialize() dereferences it on its
   // first line. It only ever worked because Logger holds no state, so the
   // uninitialised pointer was never actually read through.
@@ -127,7 +127,6 @@ ETKT::ETKT(Logger* logger, Settings* settings, Characters* characters,
   this->sound = sound;
   this->ledFinish = ledFinish;
   this->ledChar = ledChar;
-  this->characters = characters;
   this->stopSignal = stopSignal;
 
   this->command = NULL;
@@ -138,8 +137,6 @@ ETKT::ETKT(Logger* logger, Settings* settings, Characters* characters,
   // Nothing has fed yet, so there is nothing to charge.
   this->accountedFeeds = 0;
   this->feedsAtLastCut = 0;
-  this->lock = new std::mutex();
-  this->eventGroup = xEventGroupCreate();
 }
 
 ETKT::~ETKT() {
@@ -148,7 +145,6 @@ ETKT::~ETKT() {
 
 void ETKT::initialize() {
   this->logger->initialize();
-  this->characters->initialize();
   this->ledFinish->initialize();
   this->ledChar->initialize();
   this->sound->initialize();
@@ -174,7 +170,7 @@ StatusUpdate ETKT::createStatus() {
   // held together, which is the easy way never to take them in two orders.
   status.roll = this->roll->state();
 
-  this->lock->lock();
+  this->lock.lock();
   if (this->command != NULL) {
     status.currentCommand = this->command->command;
     status.currentLabel = this->command->label;
@@ -191,7 +187,7 @@ StatusUpdate ETKT::createStatus() {
     }
   }
   status.stopped = this->lastStopped;
-  this->lock->unlock();
+  this->lock.unlock();
 
   return status;
 }
@@ -203,50 +199,50 @@ void ETKT::submit(const CommandOptions& options) {
   // the caller's copy exactly as it found it.
   CommandOptions* queued = new CommandOptions(options);
 
-  this->lock->lock();
+  this->lock.lock();
   if (this->command != NULL) {
-    this->lock->unlock();
+    this->lock.unlock();
     delete queued;
     throw PrinterBusyException();
   }
   this->command = queued;
   // A new job, so the last one's stop is old news.
   this->lastStopped = StoppedCommand();
-  xEventGroupSetBits(this->eventGroup, BIT0);
-  this->lock->unlock();
+  this->queued.notify_one();
+  this->lock.unlock();
 }
 
 StopResult ETKT::stop() {
-  this->lock->lock();
+  this->lock.lock();
   if (this->command == NULL) {
-    this->lock->unlock();
+    this->lock.unlock();
     return StopResult::IDLE;
   }
   if (this->command->command == Command::SAVE) {
-    this->lock->unlock();
+    this->lock.unlock();
     return StopResult::UNSTOPPABLE;
   }
   // Under the lock, so the stop can only land on the command it was meant
   // for: loop() clears it under the same lock as it lets that command go.
   this->stopSignal->raise();
-  this->lock->unlock();
+  this->lock.unlock();
 
   this->logger->log("Stopping now");
   return StopResult::STOPPING;
 }
 
 StopResult ETKT::stopAfterLabel() {
-  this->lock->lock();
+  this->lock.lock();
   if (this->command == NULL) {
-    this->lock->unlock();
+    this->lock.unlock();
     return StopResult::IDLE;
   }
   if (this->command->command != Command::TAG) {
-    this->lock->unlock();
+    this->lock.unlock();
     return StopResult::UNSTOPPABLE;
   }
   this->stoppingAfterLabel = true;
-  this->lock->unlock();
+  this->lock.unlock();
 
   this->logger->log("Stopping after this label");
   return StopResult::STOPPING;
@@ -290,22 +286,23 @@ void ETKT::cutAt(int force) {
 }
 
 void ETKT::loop() {
-  // Wait for the signal, with a timeout of 500 ms just in case.
-  xEventGroupWaitBits(eventGroup, BIT0, pdTRUE, pdFALSE,
-                      500 / portTICK_PERIOD_MS);
+  // Wait for a command, with a timeout of 500 ms just in case. The wait
+  // checks the slot before it sleeps, so a command queued before loop() got
+  // here is taken at once rather than half a second late.
+  std::unique_lock<std::mutex> guard(this->lock);
+  this->queued.wait_for(guard, std::chrono::milliseconds(500),
+                        [this] { return this->command != NULL; });
 
-  // check for a command, and take a copy of which one it is while the lock
-  // is held. Only this function ever clears the slot, so reading it again
-  // after the unlock would in fact be safe today -- but that is a fact about
-  // the rest of the class, not about this code, and the next writer to the
-  // slot would silently break it. The enum is two bytes; copy it out.
-  this->lock->lock();
+  // Take a copy of which command it is while the lock is held. Only this
+  // function ever clears the slot, so reading it again after the unlock
+  // would in fact be safe today -- but that is a fact about the rest of the
+  // class, not about this code, and the next writer to the slot would
+  // silently break it. The enum is two bytes; copy it out.
   if (this->command == NULL) {
-    this->lock->unlock();
     return;
   }
   const Command running = this->command->command;
-  this->lock->unlock();
+  guard.unlock();
 
   // Do the task. The command's row says which handler to run. A command with
   // no row at all is a bug worth hearing about; a row with no handler is
@@ -342,7 +339,7 @@ void ETKT::loop() {
   this->feeder->deenergize();
   this->display->renderIdle(stopped);
 
-  this->lock->lock();
+  this->lock.lock();
   if (stopped) {
     StoppedCommand record;
     record.command = running;
@@ -364,7 +361,7 @@ void ETKT::loop() {
   this->stoppingAfterLabel = false;
   // Down again before the slot opens, so no stop outlives its command.
   this->stopSignal->clear();
-  this->lock->unlock();
+  this->lock.unlock();
 }
 
 void ETKT::feedCommandInternal() {
@@ -507,6 +504,12 @@ void ETKT::tagCommandInternal() {
   auto label = this->command->label;
   label.toUpperCase();
   const int copies = this->command->copies;
+  // On its first label from the start, not from its first feed. The panel
+  // polls throughout, and "label 0 of 3" while the press settles is nothing
+  // an operator can make sense of.
+  this->lock.lock();
+  this->copy = 1;
+  this->lock.unlock();
   // enables servo
   this->press->rest();
   delay(500);
@@ -526,10 +529,10 @@ void ETKT::tagCommandInternal() {
 
   this->feedsAtLastCut = this->feeder->feeds();
   for (int copy = 1; copy <= copies; copy++) {
-    this->lock->lock();
+    this->lock.lock();
     this->copy = copy;
     this->progress = 0;
-    this->lock->unlock();
+    this->lock.unlock();
 
     this->display->renderProgress(0, label, copy, copies);
 
@@ -547,9 +550,9 @@ void ETKT::tagCommandInternal() {
       break;
     }
     this->feedsAtLastCut = this->feeder->feeds();
-    this->lock->lock();
+    this->lock.lock();
     this->printed = copy;
-    this->lock->unlock();
+    this->lock.unlock();
     if (copy == copies) {
       break;
     }
@@ -561,9 +564,9 @@ void ETKT::tagCommandInternal() {
       break;
     }
     // Only ever read here. See stopAfterLabel().
-    this->lock->lock();
+    this->lock.lock();
     const bool afterThisLabel = this->stoppingAfterLabel;
-    this->lock->unlock();
+    this->lock.unlock();
     if (afterThisLabel) {
       this->logger->log(String("Stopped after ") + copy + " of " + copies);
       break;
@@ -640,9 +643,9 @@ void ETKT::printLabel(const String& label, int labelLength, int copy,
 
     this->display->renderProgress(i + 1, label, copy, copies);
 
-    this->lock->lock();
+    this->lock.lock();
     this->progress = progressPercent(i + 1, labelLength);
-    this->lock->unlock();
+    this->lock.unlock();
   }
 
   if (this->stopSignal->shouldStop()) {

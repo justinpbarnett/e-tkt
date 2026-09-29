@@ -15,6 +15,27 @@
 // it did the only way to find out was to print a label and read it.
 extern const std::map<String, int> CHARACTERS;
 
+// How many slots the wheel has, the cut mark among them. Every CHARACTERS
+// entry names a slot below this, and every slot below it has an entry.
+constexpr int WHEEL_SLOT_COUNT = 43;
+
+/**
+ * @brief The slot on the wheel that prints `character`, or -1 when the wheel
+ * does not carry it.
+ *
+ * A space is -1 too: it is the feeder advancing, not a slot.
+ */
+int wheelSlot(const String& character);
+
+/**
+ * @brief The note `character` sounds in a label's tune, in Hz, or 0 when it
+ * has none.
+ *
+ * A note belongs to a slot, so a 0 sounds like the O it prints as. The cut
+ * mark and anything the wheel does not carry have no note.
+ */
+int characterNote(const String& character);
+
 // The wheel drives here to cut. It is a position on the wheel rather than
 // anything a label says, so it is the one CHARACTERS entry a label may not
 // contain.

@@ -5,6 +5,9 @@
 #include <map>
 
 #include "Utility.h"
+// Last: it defines one- and two-letter macros such as A4 and E5, which would
+// turn any later header that uses those names into nonsense.
+#include "pitches.h"
 
 // One copy, in one translation unit. These used to live in Characters.h, and
 // a const map at namespace scope in a header is a separate object in every
@@ -19,6 +22,26 @@ const std::map<String, int> CHARACTERS = {
     {"♪", 40}, {"€", 41}, {"@", 42}};
 
 const std::map<String, String> CHARACTER_ALIASES = {{"0", "O"}, {"1", "I"}};
+
+// The note each slot sounds, indexed by slot. The cut mark's slot has none.
+static const int NOTES[] = {G4, G6, A4, D4, E4, F4, G5, A5, B5, C5, D5,
+                            0,  E5, F5, C6, D6, E6, F6, A6, B6, C4, C7,
+                            D7, E7, F7, G7, B4, A7, B7, C8, D8, C3, D3,
+                            E3, F3, G3, A3, B3, E2, F2, G2, A2, B2};
+
+static_assert(sizeof(NOTES) / sizeof(NOTES[0]) == WHEEL_SLOT_COUNT,
+              "every wheel slot needs a note in NOTES");
+
+int wheelSlot(const String& character) {
+  const std::map<String, int>::const_iterator found =
+      CHARACTERS.find(character);
+  return found == CHARACTERS.end() ? -1 : found->second;
+}
+
+int characterNote(const String& character) {
+  const int slot = wheelSlot(character);
+  return slot < 0 ? 0 : NOTES[slot];
+}
 
 // The one rule, so that the list served to the webapp and the check the
 // device runs on an incoming label cannot drift apart. A space earns its

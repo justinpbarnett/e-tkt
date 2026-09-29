@@ -1,13 +1,9 @@
 #pragma once
 
 #include <Arduino.h>
-#include <ESP32Tone.h>
 
-#include "Characters.h"
 #include "Configuration.h"
 #include "StopSignal.h"
-#include "Utility.h"
-#include "pitches.h"  // list of notes and their frequencies
 
 #define NOTE_DURATION_MAX 100
 #define NOTE_DURATION_MIN 20
@@ -19,11 +15,10 @@
  */
 class Sound {
  private:
-  Characters* characters;
   StopSignal* stop;
 
  public:
-  Sound(Characters* characters, StopSignal* stop);
+  Sound(StopSignal* stop);
   ~Sound();
 
   /**

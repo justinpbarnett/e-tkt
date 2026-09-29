@@ -1,20 +1,6 @@
 #pragma once
 
 #include <Arduino.h>
-#include <U8g2lib.h>
-#include <qrcode.h>
-
-#include "Characters.h"
-#include "Configuration.h"
-#include "Sound.h"
-#include "Utility.h"
-#include "etktLogo.h"
-
-#define SCREEN_WIDTH 128
-#define SCREEN_HEIGHT 64
-
-const String STARTUP_MELODY = "  E.TKT ";
-const String AUTHOR_SIGNATURE = "andrei.cc";
 
 // How long the two confirmation screens stay up before whatever comes next
 // replaces them. These used to be delay() calls inside the renderers, which
@@ -27,7 +13,7 @@ const String AUTHOR_SIGNATURE = "andrei.cc";
  *
  * Every one of these was its own public method with the same nine lines
  * inside it and a different word in the middle. They are data now: the table
- * in Display.cpp holds the word, the icon and where both sit, and one
+ * in OledDisplay.cpp holds the word, the icon and where both sit, and one
  * renderer draws all of them. Adding a screen is a row in that table.
  *
  * The two screens that carry values -- the idle screen and the save
@@ -46,49 +32,22 @@ enum class Screen {
 };
 
 /**
- * Renders various screens on the OLED device, such as printing progress,
- * boot splash animation, QR Code, etc. It's hard coded to use a 128x64 OLED,
- * but could be sub-classed to use different sized screens.
+ * @brief What the machine shows on its own screen, told in terms of the job
+ * rather than of pixels.
+ *
+ * An interface, so the job runner can be built and tested off the board. Two
+ * adapters sit behind it: OledDisplay, which draws on the 128x64 OLED the
+ * machine carries, and FakeDisplay in test/fakes, which records what it was
+ * asked to show.
  */
 class Display {
- private:
-  // Handed in and not owned, like every other driver -- see LabelMaker.cpp.
-  // This one keeps its concrete type rather than getting an interface of its
-  // own. U8G2 has upwards of thirty methods that Display reaches for, no
-  // second adapter is in prospect, and a thirty-method interface with one
-  // implementation behind it buys nothing. The seam here is where the screen
-  // gets built, not a place to substitute a different one.
-  U8G2_SSD1306_128X64_NONAME_F_HW_I2C* u8g2;
-  Characters* characters;
-  Sound* sound;
-  const int QRcode_Version = 3;  //  set the version (range 1->40)
-  const int QRcode_ECC =
-      2;  //  set the Error Correction level (range 0-3) or symbolic (ECC_LOW,
-          //  ECC_MEDIUM, ECC_QUARTILE and ECC_HIGH)
-  QRCode* qrcode = new QRCode();  //  create the QR code
-  String ssid = "";
-  String ip = "";
-
-  /**
-   * @brief Paints every pixel the given colour and leaves the draw colour set
-   * to its opposite, so whatever is drawn next shows up against it.
-   *
-   * Private: every screen in this class starts with it and nothing outside
-   * has ever called it.
-   */
-  void clear(int color = 0);
-
  public:
-  Display(Sound* sound, Characters* characters,
-          U8G2_SSD1306_128X64_NONAME_F_HW_I2C* u8g2);
-  ~Display();
-  void initialize();
+  virtual ~Display() {}
 
   /**
-   * Renders the E-TKT logo, and plays the startup melody.  Blocks until the
-   * animation is complete.
+   * @brief Starts the screen and blanks it.
    */
-  void playSplashScreen();
+  virtual void initialize() = 0;
 
   /**
    * @brief Shows one of the fixed screens and returns as soon as it is on the
@@ -99,7 +58,7 @@ class Display {
    * and the caller does the waiting, because how long a person stares at a
    * confirmation is not something a renderer should decide.
    */
-  void render(Screen screen);
+  virtual void render(Screen screen) = 0;
 
   /**
    * @brief Renders the screen the machine shows most often, when it is idle:
@@ -111,16 +70,16 @@ class Display {
    *        over. An operator looking at the machine rather than the panel can
    *        tell a label that was cut short from one that finished.
    */
-  void renderIdle(bool stopped = false);
+  virtual void renderIdle(bool stopped) = 0;
 
   /**
-   * Updates network info for display on the idle screen.
+   * @brief Updates the network the idle screen names and the address it
+   * shows, for the next time it is drawn.
    */
-  void setConnectionInfo(String ip, String ssid);
+  virtual void setConnectionInfo(const String& ip, const String& ssid) = 0;
 
   /**
-   * Renders print progress on the screen, for use in the middle of printing a
-   * label.
+   * @brief Renders print progress, for use in the middle of printing a label.
    *
    * @param charactersDone how many characters have finished pressing. A
    *        count, not an index, and the same number ETKT feeds to
@@ -130,8 +89,8 @@ class Display {
    * @param copies how many labels the run is. Above one, the screen says
    *        which of them is being pressed, "3/10", opposite the percentage.
    */
-  void renderProgress(int charactersDone, String label, int copy = 1,
-                      int copies = 1);
+  virtual void renderProgress(int charactersDone, const String& label, int copy,
+                              int copies) = 0;
 
   /**
    * @brief Renders the save confirmation, showing the two values that were
@@ -141,5 +100,5 @@ class Display {
    * that carries numbers. Returns immediately; the caller waits
    * SAVED_SCREEN_MS.
    */
-  void renderSaved(int align, int force);
+  virtual void renderSaved(int align, int force) = 0;
 };

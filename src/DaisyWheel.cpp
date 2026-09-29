@@ -1,7 +1,7 @@
 #include "DaisyWheel.h"
 
 #include "Arduino.h"
-#include "Characters.h"
+#include "CharacterSet.h"
 #include "Configuration.h"
 #include "Drivers.h"
 #include "HallSwitch.h"
@@ -10,12 +10,10 @@
 #include "Settings.h"
 #include "StopSignal.h"
 
-DaisyWheel::DaisyWheel(Logger* logger, HallSwitch* hall, Characters* characters,
-                       Settings* settings, StepperDriver* stepper,
-                       StopSignal* stop) {
+DaisyWheel::DaisyWheel(Logger* logger, HallSwitch* hall, Settings* settings,
+                       StepperDriver* stepper, StopSignal* stop) {
   this->logger = logger;
   this->hall = hall;
-  this->characters = characters;
   this->settings = settings;
   this->stepper = stepper;
   this->stop = stop;
@@ -26,8 +24,7 @@ DaisyWheel::~DaisyWheel() {
 }
 
 void DaisyWheel::initialize() {
-  this->stepsPerChar = (float)this->stepsPerRevolution /
-                       this->characters->getWheelCharacterCount();
+  this->stepsPerChar = (float)this->stepsPerRevolution / WHEEL_SLOT_COUNT;
   digitalWrite(PIN_STEPPER_CHAR_ENABLE, HIGH);
   this->stepper->setMaxSpeed(CHARACTER_STEPPER_MAX_SPEED);
   this->stepper->setAcceleration(CHARACTER_STEPPER_MAX_ACCELERATION);
@@ -107,7 +104,7 @@ void DaisyWheel::home(int align) {
   }
   this->stepper->setCurrentPosition(0);
   // Where the wheel now is, asked of the same table every move consults.
-  const int homeChar = this->characters->getCharacterIndex(CHAR_HOME_CHARACTER);
+  const int homeChar = wheelSlot(CHAR_HOME_CHARACTER);
   if (homeChar < 0) {
     // Only reachable if CHAR_HOME_CHARACTER names something the wheel does
     // not carry, which is a build-configuration mistake rather than a
@@ -135,7 +132,7 @@ bool DaisyWheel::move(String c, int alignFactor) {
   // reaches out for a specific character
   logger->log(String("Moving to character ") + c);
   this->stepper->enableOutputs();
-  auto charIndex = this->characters->getCharacterIndex(c);
+  auto charIndex = wheelSlot(c);
   if (charIndex < 0) {
     // Nothing on the wheel prints this. Drop the coil current on the way out:
     // the enableOutputs() above has the motor holding position for a move
@@ -162,7 +159,7 @@ bool DaisyWheel::move(String c, int alignFactor) {
               " and character delta is " + charDelta);
   // matches the character to the list and gets delta steps from home
   while (charDelta < 0) {
-    charDelta += this->characters->getWheelCharacterCount();
+    charDelta += WHEEL_SLOT_COUNT;
   }
 
   if (charDelta == 0) {

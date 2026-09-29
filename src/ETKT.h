@@ -1,13 +1,10 @@
 #pragma once
 
 #include <Arduino.h>
-#include <FreeRTOS.h>
 
-#include <map>
+#include <condition_variable>
 #include <mutex>
-#include <thread>
 
-#include "Characters.h"
 #include "Configuration.h"
 #include "DaisyWheel.h"
 #include "Display.h"
@@ -236,7 +233,6 @@ class ETKT {
   Feeder* feeder;
   Press* press;
   Sound* sound;
-  Characters* characters;
   Roll* roll;
 
   // Device state, which should only ever be modified inside an exclusive lock.
@@ -247,7 +243,11 @@ class ETKT {
                  // running
   bool stoppingAfterLabel;     // see stopAfterLabel()
   StoppedCommand lastStopped;  // see StatusUpdate::stopped
-  std::mutex* lock;
+  std::mutex lock;
+
+  // What loop() waits on for a command, under the lock above. submit()
+  // notifies it as it fills the slot.
+  std::condition_variable queued;
 
   // Raised by stop() and obeyed all the way down, in the wheel, the feeder
   // and the tune. It keeps its own synchronisation, but it is raised and
@@ -264,9 +264,6 @@ class ETKT {
   // them is not taken for theirs. Like accountedFeeds, only ever touched by
   // the command loop.
   long feedsAtLastCut;
-
-  // Event group that the main loop blocks on for new commands.
-  EventGroupHandle_t eventGroup;
 
   /**
    * @brief Cuts the tape at the saved force calibration.
@@ -329,10 +326,10 @@ class ETKT {
   void tagCommandInternal();
 
  public:
-  ETKT(Logger* logger, Settings* settings, Characters* characters,
-       Display* display, DaisyWheel* daisywheel, HallSwitch* hall,
-       Feeder* feeder, Roll* roll, Press* press, Sound* sound, Light* ledFinish,
-       Light* ledChar, StopSignal* stopSignal);
+  ETKT(Logger* logger, Settings* settings, Display* display,
+       DaisyWheel* daisywheel, HallSwitch* hall, Feeder* feeder, Roll* roll,
+       Press* press, Sound* sound, Light* ledFinish, Light* ledChar,
+       StopSignal* stopSignal);
   ~ETKT();
 
   /**

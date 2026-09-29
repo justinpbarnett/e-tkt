@@ -1,7 +1,6 @@
 #pragma once
 
 #include "Arduino.h"
-#include "Characters.h"
 #include "Configuration.h"
 #include "Drivers.h"
 #include "HallSwitch.h"
@@ -21,7 +20,6 @@ class DaisyWheel {
   // Not owned; see LabelMaker.cpp.
   StepperDriver* stepper;
   StopSignal* stop;
-  Characters* characters;
   const int stepsPerRevolution = CHAR_STEP_COUNT * CHAR_MICROSTEPS;
   float stepsPerChar = 0;
   // -1 is "no slot under the press", which is what deenergize() leaves
@@ -38,8 +36,8 @@ class DaisyWheel {
   void lose();
 
  public:
-  DaisyWheel(Logger* logger, HallSwitch* hall, Characters* characters,
-             Settings* settings, StepperDriver* stepper, StopSignal* stop);
+  DaisyWheel(Logger* logger, HallSwitch* hall, Settings* settings,
+             StepperDriver* stepper, StopSignal* stop);
   ~DaisyWheel();
 
   /**

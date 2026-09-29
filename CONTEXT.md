@@ -57,14 +57,18 @@ The panel centres a label by padding a space onto each side before it posts it, 
 `MIN_LABEL_CHARACTERS` and `MAX_LABEL_CHARACTERS` are both bounds on the sent length, because that is what the device receives and checks; the panel subtracts its own margin from the maximum to cap what anyone can type.
 Reading the maximum as a typed length is what first made it 247 and made the device refuse the longest label the panel could produce.
 
-**Character set vs Characters** - two modules with names a letter apart.
-`CharacterSet` is what the *wheel* carries and what a label may say: a map, the aliases, the printable set, and no Arduino display code, so the host tests can reach it.
-`Characters` is what a character *looks and sounds like*: the OLED glyph and font offsets for the four symbols, and the note the sounder plays.
-A label's rules are the first one.
+**Character set** - what the wheel carries and what a label may say: which character sits in which slot, the aliases, the printable set, and the note each slot sounds in a label's tune.
+`CharacterSet`, with no Arduino display code, so the host tests can reach it.
+A second module named `Characters` used to sit a letter away from it, holding the notes and the OLED glyphs.
+The notes belong to the slots, so they moved here, and the glyphs are the screen's business, so they moved into `OledDisplay`.
 
 **Screen** - one of the device's fixed OLED banners: wifi setup, wifi reset, finished, and so on.
-One table says what each one draws, rather than one method each.
-`Display`, `Screen`.
+One table in `OledDisplay.cpp` says what each one draws, rather than one method each.
+`Screen`.
+
+**Display** - what the machine shows on its own screen, told in terms of the job rather than of pixels: a screen, the idle screen, a label's progress, a saved calibration.
+`Display` is an interface with two adapters.
+`OledDisplay` draws on the 128x64 OLED, and `FakeDisplay` in `test/fakes` records what the job runner asked for, and when.
 
 **Progress** - how far through a label the machine is, 0 to 99.
 It stops at 99 rather than 100 because feeding the tail and cutting still have to happen after the last character is pressed.
@@ -113,6 +117,11 @@ A row carries the name the command answers to on the wire, which body fields it 
 It is the single statement of what the commands are: the HTTP routes, the dispatch, the name `/api/status` reports and the simulator's endpoints are all read from it rather than restated.
 A command is added by adding an enumerator and a row.
 
+**Job runner** - `ETKT`, which takes one command at a time and runs it.
+The web server's task hands it a command with `submit()`, into a single slot, and the command loop takes it from there in `loop()`: it runs the command, parks the motors, and empties the slot.
+Every stop rule lives here: what can be stopped, what a stop leaves on the tape, and what the panel is told afterwards.
+It builds and runs on a host against fakes, so `test/test_etkt` checks those rules without a machine or a roll of tape.
+
 **Busy** - a command is running.
 The machine runs one at a time, and a second request is refused with a 409: the request was fine, the machine was not.
 
@@ -149,8 +158,10 @@ The OLED says stopped where it would say ready.
 
 ## Where the parts meet
 
-**Driver seam** - `Drivers.h` declares the servo and stepper interfaces the modules take, so `Press` and `Feeder` can be built against recording fakes on a host and against ESP32Servo and AccelStepper on the board.
-Adapters: `ArduinoDrivers.h` for the device, `test/fakes` for the tests.
+**Driver seam** - `Drivers.h` declares the servo and stepper interfaces the modules take, and `Display.h` the screen's.
+So the job runner and every module it drives build against recording fakes on a host, and against ESP32Servo, AccelStepper and the OLED on the board.
+Adapters: `ArduinoDrivers.h` and `OledDisplay` for the device, `test/fakes` for the tests.
+`test/stubs` stands in for the rest of what the board supplies: the Arduino core, Preferences and the sounder.
 
 **Per-machine calibration** - `Machine.h`.
 The seven numbers that differ between two physically built E-TKTs: the two press angles, the press bite, the hall sensor's polarity and threshold, the align offset, and the feeder direction.

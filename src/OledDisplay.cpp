@@ -1,30 +1,85 @@
-#include "Display.h"
+#include "OledDisplay.h"
 
 #include <Arduino.h>
 #include <U8g2lib.h>
 #include <qrcode.h>
 
-#include "Characters.h"
+#include <map>
+
 #include "Configuration.h"
 #include "Progress.h"
 #include "Sound.h"
 #include "Utility.h"
 #include "etktLogo.h"
 
-Display::Display(Sound* sound, Characters* characters,
-                 U8G2_SSD1306_128X64_NONAME_F_HW_I2C* u8g2) {
-  this->u8g2 = u8g2;
-  this->sound = sound;
-  this->characters = characters;
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+
+namespace {
+
+const String STARTUP_MELODY = "  E.TKT ";
+const String AUTHOR_SIGNATURE = "andrei.cc";
+
+// How one character of a label is drawn on the progress screen: the font,
+// the code of the glyph in it, how wide it is, and how far it sits off the
+// line the rest of the label is drawn on.
+struct FontInfo {
+  const uint8_t* font;
+  int code;
+  int width;
+  int width_offset;
+  int height_offset;
+  bool isSymbol() const { return font != u8g2_font_6x13_te; }
+
+  FontInfo(const uint8_t* font, int code, int width, int width_offset,
+           int height_offset) {
+    this->font = font;
+    this->code = code;
+    this->width = width;
+    this->width_offset = width_offset;
+    this->height_offset = height_offset;
+  }
+};
+
+// For each non-ascii "glyph" character, the font, symbol code, width, x
+// offset and y offset it is drawn with. The offsets align the glyph with the
+// rest of the label text, which comes from a font that spaces differently.
+//
+// Only this screen draws a label, so the table is this file's own. It used
+// to sit in Characters.cpp, which put U8g2 fonts in the way of everything
+// that only wanted to know where a character sits on the wheel.
+const std::map<String, FontInfo> GLYPHS = {
+    {"♡", FontInfo(u8g2_font_6x12_t_symbols, 0x2664, 5, -1, -1)},
+    {"☆", FontInfo(u8g2_font_6x12_t_symbols, 0x2605, 5, -1, -1)},
+    {"♪", FontInfo(u8g2_font_siji_t_6x10, 0xE271, 5, -3, 0)},
+    {"€", FontInfo(u8g2_font_6x12_t_symbols, 0x20AC, 6, -1, -1)}};
+
+// How to draw `character`: its row in GLYPHS, or the label font for
+// everything else.
+FontInfo fontFor(const String& character) {
+  const std::map<String, FontInfo>::const_iterator found =
+      GLYPHS.find(character);
+  if (found == GLYPHS.end()) {
+    return FontInfo(u8g2_font_6x13_te, 0, 7, 0, 0);
+  }
+  return found->second;
 }
 
-Display::~Display() {
+}  // namespace
+
+OledDisplay::OledDisplay(Sound* sound,
+                         U8G2_SSD1306_128X64_NONAME_F_HW_I2C* u8g2) {
+  this->u8g2 = u8g2;
+  this->sound = sound;
+}
+
+OledDisplay::~OledDisplay() {
   // The screen is handed in, not built here, so it is not ours to delete.
   // qrcode is built in the member initialiser above, so it is.
   delete this->qrcode;
 }
 
-void Display::initialize() {
+void OledDisplay::initialize() {
   // starts and sets up the display
   this->u8g2->begin();
   this->u8g2->clearBuffer();
@@ -33,12 +88,12 @@ void Display::initialize() {
   this->clear();
 }
 
-void Display::setConnectionInfo(String ip, String ssid) {
+void OledDisplay::setConnectionInfo(const String& ip, const String& ssid) {
   this->ip = ip;
   this->ssid = ssid;
 }
 
-void Display::clear(int color) {
+void OledDisplay::clear(int color) {
   // Paints every pixel the target colour. This used to be a nested loop
   // calling setDrawColor and drawPixel 8192 times per screen change, which is
   // 16384 calls into U8G2 to fill a buffer that drawBox fills in one.
@@ -52,7 +107,7 @@ void Display::clear(int color) {
   this->u8g2->setFont(u8g2_font_6x13_te);
 }
 
-void Display::playSplashScreen() {
+void OledDisplay::playSplashScreen() {
   // initial start screen
 
   this->initialize();
@@ -101,7 +156,7 @@ void Display::playSplashScreen() {
 // ---------------------------------------------------------------------------
 
 // Everything from here to the end of the table is this file's own. None of
-// it is named in Display.h: the header used to declare the two draw helpers
+// it is named in a header: Display.h used to declare the two draw helpers
 // as members taking `const struct ScreenSpec&`, which gave a purely internal
 // type external linkage and put a type the header cannot see into its
 // interface.
@@ -194,7 +249,7 @@ static_assert(sizeof(SCREEN_SPECS) / sizeof(SCREEN_SPECS[0]) ==
                   static_cast<int>(Screen::REBOOTING) + 1,
               "every Screen needs a row in SCREEN_SPECS");
 
-void Display::render(Screen screen) {
+void OledDisplay::render(Screen screen) {
   const int count = sizeof(SCREEN_SPECS) / sizeof(SCREEN_SPECS[0]);
   for (int i = 0; i < count; i++) {
     if (SCREEN_SPECS[i].screen != screen) {
@@ -217,7 +272,7 @@ void Display::render(Screen screen) {
   // instead of one that went dark.
 }
 
-void Display::renderIdle(bool stopped) {
+void OledDisplay::renderIdle(bool stopped) {
   // main screen with qr code, network and attributed ip
 
   this->clear();
@@ -306,8 +361,8 @@ void Display::renderIdle(bool stopped) {
   delay(1000);
 }
 
-void Display::renderProgress(int charactersDone, String label, int copy,
-                             int copies) {
+void OledDisplay::renderProgress(int charactersDone, const String& label,
+                                 int copy, int copies) {
   this->clear();
 
   // Show "⚙️ PRINTING" header.
@@ -326,7 +381,7 @@ void Display::renderProgress(int charactersDone, String label, int copy,
   // progress bar will be.
   for (int i = 0; i < labelLength; i++) {
     auto character = Utility::utf8CharAt(label, i);
-    auto font = this->characters->getFont(character);
+    auto font = fontFor(character);
     total_width += font.width;
     if (i < charactersDone) {
       progress_width += font.width;
@@ -346,7 +401,7 @@ void Display::renderProgress(int charactersDone, String label, int copy,
   const int y_position = 36;
   for (int i = 0; i < labelLength; i++) {
     auto character = Utility::utf8CharAt(label, i);
-    auto font = this->characters->getFont(character);
+    auto font = fontFor(character);
     this->u8g2->setFont(font.font);
     auto characterX = x_position + font.width_offset - render_offset;
     auto characterY = y_position + font.height_offset;
@@ -404,7 +459,7 @@ void Display::renderProgress(int charactersDone, String label, int copy,
   this->u8g2->sendBuffer();
 }
 
-void Display::renderSaved(int align, int force) {
+void OledDisplay::renderSaved(int align, int force) {
   this->clear(0);
   this->u8g2->setFont(u8g2_font_nine_by_five_nbp_t_all);
   this->u8g2->drawStr(47, 17, "SAVED!");

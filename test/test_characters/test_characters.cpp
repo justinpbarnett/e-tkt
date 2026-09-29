@@ -110,6 +110,65 @@ void test_a_character_with_a_slot_of_its_own_is_not_an_alias(void) {
   TEST_ASSERT_TRUE(CHARACTER_ALIASES.find("2") == CHARACTER_ALIASES.end());
 }
 
+// --- the wheel's slots ---------------------------------------------------
+// The wheel is a fixed part, so how many slots it has and what sits in each
+// are constants. DaisyWheel used to ask a Characters object for both, and
+// got a zero-slot wheel from any object nobody had initialized.
+
+void test_the_wheel_has_forty_three_slots(void) {
+  // Count the petals on the printed wheel: 43, the cut mark among them.
+  TEST_ASSERT_EQUAL_INT(43, WHEEL_SLOT_COUNT);
+}
+
+void test_every_slot_on_the_wheel_carries_a_character(void) {
+  // A slot with nothing in it is a petal nothing can reach, and a slot past
+  // the end sends the wheel round too far.
+  std::set<int> slots;
+  for (std::map<String, int>::const_iterator it = CHARACTERS.begin();
+       it != CHARACTERS.end(); ++it) {
+    TEST_ASSERT_TRUE_MESSAGE(it->second >= 0 && it->second < WHEEL_SLOT_COUNT,
+                             it->first.c_str());
+    slots.insert(it->second);
+  }
+  TEST_ASSERT_EQUAL_INT(WHEEL_SLOT_COUNT, (int)slots.size());
+}
+
+void test_a_character_names_its_slot(void) {
+  // J is where homing parks the wheel, and the cut mark is slot 11.
+  TEST_ASSERT_EQUAL_INT(21, wheelSlot("J"));
+  TEST_ASSERT_EQUAL_INT(11, wheelSlot(CUT_CHARACTER));
+}
+
+void test_a_character_off_the_wheel_has_no_slot(void) {
+  // A space is the feeder advancing, not a slot.
+  TEST_ASSERT_EQUAL_INT(-1, wheelSlot("?"));
+  TEST_ASSERT_EQUAL_INT(-1, wheelSlot(" "));
+}
+
+// --- the tune ------------------------------------------------------------
+
+void test_a_letter_sounds_its_note(void) {
+  // A is E5, 659 Hz, in the layout pitches.h follows.
+  TEST_ASSERT_EQUAL_INT(659, characterNote("A"));
+}
+
+void test_a_zero_sounds_like_the_o_it_prints_as(void) {
+  // Both drive to slot 26, which sounds B4.
+  TEST_ASSERT_EQUAL_INT(494, characterNote("0"));
+  TEST_ASSERT_EQUAL_INT(494, characterNote("O"));
+}
+
+void test_the_cut_mark_has_no_note(void) {
+  // Sound skips a character with no note, so the stars in the pocket
+  // calculator melody add nothing to it.
+  TEST_ASSERT_EQUAL_INT(0, characterNote(CUT_CHARACTER));
+}
+
+void test_a_character_off_the_wheel_has_no_note(void) {
+  TEST_ASSERT_EQUAL_INT(0, characterNote("?"));
+  TEST_ASSERT_EQUAL_INT(0, characterNote(" "));
+}
+
 // --- walking a label -----------------------------------------------------
 // ETKT::tagCommandInternal steps a label with these two. They read the
 // leading byte of each character, and that byte has its high bit set for
@@ -192,6 +251,14 @@ int main(int, char**) {
   RUN_TEST(test_every_alias_prints_something_on_the_wheel);
   RUN_TEST(test_an_alias_shares_the_slot_it_prints_from);
   RUN_TEST(test_a_character_with_a_slot_of_its_own_is_not_an_alias);
+  RUN_TEST(test_the_wheel_has_forty_three_slots);
+  RUN_TEST(test_every_slot_on_the_wheel_carries_a_character);
+  RUN_TEST(test_a_character_names_its_slot);
+  RUN_TEST(test_a_character_off_the_wheel_has_no_slot);
+  RUN_TEST(test_a_letter_sounds_its_note);
+  RUN_TEST(test_a_zero_sounds_like_the_o_it_prints_as);
+  RUN_TEST(test_the_cut_mark_has_no_note);
+  RUN_TEST(test_a_character_off_the_wheel_has_no_note);
   RUN_TEST(test_a_symbol_counts_as_one_character);
   RUN_TEST(test_a_label_of_symbols_and_letters_counts_right);
   RUN_TEST(test_a_symbol_comes_back_whole);
