@@ -7,8 +7,9 @@ from . import Server, firmware
 async def main(device):
     server = Server(device)
     await server.start()
-    while (True):
+    while True:
         await asyncio.sleep(1000)
+
 
 if __name__ == "__main__":
     try:

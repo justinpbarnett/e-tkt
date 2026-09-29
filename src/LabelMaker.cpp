@@ -46,6 +46,7 @@
 #include "Logger.h"
 #include "Network.h"
 #include "Press.h"
+#include "Roll.h"
 #include "Settings.h"
 #include "Sound.h"
 #include "Utility.h"
@@ -80,6 +81,7 @@ Characters* characters = new Characters();
 Sound* sound = new Sound(characters);
 Display* display = new Display(sound, characters, screen);
 Settings* settings = new Settings(logger);
+Roll* roll = new Roll(logger);
 Light* ledFinish = new Light(FINISH_LED_PIN);
 Light* ledChar = new Light(CHARACTER_LED_PIN);
 Press* press = new Press(logger, SERVO_PIN, ledChar, pressServo);
@@ -89,8 +91,9 @@ DaisyWheel* daisywheel =
 Feeder* feeder = new Feeder(logger, feedStepper);
 BenchRigs* benchRigs =
     new BenchRigs(logger, sound, press, feeder, ledChar, ledFinish);
-ETKT* etkt = new ETKT(logger, settings, characters, display, daisywheel, hall,
-                      feeder, press, sound, ledFinish, ledChar, benchRigs);
+ETKT* etkt =
+    new ETKT(logger, settings, characters, display, daisywheel, hall, feeder,
+             roll, press, sound, ledFinish, ledChar, benchRigs);
 Network* network = new Network(logger, display, etkt, WIFI_RESET_PIN);
 
 void setup() {

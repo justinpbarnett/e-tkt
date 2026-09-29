@@ -64,9 +64,9 @@
 #define BENCH_SERVO_TEST false    // teach Machine.h's two press angles
 #define BENCH_HALL_MONITOR false  // rotate and sweep for hall edges
 
-#define ENABLE_SERIAL true   // Enables serial output
-#define ENABLE_OTA false     // Enables OTA updates at http://e-tkt.local/update
-#define DEBUG_WIFI false     // Enables WiFi debugging
+#define ENABLE_SERIAL true  // Enables serial output
+#define ENABLE_OTA false    // Enables OTA updates at http://e-tkt.local/update
+#define DEBUG_WIFI false    // Enables WiFi debugging
 
 /**
  * Hardware Pins
@@ -144,3 +144,43 @@ constexpr int MAX_LABEL_CHARACTERS = 249;
 // further force 9 drives it.
 #define MICROSTEPS_FEED 8
 #define FEED_MOTOR_STEPS_PER_REVOLUTION 4076
+
+/**
+ * The Roll
+ *
+ * Nothing in the machine can see the tape, so how much is left on the roll is
+ * counted rather than measured: the length the roll started at, less every
+ * feed since it went in. These are the numbers that count rests on. The
+ * arithmetic itself is in Tape.h and the running total in Roll.
+ */
+
+// How far one feed moves the tape, in micrometres. A feed is an eighth of a
+// turn of the feed motor (see Feeder::feed), and 4 mm is what that eighth
+// pulls through the feed cog on this design -- the same figure the panel has
+// always used for a label's length.
+//
+// Micrometres so a measured correction can be finer than a whole millimetre.
+// A 3 m roll is 750 feeds, so a tenth of a millimetre out on each one adds
+// up to 75 mm -- two labels -- by the end of the roll.
+constexpr int FEED_LENGTH_UM = 4000;
+
+// What a roll is assumed to hold until somebody says otherwise. A device
+// starts on a roll this long, and a roll loaded without a length is taken to
+// be as long as the last one, so this is every roll until one is given a
+// length. The panel offers it as the usual length of a new roll. 3 m is the
+// common length for 9 mm embossing tape.
+constexpr int DEFAULT_ROLL_LENGTH_MM = 3000;
+
+// The lengths a roll may be declared as when it is loaded, refused outside
+// this at the HTTP boundary. The floor is low enough to declare what is left
+// of a part-used roll, and the ceiling is above any roll this tape is sold
+// on.
+constexpr int ROLL_LENGTH_MIN_MM = 500;
+constexpr int ROLL_LENGTH_MAX_MM = 10000;
+
+// The most labels one request may ask for. Not a limit anyone should meet --
+// the panel's shortest label takes 32 mm of tape, so even the longest roll
+// above holds about 310 -- but without one, a number POSTed straight at
+// /api/tag could keep the machine pressing air for days after the tape ran
+// out.
+constexpr int MAX_COPIES = 500;

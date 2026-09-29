@@ -17,13 +17,20 @@
 #include "Logger.h"
 #include "PressGeometry.h"
 #include "SPIFFS.h"
+#include "Tape.h"
 #include "Utility.h"
 #include "esp_heap_caps.h"
 #include "esp_wifi.h"
 
-Network *Network::instance = NULL;
+Network* Network::instance = NULL;
 
-Network::Network(Logger *logger, Display *display, ETKT *etkt,
+// Room for a status or capabilities reply. ArduinoJson drops a field that
+// does not fit without a word, and at the library's default of 1024 bytes a
+// status carrying the longest label of symbols -- three bytes each -- has
+// room for two more fields.
+static const size_t REPLY_JSON_BYTES = 2048;
+
+Network::Network(Logger* logger, Display* display, ETKT* etkt,
                  uint8_t resetPin) {
   Network::instance = this;
   this->logger = logger;
@@ -39,13 +46,13 @@ Network::~Network() {
   delete dns;
 }
 
-void Network::softAPCallbackStatic(AsyncWiFiManager *manager) {
+void Network::softAPCallbackStatic(AsyncWiFiManager* manager) {
   if (instance) {
     instance->softAPCallback(manager);
   }
 }
 
-void Network::softAPCallback(AsyncWiFiManager *manager) {
+void Network::softAPCallback(AsyncWiFiManager* manager) {
   // captive portal to configure SSID and password
   this->display->render(Screen::WIFI_SETUP);
   this->logger->log(String("SoftAP SSID: ") + manager->getConfigPortalSSID());
@@ -122,14 +129,14 @@ void Network::initialize() {
   // added there gets its endpoint here for free, and cannot get one whose
   // name disagrees with the name /api/status reports for it.
   for (size_t i = 0; i < ETKT::COMMAND_COUNT; i++) {
-    const CommandSpec *spec = &ETKT::COMMANDS[i];
+    const CommandSpec* spec = &ETKT::COMMANDS[i];
     if (spec->run == NULL) {
       // Nothing to run means nothing to post to.
       continue;
     }
     this->server->addHandler(new AsyncCallbackJsonWebHandler(
         String("/api/") + spec->name,
-        [this, spec](AsyncWebServerRequest *request, JsonVariant &json) {
+        [this, spec](AsyncWebServerRequest* request, JsonVariant& json) {
           this->commandPostHandler(spec, request, json);
         }));
   }
@@ -138,6 +145,11 @@ void Network::initialize() {
   this->server->on(
       "/api/status", HTTP_GET,
       std::bind(&Network::statusGetHandler, this, std::placeholders::_1));
+
+  // End a run of labels early. Not in the loop above; see stopPostHandler.
+  this->server->on(
+      "/api/stop", HTTP_POST,
+      std::bind(&Network::stopPostHandler, this, std::placeholders::_1));
 
   // What this device will accept. Fetched once at page load so the webapp
   // does not have to keep its own copy of the rules.
@@ -171,11 +183,11 @@ void Network::initialize() {
 // The last lines the device logged, oldest first. Until this existed the only
 // way to read them was a USB cable and a serial monitor, which is a problem
 // for a machine that is on a bench, on wifi, and printing a label wrong.
-void Network::logGetHandler(AsyncWebServerRequest *request) {
+void Network::logGetHandler(AsyncWebServerRequest* request) {
   request->send(200, "text/plain", this->logger->recent());
 }
 
-void Network::notFoundHandler(AsyncWebServerRequest *request) {
+void Network::notFoundHandler(AsyncWebServerRequest* request) {
   request->send(404, "text/plain", "Not found");
 }
 
@@ -188,10 +200,9 @@ void Network::notFoundHandler(AsyncWebServerRequest *request) {
 // Settings and pressPeakAngle() both clamp as a backstop, but a clamp is
 // silent -- the panel would report success while the machine used a different
 // number than the one on screen.
-static bool readCalibrationField(const JsonObject &request_data,
-                                 const char *field, const char *missingMessage,
-                                 AsyncJsonResponse *response_data,
-                                 int *value) {
+static bool readCalibrationField(const JsonObject& request_data,
+                                 const char* field, const char* missingMessage,
+                                 AsyncJsonResponse* response_data, int* value) {
   const auto response_root = response_data->getRoot();
   if (!request_data.containsKey(field)) {
     response_root["error"] = missingMessage;
@@ -214,10 +225,10 @@ static bool readCalibrationField(const JsonObject &request_data,
 // Reads the body fields this command declares it needs. Returns false with
 // the response already filled in as a 400 if one is missing or out of range,
 // so the caller can stop at the first failure.
-static bool readCommandOptions(const CommandSpec *spec,
-                               const JsonObject &request_data,
-                               AsyncJsonResponse *response_data,
-                               CommandOptions *options) {
+static bool readCommandOptions(const CommandSpec* spec,
+                               const JsonObject& request_data,
+                               AsyncJsonResponse* response_data,
+                               CommandOptions* options) {
   if (spec->usesAlign &&
       !readCalibrationField(request_data, "align",
                             "Please provide an align value", response_data,
@@ -260,6 +271,32 @@ static bool readCommandOptions(const CommandSpec *spec,
       }
     }
   }
+
+  // Optional, unlike the fields above: a body without them asks for what every
+  // body asked for before they existed -- one label, and a new roll as long as
+  // the last.
+  if (spec->usesCopies && request_data.containsKey("copies")) {
+    const int copies = request_data["copies"].as<int>();
+    if (!isValidCopies(copies)) {
+      response_data->getRoot()["error"] =
+          String("Please provide a copies value between 1 and ") + MAX_COPIES +
+          ", got " + copies;
+      response_data->setCode(400);
+      return false;
+    }
+    options->copies = copies;
+  }
+  if (spec->usesRollLength && request_data.containsKey("length_mm")) {
+    const int length = request_data["length_mm"].as<int>();
+    if (!isValidRollLength(length)) {
+      response_data->getRoot()["error"] =
+          String("Please provide a length_mm value between ") +
+          ROLL_LENGTH_MIN_MM + " and " + ROLL_LENGTH_MAX_MM + ", got " + length;
+      response_data->setCode(400);
+      return false;
+    }
+    options->rollLengthMm = length;
+  }
   return true;
 }
 
@@ -267,9 +304,9 @@ static bool readCommandOptions(const CommandSpec *spec,
 // catch block, and the differences that mattered -- which fields the body
 // must carry -- were buried in the sameness. The table in ETKT.cpp holds
 // those differences now and this reads them.
-void Network::commandPostHandler(const CommandSpec *spec,
-                                 AsyncWebServerRequest *request,
-                                 JsonVariant &json) {
+void Network::commandPostHandler(const CommandSpec* spec,
+                                 AsyncWebServerRequest* request,
+                                 JsonVariant& json) {
   const auto request_data = json.as<JsonObject>();
   auto response_data = new AsyncJsonResponse();
   const auto response_root = response_data->getRoot();
@@ -281,14 +318,14 @@ void Network::commandPostHandler(const CommandSpec *spec,
     try {
       this->etkt->submit(options);
       response_root["result"] = "success";
-    } catch (const PrinterBusyException &e) {
+    } catch (const PrinterBusyException& e) {
       // 409, not 400. The request was fine; the machine was not. A caller
       // that gets a 400 has something to fix in what it sent, and retrying
       // the same body would be pointless -- here it is the only sensible
       // thing to do.
       response_root["error"] = e.what();
       response_data->setCode(409);
-    } catch (const std::exception &e) {
+    } catch (const std::exception& e) {
       // Nothing else escapes submit() today. If something does it is the
       // device failing, not the caller.
       response_root["error"] = e.what();
@@ -300,9 +337,9 @@ void Network::commandPostHandler(const CommandSpec *spec,
   request->send(response_data);
 }
 
-void Network::statusGetHandler(AsyncWebServerRequest *request) {
-  AsyncJsonResponse *response = new AsyncJsonResponse();
-  const JsonObject &root = response->getRoot();
+void Network::statusGetHandler(AsyncWebServerRequest* request) {
+  AsyncJsonResponse* response = new AsyncJsonResponse(false, REPLY_JSON_BYTES);
+  const JsonObject& root = response->getRoot();
 
   const StatusUpdate status = this->etkt->createStatus();
   root["progress"] = status.progress;
@@ -315,13 +352,48 @@ void Network::statusGetHandler(AsyncWebServerRequest *request) {
   root["align"] = status.align;
   root["force"] = status.force;
 
-  // Return the current label, if relevant.
+  // Return the current label, if relevant, and where the run of them is.
   if (status.currentCommand == Command::TAG) {
     root["current_label"] = status.currentLabel;
+    root["copy"] = status.copy;
+    root["copies"] = status.copies;
+    root["stopping"] = status.stopping;
   }
+
+  // What is estimated to be left on the roll, busy or not, so the panel can
+  // say how many labels fit before anything has been printed. The panel
+  // works that out; see labelsThatFit() in Tape.h.
+  const JsonObject roll = root.createNestedObject("roll");
+  roll["length_mm"] = status.roll.lengthMm;
+  roll["remaining_mm"] =
+      (long)remainingMm(status.roll.lengthMm, status.roll.feedsUsed);
   root["mem_heap_free_bytes"] = heap_caps_get_free_size(MALLOC_CAP_8BIT);
-  root["mem_largest_free_block_bytes"] = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+  root["mem_largest_free_block_bytes"] =
+      heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
   root["uptime_ms"] = millis();
+  response->setLength();
+  request->send(response);
+}
+
+void Network::stopPostHandler(AsyncWebServerRequest* request) {
+  AsyncJsonResponse* response = new AsyncJsonResponse();
+  const JsonObject& root = response->getRoot();
+
+  switch (this->etkt->stop()) {
+    case StopResult::STOPPING:
+      root["result"] = "stopping";
+      break;
+    case StopResult::IDLE:
+      // Not an error. The run most likely finished while the tap was on its
+      // way, and the panel is about to see that on its next poll anyway.
+      root["result"] = "idle";
+      break;
+    case StopResult::UNSTOPPABLE:
+      root["error"] = "Only printing can be stopped";
+      response->setCode(409);
+      break;
+  }
+
   response->setLength();
   request->send(response);
 }
@@ -339,9 +411,9 @@ void Network::statusGetHandler(AsyncWebServerRequest *request) {
 // a literal in calibrationValuesReady(). Only the constants reach the check
 // that actually refuses a bad value, so the other three were a promise the
 // panel made on the device's behalf.
-void Network::capabilitiesGetHandler(AsyncWebServerRequest *request) {
-  AsyncJsonResponse *response = new AsyncJsonResponse();
-  const JsonObject &root = response->getRoot();
+void Network::capabilitiesGetHandler(AsyncWebServerRequest* request) {
+  AsyncJsonResponse* response = new AsyncJsonResponse(false, REPLY_JSON_BYTES);
+  const JsonObject& root = response->getRoot();
 
   root["printable"] = printableCharacters();
 
@@ -363,6 +435,27 @@ void Network::capabilitiesGetHandler(AsyncWebServerRequest *request) {
   const JsonObject label = root.createNestedObject("label");
   label["minimum"] = MIN_LABEL_CHARACTERS;
   label["maximum"] = MAX_LABEL_CHARACTERS;
+
+  // How many labels one request may ask for. readCommandOptions() refuses
+  // anything outside this.
+  const JsonObject copies = root.createNestedObject("copies");
+  copies["minimum"] = 1;
+  copies["maximum"] = MAX_COPIES;
+
+  // The lengths a new roll may be declared at, and the usual length of one:
+  // what a device starts on, and what the panel suggests.
+  const JsonObject roll = root.createNestedObject("roll");
+  roll["minimum_mm"] = ROLL_LENGTH_MIN_MM;
+  roll["maximum_mm"] = ROLL_LENGTH_MAX_MM;
+  roll["default_mm"] = DEFAULT_ROLL_LENGTH_MM;
+
+  // What the panel needs to work out how much tape a label takes: how far a
+  // feed moves it, and the blank feed ahead of every label. The rest of the
+  // rule -- a feed per character, and the top-up to label.minimum -- is
+  // labelFeeds() in Tape.h, which script.js restates.
+  const JsonObject feed = root.createNestedObject("feed");
+  feed["length_um"] = FEED_LENGTH_UM;
+  feed["lead"] = LEAD_FEEDS;
 
   // Every command that can actually be asked for -- the same rows that got a
   // route registered above. The panel keeps its own wording for the busy

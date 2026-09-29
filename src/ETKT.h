@@ -17,6 +17,7 @@
 #include "Light.h"
 #include "Logger.h"
 #include "Press.h"
+#include "Roll.h"
 #include "Settings.h"
 #include "Sound.h"
 
@@ -84,6 +85,16 @@ struct CommandSpec {
   // two answers, which is why this cannot be read off labelField.
   bool fieldIsLabel;
 
+  // Whether the body may say how many labels to print, in "copies". Unlike
+  // the fields above this one is optional: a body without it prints one
+  // label, which is all a body could ask for before the field existed.
+  bool usesCopies;
+
+  // Whether the body may declare how long a newly loaded roll is, in
+  // "length_mm". Also optional: without it the new roll is taken to be as
+  // long as the last one was.
+  bool usesRollLength;
+
   // The handler ETKT::loop() runs for this command. NULL means there is
   // nothing to run: IDLE is a status, not a job.
   void (ETKT::*run)();
@@ -117,6 +128,11 @@ struct CommandOptions {
   String label = "";
   int align = 0;
   int force = 0;
+  // How many of the label to print, one after another, 1 to MAX_COPIES.
+  int copies = 1;
+  // How long the roll being loaded is, in millimetres, or 0 for "as long as
+  // the last one".
+  int rollLengthMm = 0;
 };
 
 /**
@@ -127,25 +143,47 @@ struct CommandOptions {
  * reported beside it. Served to the webapp by GET /api/status, which polls
  * once a second.
  *
- * currentCommand is IDLE when nothing is running, and the other fields are
- * then at their defaults. Whether the device is busy is that comparison and
- * nothing else -- there is no separate flag to keep in step with it.
+ * currentCommand is IDLE when nothing is running, and the fields that
+ * describe a command are then at their defaults. Whether the device is busy
+ * is that comparison and nothing else -- there is no separate flag to keep in
+ * step with it. The roll is filled in whether or not anything is running.
  */
 struct StatusUpdate {
-  int progress = 0;  // percent, 0 to 99. See Progress.h.
+  int progress = 0;  // percent of the current label, 0 to 99. See Progress.h.
   int align = 0;
   int force = 0;
   String currentLabel = "";
   Command currentCommand = Command::IDLE;
+  // Which label of a run is being pressed, counting from 1, and how many the
+  // run is. Both 0 unless a tag is running.
+  int copy = 0;
+  int copies = 0;
+  // Whether a stop has been asked for. A run ends only once the label being
+  // pressed is cut, so this can read true for a label's worth of time.
+  bool stopping = false;
+  RollState roll;
 };
 
-class PrinterBusyException : public std::exception
-{
-public:
-    const char *what() const throw()
-    {
-        return "The printer is already busy executing a command.";
-    }
+/**
+ * @brief What asking the device to stop did.
+ */
+enum class StopResult {
+  // A run of labels will end once the one being pressed is cut.
+  STOPPING,
+  // Nothing was running. Not an error: the run may have finished between the
+  // tap and the request arriving.
+  IDLE,
+  // Something other than printing is running. A cut or a feed is over in
+  // seconds, and stopping one partway would leave the machine in a state
+  // nothing else expects.
+  UNSTOPPABLE,
+};
+
+class PrinterBusyException : public std::exception {
+ public:
+  const char* what() const throw() {
+    return "The printer is already busy executing a command.";
+  }
 };
 
 class ETKT {
@@ -162,14 +200,21 @@ class ETKT {
   Press* press;
   Sound* sound;
   Characters* characters;
+  Roll* roll;
 
   // Temporary. Delete with the rest of BenchRigs once machine 3 is finished.
   BenchRigs* benchRigs;
 
-  // Device state, which should onyl ever be modified inside an exclusive lock.
+  // Device state, which should only ever be modified inside an exclusive lock.
   CommandOptions* command = NULL;
-  int progress;  // percent, 0 to 99. See Progress.h.
+  int progress;   // percent, 0 to 99. See Progress.h.
+  int copy;       // which label of a run, from 1; 0 when no tag is running
+  bool stopping;  // a stop has been asked for; see stop()
   std::mutex* lock;
+
+  // How many of the feeder's feeds have been charged to the roll. Only the
+  // command loop reads or writes it, so it is not behind the lock.
+  long accountedFeeds;
 
   // Event group that the main loop blocks on for new commands.
   EventGroupHandle_t eventGroup;
@@ -191,6 +236,31 @@ class ETKT {
   void cutAt(int force);
 
   /**
+   * @brief Charges the roll for every feed since the last time this ran.
+   *
+   * Calling it twice is harmless: the second call finds nothing new. It runs
+   * after every command and after every label of a run, so the tape left on
+   * the panel moves label by label, and a power cut loses at most the label
+   * being pressed.
+   */
+  void accountForTape();
+
+  /**
+   * @brief Presses one label, start to cut: homes the wheel, feeds the lead,
+   * presses and feeds past each character, tops the tape up and cuts.
+   *
+   * `copy` of `copies`, counting from 1, is only there to be shown on the
+   * OLED beside the label.
+   */
+  void printLabel(const String& label, int labelLength, int copy, int copies);
+
+  /**
+   * @brief Plays the tune that says a label has started: the label's own
+   * notes, or for a few labels a melody everyone of a certain age knows.
+   */
+  void playTune(const String& label);
+
+  /**
    * Interanl handlers for each type of command the device can do.
    */
   void cutCommandInternal();
@@ -206,7 +276,7 @@ class ETKT {
  public:
   ETKT(Logger* logger, Settings* settings, Characters* characters,
        Display* display, DaisyWheel* daisywheel, HallSwitch* hall,
-       Feeder* feeder, Press* press, Sound* sound, Light* ledFinish,
+       Feeder* feeder, Roll* roll, Press* press, Sound* sound, Light* ledFinish,
        Light* ledChar, BenchRigs* benchRigs);
   ~ETKT();
 
@@ -223,8 +293,9 @@ class ETKT {
   /**
    * @brief Queues a command, or refuses it if one is already running.
    *
-   * The caller fills in whichever of align, force and label the command's
-   * row in COMMANDS says it reads; anything else in `options` is ignored.
+   * The caller fills in whichever of align, force, label, copies and roll
+   * length the command's row in COMMANDS says it reads; anything else in
+   * `options` is ignored.
    * Throws PrinterBusyException if a command is already in flight, and
    * queues nothing in that case.
    *
@@ -232,6 +303,16 @@ class ETKT {
    * way.
    */
   void submit(const CommandOptions& options);
+
+  /**
+   * @brief Asks a run of labels to stop once the label being pressed is cut.
+   *
+   * Never partway through a label: a label abandoned mid-press is tape spent
+   * on nothing, and the cut is what separates it from the next. Safe to call
+   * from the webserver's task while the command loop prints -- the loop
+   * reads the request between labels.
+   */
+  StopResult stop();
 
   /**
    * @brief One row per Command: the firmware's only list of what exists.

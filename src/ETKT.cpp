@@ -17,8 +17,10 @@
 #include "Logger.h"
 #include "Press.h"
 #include "Progress.h"
+#include "Roll.h"
 #include "Settings.h"
 #include "Sound.h"
+#include "Tape.h"
 
 // How the finish LED celebrates a finished label: five half-brightness
 // flashes, then a slow fade to dark. Timings, not shapes -- Light owns what a
@@ -29,36 +31,41 @@ static const int FINISH_FADE_MS = 3225;
 
 // The one statement of what commands this device has. Columns, in order:
 // the enumerator, the name it answers to on the wire and in /api/<name>,
-// whether it reads align, force and label, and the handler loop() runs.
+// whether it reads align, force and label, whether it may be given a number
+// of copies and a roll length, and the handler loop() runs.
 //
 // Before this table the same nine commands were written out four times over
 // -- a name switch, a factory method each, a dispatch switch with no default
 // case, and the route list in Network.cpp -- and home and move had already
 // fallen out of the webapp's copy.
 const CommandSpec ETKT::COMMANDS[] = {
-    //            name       align  force  label field  label  handler
-    {Command::CUT, "cut", false, false, NULL, false, &ETKT::cutCommandInternal},
-    {Command::FEED, "feed", false, false, NULL, false,
+    // name  align  force  label field  label  copies  roll  handler
+    {Command::CUT, "cut", false, false, NULL, false, false, false,
+     &ETKT::cutCommandInternal},
+    {Command::FEED, "feed", false, false, NULL, false, false, false,
      &ETKT::feedCommandInternal},
-    {Command::REEL, "reel", false, false, NULL, false,
+    // A reel is a new roll going in, so it is where the roll's length is
+    // declared.
+    {Command::REEL, "reel", false, false, NULL, false, false, true,
      &ETKT::reelCommandInternal},
     // Align only. This test presses at the minimum force by design -- see
     // testCommandInternal -- so a force in the body is ignored, not refused,
     // which keeps a stale cached script.js working.
-    {Command::TEST_ALIGN, "testalign", true, false, NULL, false,
+    {Command::TEST_ALIGN, "testalign", true, false, NULL, false, false, false,
      &ETKT::testCommandInternal},
-    {Command::TEST_FULL, "testfull", true, true, NULL, false,
+    {Command::TEST_FULL, "testfull", true, true, NULL, false, false, false,
      &ETKT::testCommandFullInternal},
-    {Command::SAVE, "save", true, true, NULL, false,
+    {Command::SAVE, "save", true, true, NULL, false, false, false,
      &ETKT::saveCommandInternal},
-    {Command::TAG, "tag", false, false, "tag", true, &ETKT::tagCommandInternal},
-    {Command::HOME, "home", false, false, NULL, false,
+    {Command::TAG, "tag", false, false, "tag", true, true, false,
+     &ETKT::tagCommandInternal},
+    {Command::HOME, "home", false, false, NULL, false, false, false,
      &ETKT::homeCommandInternal},
-    {Command::MOVE, "move", false, false, "character", false,
+    {Command::MOVE, "move", false, false, "character", false, false, false,
      &ETKT::moveCommandInternal},
     // IDLE is a status, not a job: no handler, and no route is registered for
     // it. It keeps a name because /api/status reports one.
-    {Command::IDLE, "idle", false, false, NULL, false, NULL},
+    {Command::IDLE, "idle", false, false, NULL, false, false, false, NULL},
 };
 
 const size_t ETKT::COMMAND_COUNT =
@@ -103,8 +110,8 @@ const char* commandName(Command command) {
 
 ETKT::ETKT(Logger* logger, Settings* settings, Characters* characters,
            Display* display, DaisyWheel* daisywheel, HallSwitch* hall,
-           Feeder* feeder, Press* press, Sound* sound, Light* ledFinish,
-           Light* ledChar, BenchRigs* benchRigs) {
+           Feeder* feeder, Roll* roll, Press* press, Sound* sound,
+           Light* ledFinish, Light* ledChar, BenchRigs* benchRigs) {
   // Upstream never assigned this one, and initialize() dereferences it on its
   // first line. It only ever worked because Logger holds no state, so the
   // uninitialised pointer was never actually read through.
@@ -114,6 +121,7 @@ ETKT::ETKT(Logger* logger, Settings* settings, Characters* characters,
   this->daisywheel = daisywheel;
   this->hall = hall;
   this->feeder = feeder;
+  this->roll = roll;
   this->press = press;
   this->sound = sound;
   this->ledFinish = ledFinish;
@@ -123,6 +131,10 @@ ETKT::ETKT(Logger* logger, Settings* settings, Characters* characters,
 
   this->command = NULL;
   this->progress = 0;
+  this->copy = 0;
+  this->stopping = false;
+  // Nothing has fed yet, so there is nothing to charge.
+  this->accountedFeeds = 0;
   this->lock = new std::mutex();
   this->eventGroup = xEventGroupCreate();
 }
@@ -140,6 +152,7 @@ void ETKT::initialize() {
 
   this->benchRigs->beforePeripherals();
   this->settings->initialize();
+  this->roll->initialize();
   this->display->initialize();
   this->hall->initialize();
   this->press->initialize();
@@ -148,6 +161,9 @@ void ETKT::initialize() {
   this->benchRigs->beforeHoming();
 
   this->daisywheel->initialize();
+
+  // The feeder bench rig feeds at boot. If there is tape in, that was tape.
+  this->accountForTape();
 }
 
 StatusUpdate ETKT::createStatus() {
@@ -159,12 +175,20 @@ StatusUpdate ETKT::createStatus() {
   // which reboots the device on its way out.
   status.align = this->settings->getAlignFactor();
   status.force = this->settings->getForceFactor();
+  // Roll keeps a lock of its own. Taken outside this one so the two are never
+  // held together, which is the easy way never to take them in two orders.
+  status.roll = this->roll->state();
 
   this->lock->lock();
   if (this->command != NULL) {
     status.currentCommand = this->command->command;
     status.currentLabel = this->command->label;
     status.progress = this->progress;
+    if (this->command->command == Command::TAG) {
+      status.copy = this->copy;
+      status.copies = this->command->copies;
+      status.stopping = this->stopping;
+    }
   }
   this->lock->unlock();
 
@@ -187,6 +211,31 @@ void ETKT::submit(const CommandOptions& options) {
   this->command = queued;
   xEventGroupSetBits(this->eventGroup, BIT0);
   this->lock->unlock();
+}
+
+StopResult ETKT::stop() {
+  this->lock->lock();
+  if (this->command == NULL) {
+    this->lock->unlock();
+    return StopResult::IDLE;
+  }
+  if (this->command->command != Command::TAG) {
+    this->lock->unlock();
+    return StopResult::UNSTOPPABLE;
+  }
+  this->stopping = true;
+  this->lock->unlock();
+
+  this->logger->log("Stopping after this label");
+  return StopResult::STOPPING;
+}
+
+void ETKT::accountForTape() {
+  const long fed = this->feeder->feeds();
+  if (fed > this->accountedFeeds) {
+    this->roll->use((uint32_t)(fed - this->accountedFeeds));
+    this->accountedFeeds = fed;
+  }
 }
 
 void ETKT::cut() { this->cutAt((int)this->settings->getForceFactor()); }
@@ -241,6 +290,10 @@ void ETKT::loop() {
     (this->*(spec->run))();
   }
 
+  // Four commands feed, and every feed is tape off the roll. Charged before
+  // the slot is released, so the first idle status already shows it.
+  this->accountForTape();
+
   // Park the machine before the command slot is released. Everything below
   // talks to hardware -- a full OLED redraw with a QR code on it, then three
   // motors -- and it used to run with the lock held, which stalled every
@@ -257,6 +310,8 @@ void ETKT::loop() {
   delete this->command;
   this->command = NULL;
   this->progress = 0;
+  this->copy = 0;
+  this->stopping = false;
   this->lock->unlock();
 }
 
@@ -276,7 +331,17 @@ void ETKT::reelCommandInternal() {
   this->press->rest();
   delay(500);
 
-  this->feeder->feed(16);
+  // A reel is a new roll going in. Anything fed before this came off the old
+  // one, so it is charged there before the count starts again. The feeds
+  // below thread the new roll through to the cutter, which is tape off the
+  // new roll, so they are charged to it when loop() next accounts.
+  this->accountForTape();
+  const int length = this->command->rollLengthMm > 0
+                         ? this->command->rollLengthMm
+                         : (int)this->roll->state().lengthMm;
+  this->roll->load(length);
+
+  this->feeder->feed(REEL_FEEDS);
   this->ledFinish->off();
   this->ledChar->off();
 }
@@ -378,11 +443,16 @@ void ETKT::moveCommandInternal() {
 void ETKT::tagCommandInternal() {
   auto label = this->command->label;
   label.toUpperCase();
+  const int copies = this->command->copies;
   // enables servo
   this->press->rest();
   delay(500);
 
-  this->logger->log(String("print ") + label);
+  if (copies > 1) {
+    this->logger->log(String("print ") + label + " x " + copies);
+  } else {
+    this->logger->log(String("print ") + label);
+  }
 
   // What a label may say is CHARACTERS in CharacterSet.h, less the cut
   // mark, plus the space. printableCharacters() is that list; the webapp
@@ -391,8 +461,47 @@ void ETKT::tagCommandInternal() {
 
   this->ledChar->on(LIGHT_DIM);
 
-  this->display->renderProgress(0, label);
+  for (int copy = 1; copy <= copies; copy++) {
+    this->lock->lock();
+    this->copy = copy;
+    this->progress = 0;
+    this->lock->unlock();
 
+    this->display->renderProgress(0, label, copy, copies);
+
+    // Once a run, not once a label. The tune says printing has started, and
+    // the same few seconds of it before every label of a long run would be
+    // most of a minute of music for nothing.
+    if (copy == 1) {
+      this->playTune(label);
+    }
+
+    this->printLabel(label, labelLength, copy, copies);
+    this->accountForTape();
+
+    // Only ever read here, between one cut and the next feed. See stop().
+    this->lock->lock();
+    const bool stopRequested = this->stopping;
+    this->lock->unlock();
+    if (stopRequested && copy < copies) {
+      this->logger->log(String("Stopped after ") + copy + " of " + copies);
+      break;
+    }
+  }
+
+  this->ledChar->off();
+  display->render(Screen::FINISHED);
+
+  // Blink, then fade out. blink() leaves the LED lit at LIGHT_HALF and the
+  // fade restarts from LIGHT_FULL, which is a jump; it is how this has always
+  // looked, and at zero milliseconds apart it is not a thing anyone sees.
+  this->ledFinish->blink(FINISH_BLINK_TIMES, LIGHT_HALF, FINISH_BLINK_MS,
+                         FINISH_BLINK_MS);
+  this->ledFinish->fadeOut(LIGHT_FULL, FINISH_FADE_MS);
+  this->logger->log("Printing Complete");
+}
+
+void ETKT::playTune(const String& label) {
   if (label == " TASCHENRECHNER " || label == " POCKET CALCULATOR " ||
       label == " DENTAKU " || label == " CALCULADORA " ||
       label == " MINI CALCULATEUR ") {
@@ -404,11 +513,14 @@ void ETKT::tagCommandInternal() {
   } else {
     this->sound->playLabel(label);
   }
+}
 
+void ETKT::printLabel(const String& label, int labelLength, int copy,
+                      int copies) {
   // home daisy wheel
   this->daisywheel->home(this->settings->getAlignFactor());
 
-  this->feeder->feed();
+  this->feeder->feed(LEAD_FEEDS);
 
   for (int i = 0; i < labelLength; i++) {
     auto character = Utility::utf8CharAt(label, i);
@@ -425,33 +537,20 @@ void ETKT::tagCommandInternal() {
     this->feeder->feed();
     delay(500);
 
-    this->display->renderProgress(i + 1, label);
+    this->display->renderProgress(i + 1, label, copy, copies);
 
     this->lock->lock();
     this->progress = progressPercent(i + 1, labelLength);
     this->lock->unlock();
   }
 
-  // Top the tape up to something the user can take hold of. A one-character
-  // label is left alone deliberately: it is the single-letter tag the
-  // machine has always printed short.
-  if (labelLength < MIN_LABEL_CHARACTERS && labelLength != 1) {
-    const int spaceDelta = MIN_LABEL_CHARACTERS - labelLength;
-    for (int i = 0; i < spaceDelta; i++) {
-      this->feeder->feed();
-    }
+  // Top the tape up to something the user can take hold of. topUpFeeds()
+  // says how far, and why a single letter is left short; the panel works out
+  // how many labels fit on the roll from the same rule.
+  const int topUp = topUpFeeds(labelLength);
+  if (topUp > 0) {
+    this->feeder->feed(topUp);
   }
 
   this->cut();
-
-  this->ledChar->off();
-  display->render(Screen::FINISHED);
-
-  // Blink, then fade out. blink() leaves the LED lit at LIGHT_HALF and the
-  // fade restarts from LIGHT_FULL, which is a jump; it is how this has always
-  // looked, and at zero milliseconds apart it is not a thing anyone sees.
-  this->ledFinish->blink(FINISH_BLINK_TIMES, LIGHT_HALF, FINISH_BLINK_MS,
-                         FINISH_BLINK_MS);
-  this->ledFinish->fadeOut(LIGHT_FULL, FINISH_FADE_MS);
-  this->logger->log("Printing Complete");
 }

@@ -10,7 +10,6 @@
 #include "Utility.h"
 #include "etktLogo.h"
 
-
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
 
@@ -47,7 +46,7 @@ enum class Screen {
 };
 
 /**
- * Renders various screens on the OLED device, such asprinting progress, 
+ * Renders various screens on the OLED device, such asprinting progress,
  * boot splash animation, QR Code, etc. Its hard coded to use a 128x64 OLED,
  * but could be sub-classed to use different sized screens.
  */
@@ -121,8 +120,12 @@ class Display {
    *        count, not an index, and the same number ETKT feeds to
    *        progressPercent(), so the OLED caption and the web UI cannot
    *        disagree.
+   * @param copy which label of a run this is, counting from 1.
+   * @param copies how many labels the run is. Above one, the screen says
+   *        which of them is being pressed, "3/10", opposite the percentage.
    */
-  void renderProgress(int charactersDone, String label);
+  void renderProgress(int charactersDone, String label, int copy = 1,
+                      int copies = 1);
 
   /**
    * @brief Renders the save confirmation, showing the two values that were

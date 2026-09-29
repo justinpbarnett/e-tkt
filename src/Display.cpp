@@ -241,10 +241,10 @@ void Display::renderIdle() {
     } else {
       resizeSSID = this->ssid;
     }
-    const char *d = resizeSSID.c_str();
+    const char* d = resizeSSID.c_str();
     this->u8g2->drawStr(14, 46, d);
 
-    const char *b = this->ip.c_str();
+    const char* b = this->ip.c_str();
     this->u8g2->drawStr(3, 61, b);
 
     this->u8g2->setFont(u8g2_font_open_iconic_all_1x_t);
@@ -287,7 +287,8 @@ void Display::renderIdle() {
   delay(1000);
 }
 
-void Display::renderProgress(int charactersDone, String label) {
+void Display::renderProgress(int charactersDone, String label, int copy,
+                             int copies) {
   this->clear();
 
   // Show "⚙️ PRINTING" header.
@@ -364,11 +365,22 @@ void Display::renderProgress(int charactersDone, String label) {
     }
   }
 
-  // Print "XX%" at the bottom of the screen.
+  // Print "XX%" at the bottom of the screen. The font is set here rather
+  // than left over from the label: a label ending in a symbol leaves an icon
+  // font selected, and the percentage came out in icons.
   String progressString =
       String(progressPercent(charactersDone, labelLength)) + "%";
   this->u8g2->setDrawColor(1);
+  this->u8g2->setFont(u8g2_font_6x13_te);
   this->u8g2->drawStr(6, 60, progressString.c_str());
+
+  // And which label of a run this is, "3/10", as far in from the right edge
+  // as the percentage is from the left.
+  if (copies > 1) {
+    const String countString = String(copy) + "/" + copies;
+    const int countWidth = this->u8g2->getStrWidth(countString.c_str());
+    this->u8g2->drawStr(SCREEN_WIDTH - 6 - countWidth, 60, countString.c_str());
+  }
 
   this->u8g2->sendBuffer();
 }

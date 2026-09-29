@@ -2,7 +2,7 @@
 
 Serves the same files the device serves out of SPIFFS, and answers the same
 endpoints it answers out of Network.cpp -- one POST per runnable row of the
-command table, plus status, capabilities and the log. None of that is
+command table, plus stop, status, capabilities and the log. None of that is
 written down here. firmware.py reads it out of src/, so a command added to
 the device shows up in the simulator with nothing to remember.
 
@@ -49,6 +49,20 @@ PRINTING_COMMAND = "tag"
 # and force, not that save is the only one that keeps them.
 SAVE_COMMAND = "save"
 
+# The one command that starts the count of tape again, for the same reason:
+# the table says reel may be given a roll length, not what it does with one.
+REEL_COMMAND = "reel"
+
+# The feeds taken by the two commands that feed but are neither a label nor a
+# new roll, restated from their handlers in ETKT.cpp. feedCommandInternal()
+# feeds once. testCommandFullInternal() feeds ahead of "E-TKT", once for each
+# of its characters, and once after. A label's feeds are labelFeeds() and a
+# new roll's are REEL_FEEDS, both of which firmware.py reads.
+COMMAND_FEEDS = {
+    "feed": 1,
+    "testfull": 1 + len("E-TKT") + 1,
+}
+
 # Word for word what PrinterBusyException says in src/ETKT.h.
 BUSY_MESSAGE = "The printer is already busy executing a command."
 
@@ -88,17 +102,34 @@ class Server:
         self.running_task = None
         self.label = ""
         self.progress = 0
+        # What the running command was asked for, as CommandOptions carries
+        # it on the device: how many labels, and how long a new roll is, 0
+        # meaning as long as the last one.
+        self.copies = 1
+        self.new_roll_mm = 0
+        # Where a run of labels has got to. Both are cleared with the command.
+        self.copy = 0
+        self.stopping = False
+        # What Roll keeps in EEPROM. Kept in memory here, so every start of
+        # the simulator is a device that has never counted a roll.
+        self.roll_mm = device.default_roll_mm
+        self.feeds_used = 0
         self.log = deque(maxlen=LOG_LINES)
         self.started = time.monotonic()
 
-        # What Settings::initialize() says on the way up.
+        # What Settings::initialize() and Roll::initialize() say on the way
+        # up.
         self.record("INFO", "Align factor: %d" % self.align)
         self.record("INFO", "Force factor: %d" % self.force)
+        self.record("INFO", "Roll: %d mm, %d feeds used"
+                    % (self.roll_mm, self.feeds_used))
 
-    async def start(self):
+    def application(self):
+        """Every route the device answers, not yet listening anywhere."""
         app = web.Application()
         routes = [
             web.get('/api/status', self.status),
+            web.post('/api/stop', self.stop),
             web.get('/api/capabilities', self.capabilities),
             web.get('/api/log', self.recent_log),
         ]
@@ -111,8 +142,10 @@ class Server:
         routes.append(web.get('/', self.index))
         routes.append(web.static("/", self.data_path('')))
         app.add_routes(routes)
+        return app
 
-        runner = web.AppRunner(app)
+    async def start(self):
+        runner = web.AppRunner(self.application())
         await runner.setup()
         site = web.TCPSite(runner, "0.0.0.0", PORT)
         print("Serving %d commands: %s"
@@ -132,13 +165,34 @@ class Server:
             'command': (running or self.idle).name,
             'align': self.align,
             'force': self.force,
-            'mem_heap_free_bytes': FAKE_HEAP_BYTES,
-            'mem_largest_free_block_bytes': FAKE_LARGEST_BLOCK_BYTES,
-            'uptime_ms': int((time.monotonic() - self.started) * 1000),
         }
         if running is not None and running.name == PRINTING_COMMAND:
             body['current_label'] = self.label
+            body['copy'] = self.copy
+            body['copies'] = self.copies
+            body['stopping'] = self.stopping
+        # Busy or not, as the device sends it.
+        body['roll'] = {
+            'length_mm': self.roll_mm,
+            'remaining_mm': self.device.remaining_mm(self.roll_mm,
+                                                     self.feeds_used),
+        }
+        body['mem_heap_free_bytes'] = FAKE_HEAP_BYTES
+        body['mem_largest_free_block_bytes'] = FAKE_LARGEST_BLOCK_BYTES
+        body['uptime_ms'] = int((time.monotonic() - self.started) * 1000)
         return web.json_response(body)
+
+    async def stop(self, request):
+        """Mirrors Network::stopPostHandler() and ETKT::stop()."""
+        if self.command is None:
+            # Not an error. The run most likely finished while the tap was
+            # on its way.
+            return web.json_response({'result': 'idle'})
+        if self.command.name != PRINTING_COMMAND:
+            return self.refuse("Only printing can be stopped", status=409)
+        self.stopping = True
+        self.record("INFO", "Stopping after this label")
+        return web.json_response({'result': 'stopping'})
 
     async def capabilities(self, request):
         return web.json_response({
@@ -151,6 +205,19 @@ class Server:
             'label': {
                 'minimum': self.device.min_label_characters,
                 'maximum': self.device.max_label_characters,
+            },
+            'copies': {
+                'minimum': 1,
+                'maximum': self.device.max_copies,
+            },
+            'roll': {
+                'minimum_mm': self.device.roll_min_mm,
+                'maximum_mm': self.device.roll_max_mm,
+                'default_mm': self.device.default_roll_mm,
+            },
+            'feed': {
+                'length_um': self.device.feed_length_um,
+                'lead': self.device.lead_feeds,
             },
             'commands': [spec.name for spec in self.device.routes()],
         })
@@ -172,6 +239,11 @@ class Server:
         except ValueError:
             # The device's JSON handler never calls the command back on a
             # body it cannot read, so the fields are simply all missing.
+            body = {}
+        if not isinstance(body, dict):
+            # Valid JSON that is not an object. as<JsonObject>() makes that a
+            # null object on the device, which contains nothing -- where a
+            # string here would answer `in` by searching itself.
             body = {}
 
         align, refusal = self.read_calibration(
@@ -204,6 +276,25 @@ class Server:
                     return self.refuse(
                         "The daisy wheel cannot print '%s'" % unprintable)
 
+        # Optional, unlike the fields above: a body without them asks for
+        # what every body asked for before they existed -- one label, and a
+        # new roll as long as the last.
+        copies = 1
+        if spec.uses_copies and "copies" in body:
+            copies = _as_int(body["copies"])
+            if not self.device.valid_copies(copies):
+                return self.refuse(
+                    "Please provide a copies value between 1 and %d, got %d"
+                    % (self.device.max_copies, copies))
+        new_roll_mm = 0
+        if spec.uses_roll_length and "length_mm" in body:
+            new_roll_mm = _as_int(body["length_mm"])
+            if not self.device.valid_roll_length(new_roll_mm):
+                return self.refuse(
+                    "Please provide a length_mm value between %d and %d, "
+                    "got %d" % (self.device.roll_min_mm,
+                                self.device.roll_max_mm, new_roll_mm))
+
         # Busy is checked after the body and not before, because that is the
         # order the device checks them in: the fields are read on the
         # request's own task and only then handed to submit(), which is what
@@ -221,6 +312,8 @@ class Server:
 
         self.command = spec
         self.label = label
+        self.copies = copies
+        self.new_roll_mm = new_roll_mm
         self.progress = 0
         # Held, not dropped. asyncio keeps only a weak reference to a task, so
         # a create_task() whose result nobody stores can be collected part way
@@ -235,12 +328,7 @@ class Server:
             return None, None
         if field not in body:
             return None, self.refuse(missing)
-        try:
-            value = int(body[field])
-        except (TypeError, ValueError):
-            # What ArduinoJson's as<int>() hands back for anything it cannot
-            # read as a number, which then fails the range check below.
-            value = 0
+        value = _as_int(body[field])
         if not self.device.valid_calibration(value):
             # "a align" reads wrong and is deliberate: Network.cpp builds
             # this message by concatenation and does not special-case the
@@ -257,21 +345,42 @@ class Server:
 
     async def run(self, spec):
         if spec.name == PRINTING_COMMAND:
-            await self.print_label()
+            await self.print_labels()
+        elif spec.name == REEL_COMMAND:
+            await self.reel()
         else:
             # Any other command takes the same amount of time
-            await asyncio.sleep(OTHER_COMMAND_SECONDS)
-        # Both together, as ETKT::loop() does when it clears the command:
-        # leaving progress behind reports an idle printer stuck at 99%.
+            await self.pause(OTHER_COMMAND_SECONDS)
+            self.use(COMMAND_FEEDS.get(spec.name, 0))
+        # All together, as ETKT::loop() does when it clears the command:
+        # leaving progress behind reports an idle printer stuck at 99%, and
+        # leaving the stop behind would end the next run after one label.
         self.command = None
         self.running_task = None
         self.progress = 0
+        self.copy = 0
+        self.stopping = False
 
-    async def print_label(self):
+    async def reel(self):
+        # ETKT::reelCommandInternal(). The new roll is as long as the request
+        # said, or as long as the last one, and the feeds that thread it
+        # through to the cutter are tape off the new roll.
+        self.roll_mm = self.new_roll_mm or self.roll_mm
+        self.feeds_used = 0
+        # Word for word what Roll::load() logs.
+        self.record("INFO", "New roll: %d mm" % self.roll_mm)
+        await self.pause(OTHER_COMMAND_SECONDS)
+        self.use(self.device.reel_feeds)
+
+    async def print_labels(self):
         # The device uppercases a copy and leaves the submitted label alone,
         # which is why /api/status hands back exactly what the panel sent.
         label = self.label.upper()
-        self.record("INFO", "print " + label)
+        copies = self.copies
+        if copies > 1:
+            self.record("INFO", "print %s x %d" % (label, copies))
+        else:
+            self.record("INFO", "print " + label)
         for character in label:
             if character not in self.device.printable:
                 # What DaisyWheel::move() says when it is asked for a
@@ -287,14 +396,35 @@ class Server:
         # Python counts code points, which is the unit progressPercent()
         # asks for -- four of the wheel's characters are more than one byte.
         total = len(label)
-        for done in range(1, total + 1):
-            await asyncio.sleep(PRINT_CHARACTER_SECONDS)
-            self.progress = self.device.progress_percent(done, total)
+        for copy in range(1, copies + 1):
+            self.copy = copy
+            self.progress = 0
+            for done in range(1, total + 1):
+                await self.pause(PRINT_CHARACTER_SECONDS)
+                self.progress = self.device.progress_percent(done, total)
 
-        # The tail feed and the cut, which is the stretch the device holds
-        # its last percentage point back for.
-        await asyncio.sleep(FINISH_SECONDS)
+            # The top-up and the cut, which is the stretch the device holds
+            # its last percentage point back for.
+            await self.pause(FINISH_SECONDS)
+            # Charged a label at a time, as the device charges it, so what
+            # /api/status says is left steps down once per cut.
+            self.use(self.device.label_feeds(total))
+
+            # A stop is only ever looked at here, between one cut and the
+            # next label, as ETKT::tagCommandInternal() looks at it.
+            if self.stopping and copy < copies:
+                self.record("INFO", "Stopped after %d of %d" % (copy, copies))
+                break
         self.record("INFO", "Printing Complete")
+
+    def use(self, feeds):
+        """Counts feeds taken from the roll. Mirrors Roll::use()."""
+        self.feeds_used += feeds
+
+    async def pause(self, seconds):
+        """Every wait the simulated machine makes goes through here, so a test
+        can hold it part way through a job."""
+        await asyncio.sleep(seconds)
 
     def record(self, level, message):
         """One line of the log, formatted the way Logger::recent() is."""
@@ -303,3 +433,17 @@ class Server:
 
     def data_path(self, path):
         return os.path.join(os.path.dirname(__file__), '../../data/', path)
+
+
+def _as_int(value):
+    """A JSON value read as a number the way ArduinoJson's as<int>() reads
+    one: a number, a numeric string or a boolean, truncated to a whole one,
+    and 0 for anything else -- including a number too big for an int, which
+    then fails whichever range check the caller makes."""
+    try:
+        number = int(value)
+    except (TypeError, ValueError, OverflowError):
+        return 0
+    if not -2 ** 31 <= number < 2 ** 31:
+        return 0
+    return number

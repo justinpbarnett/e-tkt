@@ -30,12 +30,14 @@ class Command:
     """
 
     def __init__(self, name, uses_align, uses_force, label_field,
-                 field_is_label, runnable):
+                 field_is_label, uses_copies, uses_roll_length, runnable):
         self.name = name
         self.uses_align = uses_align
         self.uses_force = uses_force
         self.label_field = label_field
         self.field_is_label = field_is_label
+        self.uses_copies = uses_copies
+        self.uses_roll_length = uses_roll_length
         self.runnable = runnable
 
     def __repr__(self):
@@ -47,7 +49,9 @@ class Firmware:
 
     def __init__(self, commands, printable, aliases, calibration_min,
                  calibration_max, default_align, default_force, progress_max,
-                 min_label_characters, max_label_characters):
+                 min_label_characters, max_label_characters, max_copies,
+                 feed_length_um, lead_feeds, reel_feeds, default_roll_mm,
+                 roll_min_mm, roll_max_mm):
         self.commands = commands
         self.printable = printable
         self.aliases = aliases
@@ -58,6 +62,13 @@ class Firmware:
         self.progress_max = progress_max
         self.min_label_characters = min_label_characters
         self.max_label_characters = max_label_characters
+        self.max_copies = max_copies
+        self.feed_length_um = feed_length_um
+        self.lead_feeds = lead_feeds
+        self.reel_feeds = reel_feeds
+        self.default_roll_mm = default_roll_mm
+        self.roll_min_mm = roll_min_mm
+        self.roll_max_mm = roll_max_mm
 
     def unprintable_character(self, label):
         """The first character of `label` a label may not contain, or "".
@@ -94,6 +105,50 @@ class Firmware:
         percent = 100 * characters_done // label_length
         return min(percent, self.progress_max)
 
+    # The tape arithmetic in src/Tape.h. Restated rather than parsed -- it is
+    # code, not a table -- so test_firmware.py pins it to the same values
+    # test/test_tape does.
+
+    def top_up_feeds(self, label_length):
+        """Mirrors topUpFeeds(): a short label is fed up to the minimum,
+        except a single letter."""
+        if (label_length >= self.min_label_characters or
+                label_length == 1):
+            return 0
+        return self.min_label_characters - max(label_length, 0)
+
+    def label_feeds(self, label_length):
+        """Mirrors labelFeeds(): the lead, a feed per character, the
+        top-up."""
+        return (self.lead_feeds + max(label_length, 0) +
+                self.top_up_feeds(label_length))
+
+    def tape_used_mm(self, feeds):
+        """Mirrors tapeUsedMm(), rounding down."""
+        if feeds <= 0:
+            return 0
+        return feeds * self.feed_length_um // 1000
+
+    def remaining_mm(self, roll_length_mm, feeds):
+        """Mirrors remainingMm(): never below empty."""
+        return max(roll_length_mm - self.tape_used_mm(feeds), 0)
+
+    def labels_that_fit(self, remaining_mm, label_length):
+        """Mirrors labelsThatFit(), rounding down: a label that would run off
+        the end of the tape is not one that fits."""
+        per_label_um = self.label_feeds(label_length) * self.feed_length_um
+        if remaining_mm <= 0 or per_label_um <= 0:
+            return 0
+        return remaining_mm * 1000 // per_label_um
+
+    def valid_copies(self, copies):
+        """Mirrors isValidCopies()."""
+        return 1 <= copies <= self.max_copies
+
+    def valid_roll_length(self, length_mm):
+        """Mirrors isValidRollLength()."""
+        return self.roll_min_mm <= length_mm <= self.roll_max_mm
+
 
 def load(src_dir=None):
     """Reads every firmware fact. Raises FirmwareParseError if one is missing.
@@ -112,6 +167,7 @@ def load(src_dir=None):
     settings = _read(os.path.join(src_dir, "Settings.h"))
     progress = _read(os.path.join(src_dir, "Progress.h"))
     configuration = _read(os.path.join(src_dir, "Configuration.h"))
+    tape = _read(os.path.join(src_dir, "Tape.h"))
 
     return Firmware(
         commands=parse_commands(etkt),
@@ -126,18 +182,28 @@ def load(src_dir=None):
             configuration, "MIN_LABEL_CHARACTERS"),
         max_label_characters=_number(
             configuration, "MAX_LABEL_CHARACTERS"),
+        max_copies=_number(configuration, "MAX_COPIES"),
+        feed_length_um=_number(configuration, "FEED_LENGTH_UM"),
+        lead_feeds=_number(tape, "LEAD_FEEDS"),
+        reel_feeds=_number(tape, "REEL_FEEDS"),
+        default_roll_mm=_number(configuration, "DEFAULT_ROLL_LENGTH_MM"),
+        roll_min_mm=_number(configuration, "ROLL_LENGTH_MIN_MM"),
+        roll_max_mm=_number(configuration, "ROLL_LENGTH_MAX_MM"),
     )
 
 
 # One row of the table: enumerator, wire name, the two calibration flags, the
-# label field or NULL, whether that field is text to emboss, and the handler
-# or NULL.
+# label field or NULL, whether that field is text to emboss, whether copies
+# and a roll length may be given, and the handler or NULL. Whitespace between
+# fields may be a line break, because clang-format wraps the longer rows.
 _COMMAND_ROW = re.compile(
     r'\{\s*Command::\w+\s*,'
     r'\s*"([^"]*)"\s*,'
     r'\s*(true|false)\s*,'
     r'\s*(true|false)\s*,'
     r'\s*(NULL|"[^"]*")\s*,'
+    r'\s*(true|false)\s*,'
+    r'\s*(true|false)\s*,'
     r'\s*(true|false)\s*,'
     r'\s*(NULL|&ETKT::\w+)\s*,?\s*\}', re.S)
 
@@ -147,14 +213,16 @@ def parse_commands(source):
     body = _initializer(source, r"const\s+CommandSpec\s+ETKT::COMMANDS\[\]",
                         "ETKT::COMMANDS")
     commands = []
-    for name, align, force, label, is_label, handler in _COMMAND_ROW.findall(
-            body):
+    for (name, align, force, label, is_label, copies, roll,
+         handler) in _COMMAND_ROW.findall(body):
         commands.append(Command(
             name=name,
             uses_align=align == "true",
             uses_force=force == "true",
             label_field=None if label == "NULL" else label.strip('"'),
             field_is_label=is_label == "true",
+            uses_copies=copies == "true",
+            uses_roll_length=roll == "true",
             runnable=handler != "NULL",
         ))
 

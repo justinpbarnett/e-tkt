@@ -132,6 +132,37 @@ void test_deenergize_releases_the_motor(void) {
   TEST_ASSERT_FALSE(stepper->energized);
 }
 
+// --- counting ------------------------------------------------------------
+// The count is the only evidence of how much of the roll is gone, so it has
+// to match what the motor did, move for move.
+
+void test_nothing_is_counted_before_the_first_feed(void) {
+  feeder->initialize();
+  TEST_ASSERT_EQUAL_INT32(0, feeder->feeds());
+}
+
+void test_each_repeat_is_counted(void) {
+  feeder->initialize();
+  feeder->feed(3);
+  TEST_ASSERT_EQUAL_INT32(3, feeder->feeds());
+  TEST_ASSERT_EQUAL_INT32(stepper->countOf(StepperCall::RUN_TO_NEW_POSITION),
+                          feeder->feeds());
+}
+
+void test_the_count_carries_across_feeds(void) {
+  feeder->initialize();
+  feeder->feed();
+  feeder->feed(16);
+  feeder->feed(2);
+  TEST_ASSERT_EQUAL_INT32(19, feeder->feeds());
+}
+
+void test_a_feed_of_nothing_counts_nothing(void) {
+  feeder->initialize();
+  feeder->feed(0);
+  TEST_ASSERT_EQUAL_INT32(0, feeder->feeds());
+}
+
 // --- timing --------------------------------------------------------------
 
 void test_the_coils_are_given_time_to_come_up_before_the_first_move(void) {
@@ -159,6 +190,10 @@ int main(int, char**) {
   RUN_TEST(test_the_motor_is_never_left_energized);
   RUN_TEST(test_a_feed_of_nothing_still_releases_the_motor);
   RUN_TEST(test_deenergize_releases_the_motor);
+  RUN_TEST(test_nothing_is_counted_before_the_first_feed);
+  RUN_TEST(test_each_repeat_is_counted);
+  RUN_TEST(test_the_count_carries_across_feeds);
+  RUN_TEST(test_a_feed_of_nothing_counts_nothing);
   RUN_TEST(test_the_coils_are_given_time_to_come_up_before_the_first_move);
   return UNITY_END();
 }

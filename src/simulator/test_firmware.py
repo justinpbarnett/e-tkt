@@ -81,6 +81,22 @@ class LoadFirmware(unittest.TestCase):
         self.assertFalse(cut.uses_align)
         self.assertFalse(cut.uses_force)
         self.assertIsNone(cut.label_field)
+        self.assertFalse(cut.uses_copies)
+        self.assertFalse(cut.uses_roll_length)
+
+    def test_only_a_tag_may_be_asked_for_more_than_one(self):
+        # A run of any other command would be the same thing done again with
+        # nothing to show for it.
+        self.assertEqual(["tag"], [c.name for c in self.fw.commands
+                                   if c.uses_copies])
+
+    def test_a_roll_length_is_declared_by_loading_a_new_roll(self):
+        self.assertEqual(["reel"], [c.name for c in self.fw.commands
+                                    if c.uses_roll_length])
+
+    def test_an_unknown_command_has_no_row(self):
+        # commandSpecByName() returns NULL for one; so does this.
+        self.assertIsNone(self.fw.command("emboss"))
 
     # --- what a label may contain ------------------------------------------
 
@@ -118,11 +134,6 @@ class LoadFirmware(unittest.TestCase):
         self.assertEqual(1, self.fw.calibration_min)
         self.assertEqual(9, self.fw.calibration_max)
 
-
-    def test_an_unknown_command_has_no_row(self):
-        # commandSpecByName() returns NULL for one; so does this.
-        self.assertIsNone(self.fw.command("emboss"))
-
     def test_the_range_is_what_a_value_is_checked_against(self):
         # Mirrors isValidCalibrationValue(), which is what actually refuses.
         self.assertFalse(self.fw.valid_calibration(0))
@@ -151,6 +162,7 @@ class LoadFirmware(unittest.TestCase):
     def test_an_empty_label_is_no_progress_rather_than_a_crash(self):
         self.assertEqual(0, self.fw.progress_percent(0, 0))
 
+    # --- label length ------------------------------------------------------
 
     def test_minimum_label_length_comes_from_the_firmware(self):
         # The panel pads short labels up to this. It read 7 out of its own
@@ -162,6 +174,77 @@ class LoadFirmware(unittest.TestCase):
         # the longest thing anyone can type: the panel centres a label by
         # padding a space onto each side before it sends it.
         self.assertEqual(249, self.fw.max_label_characters)
+
+    # --- the roll ----------------------------------------------------------
+    # The same values test/test_tape pins Tape.h to. The arithmetic is
+    # restated here rather than parsed, so this is what holds the two
+    # together.
+
+    def test_the_roll_is_described_by_the_firmware(self):
+        self.assertEqual(4000, self.fw.feed_length_um)
+        self.assertEqual(1, self.fw.lead_feeds)
+        self.assertEqual(16, self.fw.reel_feeds)
+        self.assertEqual(3000, self.fw.default_roll_mm)
+        self.assertEqual(500, self.fw.roll_min_mm)
+        self.assertEqual(10000, self.fw.roll_max_mm)
+        self.assertEqual(500, self.fw.max_copies)
+
+    def test_a_label_is_a_lead_then_a_feed_per_character(self):
+        # The panel pads every label to one past the minimum, so this is the
+        # shortest thing it sends.
+        self.assertEqual(8, self.fw.label_feeds(7))
+        self.assertEqual(31, self.fw.label_feeds(30))
+
+    def test_a_short_label_is_topped_up_to_the_minimum(self):
+        self.assertEqual(3, self.fw.top_up_feeds(3))
+        self.assertEqual(7, self.fw.label_feeds(3))
+        self.assertEqual(0, self.fw.top_up_feeds(6))
+
+    def test_a_single_letter_is_left_short(self):
+        self.assertEqual(0, self.fw.top_up_feeds(1))
+        self.assertEqual(2, self.fw.label_feeds(1))
+
+    def test_an_empty_label_still_feeds_a_whole_minimum(self):
+        self.assertEqual(7, self.fw.label_feeds(0))
+        self.assertEqual(7, self.fw.label_feeds(-4))
+
+    def test_what_is_left_is_the_roll_less_what_was_fed(self):
+        self.assertEqual(0, self.fw.tape_used_mm(-5))
+        self.assertEqual(4, self.fw.tape_used_mm(1))
+        self.assertEqual(3000, self.fw.remaining_mm(3000, 0))
+        self.assertEqual(2968, self.fw.remaining_mm(3000, 8))
+
+    def test_an_overrun_roll_reads_empty_not_negative(self):
+        self.assertEqual(0, self.fw.remaining_mm(3000, 750))
+        self.assertEqual(0, self.fw.remaining_mm(3000, 790))
+
+    def test_labels_that_fit_rounds_down(self):
+        # 3 m at 32 mm a label is 93.75 labels. The 94th runs off the end.
+        self.assertEqual(93, self.fw.labels_that_fit(3000, 7))
+        self.assertEqual(1, self.fw.labels_that_fit(32, 7))
+        self.assertEqual(0, self.fw.labels_that_fit(31, 7))
+
+    def test_an_empty_roll_fits_nothing(self):
+        self.assertEqual(0, self.fw.labels_that_fit(0, 7))
+        self.assertEqual(0, self.fw.labels_that_fit(-10, 7))
+
+    def test_the_copy_limit_never_cuts_a_roll_short(self):
+        # The longest roll of the panel's shortest label comes in under it.
+        fit = self.fw.labels_that_fit(self.fw.roll_max_mm,
+                                      self.fw.min_label_characters + 1)
+        self.assertLessEqual(fit, self.fw.max_copies)
+
+    def test_what_a_request_may_say_is_bounded(self):
+        self.assertFalse(self.fw.valid_copies(0))
+        self.assertTrue(self.fw.valid_copies(1))
+        self.assertTrue(self.fw.valid_copies(500))
+        self.assertFalse(self.fw.valid_copies(501))
+        self.assertFalse(self.fw.valid_roll_length(499))
+        self.assertTrue(self.fw.valid_roll_length(500))
+        self.assertTrue(self.fw.valid_roll_length(10000))
+        self.assertFalse(self.fw.valid_roll_length(10001))
+
+    # --- the panel ---------------------------------------------------------
 
     def test_the_panel_knows_every_command_the_device_offers(self):
         # api/capabilities serves this list and data/script.js checks its
@@ -195,8 +278,9 @@ class Failures(unittest.TestCase):
         # the drift this module exists to catch.
         table = ('const CommandSpec ETKT::COMMANDS[] = {\n'
                  '    {Command::CUT, "cut", false, false, NULL, false,\n'
-                 '     &ETKT::cut},\n'
-                 '    {Command::FEED, "feed", false, false, NULL, 7, &f},\n'
+                 '     false, false, &ETKT::cut},\n'
+                 '    {Command::FEED, "feed", false, false, NULL, false,\n'
+                 '     false, 7, &f},\n'
                  '};')
         with self.assertRaises(firmware.FirmwareParseError) as caught:
             firmware.parse_commands(table)

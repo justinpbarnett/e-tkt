@@ -40,6 +40,7 @@ void Feeder::feed(int repeat) {
     this->stepper->runToNewPosition(this->stepper->currentPosition() +
                                     (FEED_MOTOR_STEPS_PER_REVOLUTION / 8) *
                                         direction);
+    this->fed++;
     delay(10);
   }
 
@@ -49,3 +50,5 @@ void Feeder::feed(int repeat) {
 }
 
 void Feeder::deenergize() { this->stepper->disableOutputs(); }
+
+long Feeder::feeds() const { return this->fed; }

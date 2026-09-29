@@ -17,8 +17,8 @@
 #include "esp_wifi.h"
 
 /**
- * @brief Manages connection to the network. 
- * 
+ * @brief Manages connection to the network.
+ *
  * @details Handles:
  *  - Setting up WiFi credentials, including creating a soft AP for
  *    configuration
@@ -29,13 +29,13 @@ class Network {
  private:
   // A hacky static workaround to make the softAPCallbackStatic method work.
   // Needed because of how the ESPAsyncWiFiManager library works.
-  static Network *instance;
+  static Network* instance;
 
-  Logger *logger;
-  AsyncWebServer *server;
-  DNSServer *dns;
-  Display *display;
-  ETKT *etkt;
+  Logger* logger;
+  AsyncWebServer* server;
+  DNSServer* dns;
+  Display* display;
+  ETKT* etkt;
 
   // WiFi reset button pin
   uint8_t resetPin;
@@ -43,8 +43,8 @@ class Network {
   /**
    * @brief A callback for when the captive portal is started.
    */
-  void softAPCallback(AsyncWiFiManager *wifi);
-  static void softAPCallbackStatic(AsyncWiFiManager *myAsyncWiFiManager);
+  void softAPCallback(AsyncWiFiManager* wifi);
+  static void softAPCallbackStatic(AsyncWiFiManager* myAsyncWiFiManager);
 
   /*
    * @brief Clears stored wifi credentials in response to a button press.
@@ -56,15 +56,23 @@ class Network {
    * the row that route was registered from, and says which body fields to
    * read; it points into static storage and outlives the request.
    */
-  void commandPostHandler(const CommandSpec *spec,
-                          AsyncWebServerRequest *request, JsonVariant &json);
-  void statusGetHandler(AsyncWebServerRequest *request);
-  void capabilitiesGetHandler(AsyncWebServerRequest *request);
-  void logGetHandler(AsyncWebServerRequest *request);
-  void notFoundHandler(AsyncWebServerRequest *request);
+  void commandPostHandler(const CommandSpec* spec,
+                          AsyncWebServerRequest* request, JsonVariant& json);
+  void statusGetHandler(AsyncWebServerRequest* request);
+
+  /**
+   * Handles a POST to /api/stop, which asks a run of labels to end once the
+   * label being pressed is cut. Answered while the machine is busy, which is
+   * the only time anyone asks, so it cannot be a row in ETKT::COMMANDS: those
+   * are refused while another command runs.
+   */
+  void stopPostHandler(AsyncWebServerRequest* request);
+  void capabilitiesGetHandler(AsyncWebServerRequest* request);
+  void logGetHandler(AsyncWebServerRequest* request);
+  void notFoundHandler(AsyncWebServerRequest* request);
 
  public:
-  Network(Logger *logger, Display *display, ETKT *etkt, uint8_t resetPin);
+  Network(Logger* logger, Display* display, ETKT* etkt, uint8_t resetPin);
   ~Network();
 
   /**
