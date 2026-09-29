@@ -47,6 +47,8 @@ Both are 1 to 9, both are refused outside that range at the HTTP boundary and cl
 
 **Label** - the text a user asks for.
 A **tag** is the command that prints one; the two words are used interchangeably in the older code and the command is named `tag` on the wire.
+A label is counted and walked in characters, not bytes, because the wheel's symbols are three bytes of UTF-8 each.
+`Utility::characters()` is the one walk: pressing a label, drawing it, playing it and checking it all go through it.
 
 **Printable set** - every character a label may contain: a space, plus every wheel character except the cut mark.
 `printableCharacters()`.

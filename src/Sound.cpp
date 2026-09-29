@@ -3,6 +3,8 @@
 #include <Arduino.h>
 #include <ESP32Tone.h>
 
+#include <vector>
+
 #include "CharacterSet.h"
 #include "Configuration.h"
 #include "Melody.h"
@@ -35,7 +37,8 @@ void Sound::play(String character, int duration) {
 void Sound::playLabel(String label) {
   // plays a music according to the label letters
 
-  int length = Utility::utf8Length(label);
+  const std::vector<String> characters = Utility::characters(label);
+  const int length = characters.size();
 
   for (int i = 0; i < length; i++) {
     if (this->stop->shouldStop()) {
@@ -51,21 +54,19 @@ void Sound::playLabel(String label) {
       duration = NOTE_DURATION_MAX;
     }
 
-    auto character = Utility::utf8CharAt(label, i);
-    this->play(character, duration);
+    this->play(characters[i], duration);
     delay(duration / 2);
   }
 }
 
 void Sound::playMelody(String notes, String durations) {
-  int length = Utility::utf8Length(notes);
+  const std::vector<String> characters = Utility::characters(notes);
 
-  for (int i = 0; i < length; i++) {
+  for (size_t i = 0; i < characters.size(); i++) {
     if (this->stop->shouldStop()) {
       return;
     }
-    auto character = Utility::utf8CharAt(notes, i);
-    auto frequency = characterNote(character);
+    auto frequency = characterNote(characters[i]);
     if (frequency == 0) {
       continue;
     }

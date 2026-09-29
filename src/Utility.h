@@ -2,24 +2,21 @@
 
 #include <Arduino.h>
 
+#include <vector>
+
 class Utility {
  public:
   /**
-   * @brief Returns the length of a UTF-8 encoded string, treating each UTF-8
-   * code-point as a single character.
+   * @brief Splits text into its characters, one per UTF-8 code point, in a
+   * single pass.
+   *
+   * Every walk over a label goes through this: pressing it, drawing it,
+   * playing it and checking it. The wheel's symbols are three bytes each, so
+   * a label's bytes are not its characters.
+   *
+   * A character cut short by the end of the text comes back as the bytes
+   * that are there, so a malformed label is refused by name rather than read
+   * past its end.
    */
-  static int utf8Length(String str);
-
-  /**
-   * @brief Returns the UTF-8 characters at the given position of the given
-   * string, treating multi-character code points as inidividual characters.
-   */
-  static String utf8CharAt(String str, int position);
-
-  /**
-   * @brief Returns the number of bytes making up the UTF-8 character starting
-   * at char index
-   * @see https://en.wikipedia.org/wiki/UTF-8#Encoding
-   */
-  static int utf8CharLength(String str, int position);
+  static std::vector<String> characters(const String& text);
 };

@@ -304,7 +304,7 @@ class ETKT {
    * A stop leaves the label on the tape as far as it got. Whether one did is
    * the StopSignal's cutShort(), rather than anything this returns.
    */
-  void printLabel(const String& label, int labelLength, int copy, int copies);
+  void printLabel(const String& label, int copy, int copies);
 
   /**
    * @brief Plays the tune that says a label has started: the label's own

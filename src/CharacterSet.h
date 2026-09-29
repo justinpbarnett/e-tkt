@@ -57,8 +57,8 @@ extern const std::map<String, String> CHARACTER_ALIASES;
  *
  * Characters outside the ASCII range are multi-byte UTF-8 and the returned
  * String carries their bytes, so callers must step through it by character
- * rather than by index. Utility::utf8CharAt does that; so does JavaScript's
- * for...of.
+ * rather than by index. Utility::characters() does that; so does
+ * JavaScript's for...of.
  *
  * The result is the whole answer to "may a label say this?". The webapp
  * fetches it at startup rather than keeping its own list, which is what

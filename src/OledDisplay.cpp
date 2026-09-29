@@ -5,6 +5,7 @@
 #include <qrcode.h>
 
 #include <map>
+#include <vector>
 
 #include "Configuration.h"
 #include "Progress.h"
@@ -117,7 +118,8 @@ void OledDisplay::playSplashScreen() {
 
   this->u8g2->setDrawColor(1);
 
-  int n = 1;
+  const std::vector<String> melody = Utility::characters(STARTUP_MELODY);
+  size_t n = 1;
 
   // animated splash
   for (int i = 128; i > 7; i = i - 18) {
@@ -125,9 +127,10 @@ void OledDisplay::playSplashScreen() {
       this->u8g2->drawXBM(i - j - 11, 8, 128, 32, etktLogo);
       this->u8g2->sendBuffer();
     }
-    auto character = Utility::utf8CharAt(STARTUP_MELODY, n);
-    if (character != " ") {
-      this->sound->play(character, 200);
+    // A frame past the end of the tune is a silent one, not a read past the
+    // end of it.
+    if (n < melody.size() && melody[n] != " ") {
+      this->sound->play(melody[n], 200);
     }
     n++;
   }
@@ -366,18 +369,17 @@ void OledDisplay::renderProgress(int charactersDone, const String& label,
   this->u8g2->setFont(u8g2_font_open_iconic_all_1x_t);
   this->u8g2->drawGlyph(3, 12, 0x0081);
 
-  auto labelLength = Utility::utf8Length(label);
+  const std::vector<String> characters = Utility::characters(label);
   int progress_width = 0;
   int total_width = 0;
 
   // Do a pass thorugh the label characters to see how much horizontal
   // space is needed to render all the characters and how wide the completed
   // progress bar will be.
-  for (int i = 0; i < labelLength; i++) {
-    auto character = Utility::utf8CharAt(label, i);
-    auto font = fontFor(character);
+  for (size_t i = 0; i < characters.size(); i++) {
+    auto font = fontFor(characters[i]);
     total_width += font.width;
-    if (i < charactersDone) {
+    if ((int)i < charactersDone) {
       progress_width += font.width;
     }
   }
@@ -393,8 +395,7 @@ void OledDisplay::renderProgress(int charactersDone, const String& label,
   // and just let the screen buffer clip the edges.
   int x_position = 0;
   const int y_position = 36;
-  for (int i = 0; i < labelLength; i++) {
-    auto character = Utility::utf8CharAt(label, i);
+  for (const String& character : characters) {
     auto font = fontFor(character);
     this->u8g2->setFont(font.font);
     auto characterX = x_position + font.width_offset - render_offset;
@@ -437,7 +438,7 @@ void OledDisplay::renderProgress(int charactersDone, const String& label,
   // than left over from the label: a label ending in a symbol leaves an icon
   // font selected, and the percentage came out in icons.
   String progressString =
-      String(progressPercent(charactersDone, labelLength)) + "%";
+      String(progressPercent(charactersDone, (int)characters.size())) + "%";
   this->u8g2->setDrawColor(1);
   this->u8g2->setFont(u8g2_font_6x13_te);
   this->u8g2->drawStr(6, 60, progressString.c_str());

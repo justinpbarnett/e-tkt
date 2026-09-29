@@ -2,7 +2,9 @@
 
 #include <Arduino.h>
 
-int Utility::utf8CharLength(String str, int position) {
+// How many bytes the UTF-8 character starting at `position` says it has.
+// See https://en.wikipedia.org/wiki/UTF-8#Encoding
+static int utf8CharLength(const String& str, int position) {
   // Cast, do not assume. The leading byte of a multi-byte character has its
   // high bit set, and these shifts only give the right answer if that bit is
   // not a sign bit. char happens to be unsigned on the xtensa toolchain, so
@@ -22,26 +24,18 @@ int Utility::utf8CharLength(String str, int position) {
   }
 }
 
-// Returns the length of a UTF-8 encoded string, treating each UTF-8 code-point
-// as a single character.
-int Utility::utf8Length(String str) {
-  int position = 0;
-  int length = 0;
-  while (position < str.length()) {
-    position += Utility::utf8CharLength(str, position);
-    length++;
+std::vector<String> Utility::characters(const String& text) {
+  // One pass. The walk this replaced found the i-th character by counting
+  // from the start of the label every time, so every loop over a label
+  // walked it once per character.
+  std::vector<String> out;
+  unsigned int position = 0;
+  while (position < text.length()) {
+    const int bytes = utf8CharLength(text, position);
+    // substring() stops at the end of the text, so a character cut short
+    // comes back as the bytes that are there.
+    out.push_back(text.substring(position, position + bytes));
+    position += bytes;
   }
-  return length;
-}
-
-// Returns the UTF-8 characters at the given position of the given string,
-// treating multi-character code points as inidividual characters.
-String Utility::utf8CharAt(String str, int position) {
-  int current = 0;
-  while (current < str.length() && position > 0) {
-    current += Utility::utf8CharLength(str, current);
-    position--;
-  }
-  int charLength = Utility::utf8CharLength(str, current);
-  return str.substring(current, current + charLength);
+  return out;
 }

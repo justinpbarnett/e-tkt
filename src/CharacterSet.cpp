@@ -72,9 +72,7 @@ String printableCharacters() {
 String unprintableCharacter(const String& label) {
   String printed = label;
   printed.toUpperCase();
-  const int length = Utility::utf8Length(printed);
-  for (int i = 0; i < length; i++) {
-    const String character = Utility::utf8CharAt(printed, i);
+  for (const String& character : Utility::characters(printed)) {
     if (!isPrintableCharacter(character)) {
       return character;
     }

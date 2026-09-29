@@ -5,6 +5,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <mutex>
+#include <vector>
 
 #include "CharacterSet.h"
 #include "Configuration.h"
@@ -522,11 +523,6 @@ void ETKT::tagCommandInternal() {
     this->logger->log(String("print ") + label);
   }
 
-  // What a label may say is CHARACTERS in CharacterSet.h, less the cut
-  // mark, plus the space. printableCharacters() is that list; the webapp
-  // fetches it rather than keeping one of its own.
-  int labelLength = Utility::utf8Length(label);
-
   this->ledChar->on(LIGHT_DIM);
 
   this->feedsAtLastCut = this->feeder->feeds();
@@ -545,7 +541,7 @@ void ETKT::tagCommandInternal() {
       this->playTune(label);
     }
 
-    this->printLabel(label, labelLength, copy, copies);
+    this->printLabel(label, copy, copies);
     this->accountForTape();
     if (this->stopSignal->cutShort()) {
       // Stopped partway through this label, which is left on the tape.
@@ -612,8 +608,13 @@ void ETKT::playTune(const String& label) {
   }
 }
 
-void ETKT::printLabel(const String& label, int labelLength, int copy,
-                      int copies) {
+void ETKT::printLabel(const String& label, int copy, int copies) {
+  // What a label may say is CHARACTERS in CharacterSet.h, less the cut
+  // mark, plus the space. printableCharacters() is that list; the webapp
+  // fetches it rather than keeping one of its own.
+  const std::vector<String> characters = Utility::characters(label);
+  const int labelLength = characters.size();
+
   // home daisy wheel
   this->daisywheel->home(this->settings->getAlignFactor());
 
@@ -623,7 +624,7 @@ void ETKT::printLabel(const String& label, int labelLength, int copy,
   }
 
   for (int i = 0; i < labelLength; i++) {
-    auto character = Utility::utf8CharAt(label, i);
+    const String& character = characters[i];
     // Only press what the wheel actually reached. move() logs the character
     // it could not find and cuts the coil current, which leaves the wheel
     // unreferenced and free to turn; pressing anyway embosses whichever slot

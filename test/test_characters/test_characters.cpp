@@ -10,6 +10,7 @@
 #include <unity.h>
 
 #include <set>
+#include <vector>
 
 #include "CharacterSet.h"
 #include "Utility.h"
@@ -54,15 +55,12 @@ void test_the_printable_set_holds_nothing_the_wheel_lacks(void) {
   // count matches, so there is nothing extra either.
   const String printable = printableCharacters();
   const int expected = 1 + (int)CHARACTERS.size() - 1;  // the space, less *
-  TEST_ASSERT_EQUAL_INT(expected, Utility::utf8Length(printable));
+  TEST_ASSERT_EQUAL_INT(expected, (int)Utility::characters(printable).size());
 }
 
 void test_no_character_is_printable_twice(void) {
-  const String printable = printableCharacters();
-  const int length = Utility::utf8Length(printable);
   std::set<std::string> seen;
-  for (int i = 0; i < length; i++) {
-    const String character = Utility::utf8CharAt(printable, i);
+  for (const String& character : Utility::characters(printableCharacters())) {
     TEST_ASSERT_TRUE_MESSAGE(seen.insert(std::string(character.c_str())).second,
                              character.c_str());
   }
@@ -170,33 +168,64 @@ void test_a_character_off_the_wheel_has_no_note(void) {
 }
 
 // --- walking a label -----------------------------------------------------
-// ETKT::tagCommandInternal steps a label with these two. They read the
-// leading byte of each character, and that byte has its high bit set for
-// every symbol on the wheel, so they only work if it is not read as a sign.
+// Every walk over a label goes through Utility::characters(): pressing it,
+// drawing it, playing it and checking it. The wheel's symbols are three
+// bytes of UTF-8 each, so a label's bytes are not its characters, and the
+// first byte of each symbol has its high bit set, so the walk only works if
+// that byte is not read as a sign.
 
-void test_a_symbol_counts_as_one_character(void) {
-  TEST_ASSERT_EQUAL_INT(1, Utility::utf8Length(String("♡")));
-  TEST_ASSERT_EQUAL_INT(1, Utility::utf8Length(String("☆")));
-  TEST_ASSERT_EQUAL_INT(1, Utility::utf8Length(String("♪")));
-  TEST_ASSERT_EQUAL_INT(1, Utility::utf8Length(String("€")));
+static std::vector<String> split(const char* text) {
+  return Utility::characters(String(text));
 }
 
-void test_a_label_of_symbols_and_letters_counts_right(void) {
-  TEST_ASSERT_EQUAL_INT(5, Utility::utf8Length(String("A♡B☆C")));
+void test_a_symbol_is_one_character(void) {
+  const char* symbols[] = {"♡", "☆", "♪", "€"};
+  for (const char* symbol : symbols) {
+    const std::vector<String> characters = split(symbol);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, (int)characters.size(), symbol);
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(symbol, characters[0].c_str(), symbol);
+  }
 }
 
-void test_a_symbol_comes_back_whole(void) {
-  TEST_ASSERT_TRUE(Utility::utf8CharAt(String("A♡B"), 1) == String("♡"));
-  TEST_ASSERT_TRUE(Utility::utf8CharAt(String("A♡B"), 2) == String("B"));
+void test_a_label_of_symbols_and_letters_splits_into_its_characters(void) {
+  const std::vector<String> characters = split("A♡B☆C");
+  const char* expected[] = {"A", "♡", "B", "☆", "C"};
+  TEST_ASSERT_EQUAL_INT(5, (int)characters.size());
+  for (int i = 0; i < 5; i++) {
+    TEST_ASSERT_EQUAL_STRING(expected[i], characters[i].c_str());
+  }
+}
+
+void test_an_empty_label_has_no_characters(void) {
+  TEST_ASSERT_EQUAL_INT(0, (int)split("").size());
+}
+
+// Four bytes is the longest a UTF-8 character gets. Nothing on the wheel is
+// that long, but a phone keyboard offers plenty that are, and one has to
+// come back whole for the refusal to name it.
+void test_a_four_byte_character_comes_back_whole(void) {
+  const std::vector<String> characters = split("A😀B");
+  TEST_ASSERT_EQUAL_INT(3, (int)characters.size());
+  TEST_ASSERT_EQUAL_STRING("😀", characters[1].c_str());
+  TEST_ASSERT_EQUAL_STRING("B", characters[2].c_str());
+}
+
+// A label that ends partway through a character, which only a hand-made
+// request can send. The walk stops at the end of the label rather than
+// reading past it, and hands back the bytes that are there.
+void test_a_character_cut_short_comes_back_as_what_is_left(void) {
+  const std::vector<String> characters = split("A\xE2\x99");
+  TEST_ASSERT_EQUAL_INT(2, (int)characters.size());
+  TEST_ASSERT_EQUAL_STRING("A", characters[0].c_str());
+  TEST_ASSERT_EQUAL_STRING("\xE2\x99", characters[1].c_str());
 }
 
 void test_every_wheel_symbol_survives_a_round_trip(void) {
   for (std::map<String, int>::const_iterator it = CHARACTERS.begin();
        it != CHARACTERS.end(); ++it) {
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, Utility::utf8Length(it->first),
-                                  it->first.c_str());
-    TEST_ASSERT_TRUE_MESSAGE(Utility::utf8CharAt(it->first, 0) == it->first,
-                             it->first.c_str());
+    const std::vector<String> characters = Utility::characters(it->first);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, (int)characters.size(), it->first.c_str());
+    TEST_ASSERT_TRUE_MESSAGE(characters[0] == it->first, it->first.c_str());
   }
 }
 
@@ -259,9 +288,11 @@ int main(int, char**) {
   RUN_TEST(test_a_zero_sounds_like_the_o_it_prints_as);
   RUN_TEST(test_the_cut_mark_has_no_note);
   RUN_TEST(test_a_character_off_the_wheel_has_no_note);
-  RUN_TEST(test_a_symbol_counts_as_one_character);
-  RUN_TEST(test_a_label_of_symbols_and_letters_counts_right);
-  RUN_TEST(test_a_symbol_comes_back_whole);
+  RUN_TEST(test_a_symbol_is_one_character);
+  RUN_TEST(test_a_label_of_symbols_and_letters_splits_into_its_characters);
+  RUN_TEST(test_an_empty_label_has_no_characters);
+  RUN_TEST(test_a_four_byte_character_comes_back_whole);
+  RUN_TEST(test_a_character_cut_short_comes_back_as_what_is_left);
   RUN_TEST(test_every_wheel_symbol_survives_a_round_trip);
   RUN_TEST(test_a_label_of_printable_characters_has_no_unprintable_one);
   RUN_TEST(test_an_empty_label_has_no_unprintable_character);

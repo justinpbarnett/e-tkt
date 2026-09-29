@@ -255,7 +255,7 @@ static bool readCommandOptions(const CommandSpec* spec,
     // the wheel instead, and DaisyWheel::move() is the one that knows which
     // slots exist.
     if (spec->fieldIsLabel) {
-      const int length = Utility::utf8Length(options->label);
+      const int length = Utility::characters(options->label).size();
       if (length > MAX_LABEL_CHARACTERS) {
         response_data->getRoot()["error"] =
             String("A ") + spec->labelField + " may be at most " +
