@@ -63,7 +63,7 @@ const CommandSpec ETKT::COMMANDS[] = {
      CommandFact::USES_ALIGN | CommandFact::USES_FORCE,
      &ETKT::saveCommandInternal},
     {Command::TAG, "tag", "tag",
-     CommandFact::FIELD_IS_LABEL | CommandFact::PRINTS_RUN |
+     CommandFact::TEXT_IS_LABEL | CommandFact::PRINTS_RUN |
          CommandFact::STOPPABLE | CommandFact::PRESSES_LABEL,
      &ETKT::tagCommandInternal},
     {Command::HOME, "home", NULL, CommandFact::STOPPABLE,

@@ -124,10 +124,10 @@ static bool readCommandOptions(const CommandSpec* spec,
                             &options->force, refusal)) {
     return false;
   }
-  if (spec->labelField != NULL) {
-    const char* text = body[spec->labelField].as<const char*>();
+  if (spec->textField != NULL) {
+    const char* text = body[spec->textField].as<const char*>();
     if (text == NULL) {
-      *refusal = String("Please provide a ") + spec->labelField + " value";
+      *refusal = String("Please provide a ") + spec->textField + " value";
       return false;
     }
     options->label = text;
@@ -135,10 +135,10 @@ static bool readCommandOptions(const CommandSpec* spec,
     // Only for a field that carries a label. A move's field names a slot on
     // the wheel instead, and DaisyWheel::move() is the one that knows which
     // slots exist.
-    if (spec->fieldIsLabel) {
+    if (spec->textIsLabel) {
       const int length = Utility::characters(options->label).size();
       if (length > MAX_LABEL_CHARACTERS) {
-        *refusal = String("A ") + spec->labelField + " may be at most " +
+        *refusal = String("A ") + spec->textField + " may be at most " +
                    MAX_LABEL_CHARACTERS + " characters, got " + length;
         return false;
       }
@@ -447,8 +447,8 @@ Reply Api::capabilities() {
     row["uses_align"] = spec.usesAlign;
     row["uses_force"] = spec.usesForce;
     // Null for a command that takes no text, so every row has every field.
-    row["label_field"] = spec.labelField;
-    row["field_is_label"] = spec.fieldIsLabel;
+    row["text_field"] = spec.textField;
+    row["text_is_label"] = spec.textIsLabel;
     row["prints_run"] = spec.printsRun;
     row["uses_roll_length"] = spec.usesRollLength;
     row["stoppable"] = spec.stoppable;

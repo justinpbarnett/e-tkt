@@ -54,7 +54,7 @@ enum class CommandFact : unsigned {
   NONE = 0,
   USES_ALIGN = 1u << 0,
   USES_FORCE = 1u << 1,
-  FIELD_IS_LABEL = 1u << 2,
+  TEXT_IS_LABEL = 1u << 2,
   PRINTS_RUN = 1u << 3,
   USES_ROLL_LENGTH = 1u << 4,
   STOPPABLE = 1u << 5,
@@ -87,14 +87,14 @@ constexpr bool holds(CommandFact facts, CommandFact fact) {
  */
 struct CommandSpec {
   constexpr CommandSpec(Command command, const char* name,
-                        const char* labelField, CommandFact facts,
+                        const char* textField, CommandFact facts,
                         void (ETKT::*run)())
       : command(command),
         name(name),
         usesAlign(holds(facts, CommandFact::USES_ALIGN)),
         usesForce(holds(facts, CommandFact::USES_FORCE)),
-        labelField(labelField),
-        fieldIsLabel(holds(facts, CommandFact::FIELD_IS_LABEL)),
+        textField(textField),
+        textIsLabel(holds(facts, CommandFact::TEXT_IS_LABEL)),
         printsRun(holds(facts, CommandFact::PRINTS_RUN)),
         usesRollLength(holds(facts, CommandFact::USES_ROLL_LENGTH)),
         stoppable(holds(facts, CommandFact::STOPPABLE)),
@@ -117,7 +117,7 @@ struct CommandSpec {
   // The body field this command's text arrives in, or NULL if it takes none.
   // Two commands take one and they disagree on the name: a tag is a whole
   // label, a move is a single character.
-  const char* labelField;
+  const char* textField;
 
   // Whether what arrives in that field is a label -- text to emboss -- rather
   // than the name of a slot on the wheel. A label is checked character by
@@ -128,8 +128,8 @@ struct CommandSpec {
   //
   // A move's field is not a label: it names a slot, the cut mark included,
   // and no label may say that. So the two commands that carry text need the
-  // two answers, which is why this cannot be read off labelField.
-  bool fieldIsLabel;
+  // two answers, which is why this cannot be read off textField.
+  bool textIsLabel;
 
   // Whether this command prints a run of labels: the same label pressed
   // "copies" times, each cut before the next. The body may say how many.

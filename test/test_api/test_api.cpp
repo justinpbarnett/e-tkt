@@ -718,22 +718,23 @@ void test_the_capabilities_list_every_command_that_can_be_asked_for(void) {
 }
 
 // Each row says what its command does, which is what the panel offers a
-// stop and counts a run by. The expected rows are written out by hand from
-// what each command is for, not read off the table they are checking.
+// stop, counts a run and words a stopped command by. The expected rows are
+// written out by hand from what each command is for, not read off the table
+// they are checking.
 void test_each_command_says_what_it_does(void) {
   struct Row {
     const char* name;
     bool usesAlign;
     bool usesForce;
-    const char* labelField;
-    bool fieldIsLabel;
+    const char* textField;
+    bool textIsLabel;
     bool printsRun;
     bool usesRollLength;
     bool stoppable;
     bool pressesLabel;
   };
   const Row rows[] = {
-      // name        align  force  field        label  run    roll   stop
+      // name        align  force  text         label  run    roll   stop
       // press
       {"cut", false, false, NULL, false, false, false, true, false},
       {"feed", false, false, NULL, false, false, false, true, false},
@@ -756,16 +757,17 @@ void test_each_command_says_what_it_does(void) {
                               expected.name);
     // A command that takes no text still has the field, as a null, so every
     // row has every field.
-    TEST_ASSERT_TRUE_MESSAGE(row.containsKey("label_field"), expected.name);
-    if (expected.labelField == NULL) {
-      TEST_ASSERT_TRUE_MESSAGE(row["label_field"].isNull(), expected.name);
+    TEST_ASSERT_TRUE_MESSAGE(row.containsKey("text_field"), expected.name);
+    if (expected.textField == NULL) {
+      TEST_ASSERT_TRUE_MESSAGE(row["text_field"].isNull(), expected.name);
     } else {
-      TEST_ASSERT_EQUAL_STRING_MESSAGE(expected.labelField,
-                                       row["label_field"].as<const char*>(),
+      TEST_ASSERT_EQUAL_STRING_MESSAGE(expected.textField,
+                                       row["text_field"].as<const char*>(),
                                        expected.name);
     }
-    TEST_ASSERT_EQUAL_MESSAGE(expected.fieldIsLabel,
-                              row["field_is_label"].as<bool>(), expected.name);
+    TEST_ASSERT_TRUE_MESSAGE(row.containsKey("text_is_label"), expected.name);
+    TEST_ASSERT_EQUAL_MESSAGE(expected.textIsLabel,
+                              row["text_is_label"].as<bool>(), expected.name);
     TEST_ASSERT_EQUAL_MESSAGE(expected.printsRun, row["prints_run"].as<bool>(),
                               expected.name);
     TEST_ASSERT_EQUAL_MESSAGE(expected.usesRollLength,
