@@ -168,7 +168,7 @@ void test_a_stop_as_the_wheel_reaches_the_slot_keeps_the_press_up(void) {
   // The last step onto the A, after which the wheel does not move again.
   charStepper->afterStep = [] {
     if (magnet->bearing() == slotOfA && charStepper->distanceToGo() == 0) {
-      stopSignal->raise();
+      stopSignal->raise(StopCause::OPERATOR);
     }
   };
 
@@ -200,12 +200,66 @@ void test_turning_to_a_slot_leaves_it_under_the_press(void) {
 // logged.
 void test_a_turn_that_does_not_arrive_says_so_unless_it_was_stopped(void) {
   printhead->turnTo("#", {5, 5});
-  stopSignal->raise();
+  stopSignal->raise(StopCause::OPERATOR);
   printhead->turnTo("A", {5, 5});
 
   const String log = logger->recent();
   TEST_ASSERT_TRUE(log.indexOf("The wheel would not reach '#'") >= 0);
   TEST_ASSERT_TRUE(log.indexOf("The wheel would not reach 'A'") < 0);
+}
+
+// --- a lost wheel ---------------------------------------------------------
+
+// A wheel that turned without finding its magnet cannot say which slot is
+// under the press, so the job ends there, through the same stop as the stop
+// button, and the stop says it was the wheel. Upstream logged the failure
+// and pressed every character after it into whichever slot came round.
+void test_a_lost_wheel_presses_nothing_and_stops_the_job(void) {
+  magnet->present = false;
+
+  printhead->stamp("A", {5, 5});
+
+  TEST_ASSERT_EQUAL_INT(0, (int)strokes->strokes.size());
+  TEST_ASSERT_TRUE(stopSignal->cause() == StopCause::HOMING);
+  TEST_ASSERT_TRUE(stopSignal->cutShort());
+}
+
+// Not only a character: every turn the printhead makes homes first, and
+// each one that finds no magnet ends the job the same way. The home and move
+// commands are nothing but the turn, so without this a lost wheel would end
+// them as if they had worked.
+void test_every_turn_of_a_lost_wheel_stops_the_job(void) {
+  magnet->present = false;
+  struct Turning {
+    const char* name;
+    void (*turn)();
+  };
+  const Turning turnings[] = {
+      {"home", [] { printhead->home({5, 5}); }},
+      {"turn to a slot", [] { printhead->turnTo("A", {5, 5}); }},
+      {"cut", [] { printhead->cut({5, 5}); }},
+      {"test press", [] { printhead->testPress({5, 5}); }},
+  };
+
+  for (size_t i = 0; i < sizeof(turnings) / sizeof(turnings[0]); i++) {
+    stopSignal->clear();
+    turnings[i].turn();
+    TEST_ASSERT_TRUE_MESSAGE(stopSignal->cause() == StopCause::HOMING,
+                             turnings[i].name);
+    TEST_ASSERT_TRUE_MESSAGE(stopSignal->cutShort(), turnings[i].name);
+  }
+  TEST_ASSERT_EQUAL_INT(0, (int)strokes->strokes.size());
+}
+
+// No job is running at boot, so there is none to end. A stop raised then
+// would be up when the first job started, and end it before it had begun.
+// The first character homes again, and finds out then.
+void test_a_wheel_lost_at_boot_raises_no_stop(void) {
+  magnet->present = false;
+
+  printhead->initialize({5, 5});
+
+  TEST_ASSERT_FALSE(stopSignal->raised());
 }
 
 // --- the cut ------------------------------------------------------------
@@ -245,7 +299,7 @@ void test_the_cut_comes_down_on_the_cut_mark(void) {
 void test_a_stop_during_the_cut_ends_it_after_that_press(void) {
   stubAfterDelay() = [] {
     if (!strokes->strokes.empty()) {
-      stopSignal->raise();
+      stopSignal->raise(StopCause::OPERATOR);
     }
   };
 
@@ -288,6 +342,9 @@ int main(int, char**) {
   RUN_TEST(test_a_stop_as_the_wheel_reaches_the_slot_keeps_the_press_up);
   RUN_TEST(test_turning_to_a_slot_leaves_it_under_the_press);
   RUN_TEST(test_a_turn_that_does_not_arrive_says_so_unless_it_was_stopped);
+  RUN_TEST(test_a_lost_wheel_presses_nothing_and_stops_the_job);
+  RUN_TEST(test_every_turn_of_a_lost_wheel_stops_the_job);
+  RUN_TEST(test_a_wheel_lost_at_boot_raises_no_stop);
   RUN_TEST(test_the_cut_presses_one_slot_three_times_at_the_jobs_force);
   RUN_TEST(test_the_cut_comes_down_on_the_cut_mark);
   RUN_TEST(test_a_stop_during_the_cut_ends_it_after_that_press);

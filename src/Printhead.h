@@ -37,6 +37,15 @@ class Printhead {
   Press* press;
   StopSignal* stop;
 
+  /**
+   * @brief What every turn of the wheel comes back through. A wheel that
+   * found no magnet cannot say which slot is under the press, so it stops
+   * the job, with the wheel as the cause.
+   *
+   * @return the turn, unchanged.
+   */
+  Turn stopIfLost(Turn turn);
+
  public:
   Printhead(Logger* logger, DaisyWheel* daisywheel, Press* press,
             StopSignal* stop);
@@ -47,7 +56,7 @@ class Printhead {
    *
    * The boot home is for reference only: every character homes again
    * before it counts from anywhere, so a wheel that stays lost here is not
-   * yet a job that fails.
+   * yet a job that fails, and raises no stop.
    */
   void initialize(const Calibration& calibration);
 
@@ -55,6 +64,10 @@ class Printhead {
    * @brief Finds the magnet and turns the home character under the press.
    *
    * A stop halts the wheel within a step, wherever it has got to.
+   *
+   * This and every call below that turns the wheel homes first. One that
+   * finds no magnet presses nothing and stops the job, with
+   * StopCause::HOMING, and the stop counts as obeyed.
    */
   void home(const Calibration& calibration);
 
@@ -62,9 +75,10 @@ class Printhead {
    * @brief Turns the wheel so a slot is under the press, and presses
    * nothing.
    *
-   * If the wheel will not get there the log says so, unless a stop is why:
-   * a wheel parked somewhere other than the slot that was asked for is
-   * worth hearing about.
+   * If the wheel does not carry the slot the log says so. A wheel parked
+   * somewhere other than the slot that was asked for is worth hearing
+   * about, and the other reasons it can be, a stop or a lost wheel, have
+   * said so already.
    */
   void turnTo(const String& slot, const Calibration& calibration);
 
@@ -83,8 +97,8 @@ class Printhead {
    * calibration's force.
    *
    * A stop is obeyed between the three presses, so it can leave the tape
-   * partly cut. If the wheel will not reach the cut mark nothing is pressed,
-   * and the log says why unless it was a stop.
+   * partly cut. If the wheel does not reach the cut mark nothing is
+   * pressed, and a wheel with no cut mark is logged.
    */
   void cut(const Calibration& calibration);
 

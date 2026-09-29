@@ -21,7 +21,7 @@ static long stopAtStep;
 static void countStep() {
   stepsTaken++;
   if (stepsTaken == stopAtStep) {
-    stop->raise();
+    stop->raise(StopCause::OPERATOR);
   }
 }
 
@@ -50,25 +50,50 @@ void test_a_new_signal_is_down(void) {
 void test_looking_at_a_stop_is_not_obeying_it(void) {
   // The status report looks while a job runs. If looking counted, every stop
   // that landed after the last label was cut would read as cutting it short.
-  stop->raise();
+  stop->raise(StopCause::OPERATOR);
   TEST_ASSERT_TRUE(stop->raised());
   TEST_ASSERT_FALSE(stop->cutShort());
 }
 
 void test_obeying_a_stop_is_remembered(void) {
-  stop->raise();
+  stop->raise(StopCause::OPERATOR);
   TEST_ASSERT_TRUE(stop->shouldStop());
   TEST_ASSERT_TRUE(stop->cutShort());
 }
 
 void test_clearing_forgets_both(void) {
-  stop->raise();
+  stop->raise(StopCause::OPERATOR);
   stop->shouldStop();
   stop->clear();
   TEST_ASSERT_FALSE(stop->raised());
   TEST_ASSERT_FALSE(stop->cutShort());
   TEST_ASSERT_FALSE(stop->shouldStop());
   TEST_ASSERT_FALSE(stop->cutShort());
+}
+
+// The operator is told why the job ended, so a stop keeps what raised it.
+void test_a_stop_says_what_raised_it(void) {
+  TEST_ASSERT_TRUE(stop->cause() == StopCause::NONE);
+  stop->raise(StopCause::HOMING);
+  TEST_ASSERT_TRUE(stop->raised());
+  TEST_ASSERT_TRUE(stop->cause() == StopCause::HOMING);
+}
+
+// A lost wheel stops the job, and the operator may press stop while the
+// machine parks. What ended the job was the wheel, so the first cause stands.
+void test_the_first_cause_of_a_stop_stands(void) {
+  stop->raise(StopCause::HOMING);
+  stop->raise(StopCause::OPERATOR);
+  TEST_ASSERT_TRUE(stop->cause() == StopCause::HOMING);
+}
+
+// The next job starts with no stop, and no reason for one.
+void test_clearing_forgets_the_cause(void) {
+  stop->raise(StopCause::OPERATOR);
+  stop->clear();
+  TEST_ASSERT_TRUE(stop->cause() == StopCause::NONE);
+  stop->raise(StopCause::HOMING);
+  TEST_ASSERT_TRUE(stop->cause() == StopCause::HOMING);
 }
 
 // --- moving --------------------------------------------------------------
@@ -95,7 +120,7 @@ void test_a_move_to_where_the_motor_is_takes_no_steps(void) {
 }
 
 void test_a_stop_already_up_takes_no_steps(void) {
-  stop->raise();
+  stop->raise(StopCause::OPERATOR);
   TEST_ASSERT_FALSE(runToNewPosition(stepper, 42, stop));
   TEST_ASSERT_EQUAL_INT32(0, stepsTaken);
   TEST_ASSERT_EQUAL_INT32(0, stepper->currentPosition());
@@ -137,6 +162,9 @@ int main(int, char**) {
   RUN_TEST(test_looking_at_a_stop_is_not_obeying_it);
   RUN_TEST(test_obeying_a_stop_is_remembered);
   RUN_TEST(test_clearing_forgets_both);
+  RUN_TEST(test_a_stop_says_what_raised_it);
+  RUN_TEST(test_the_first_cause_of_a_stop_stands);
+  RUN_TEST(test_clearing_forgets_the_cause);
   RUN_TEST(test_a_move_nobody_stops_arrives);
   RUN_TEST(test_a_move_goes_to_a_position_rather_than_by_a_distance);
   RUN_TEST(test_a_move_to_where_the_motor_is_takes_no_steps);

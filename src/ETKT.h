@@ -149,6 +149,13 @@ enum class PendingStop {
  */
 struct StoppedCommand {
   Command command = Command::IDLE;
+  // What stopped it: the operator, or a wheel that could not find home.
+  StopCause cause = StopCause::NONE;
+  // Which stop this was, so that two saying the same thing still differ and
+  // a panel can dismiss one without hiding the next. 0 while nothing has
+  // been stopped. Counts up from a random start at every boot, so a stop
+  // after a reboot is not taken for one dismissed before it.
+  uint32_t id = 0;
   // For a run of labels, how many were finished and cut before the stop, and
   // how many the run was. Both 0 for anything but a tag.
   int printed = 0;
@@ -239,6 +246,7 @@ class ETKT {
                  // running
   bool stoppingAfterLabel;     // see stopAfterLabel()
   StoppedCommand lastStopped;  // see StatusUpdate::stopped
+  uint32_t lastStopId;         // see StoppedCommand::id
   std::mutex lock;
 
   // What loop() waits on for a command, under the lock above. submit()

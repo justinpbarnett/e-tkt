@@ -8,6 +8,21 @@
 #include "StopSignal.h"
 
 /**
+ * @brief How a turn of the daisy wheel ended.
+ */
+enum class Turn {
+  // The slot asked for is under the press.
+  REACHED,
+  // The wheel does not carry the slot asked for, so it did not turn.
+  NO_SLOT,
+  // A stop halted the wheel, wherever it had got to.
+  STOPPED,
+  // Homing swept for the magnet and did not find it, so nothing counted
+  // from where the search gave up can be trusted.
+  LOST,
+};
+
+/**
  * @brief Controls the daisy wheel stepper motor and computes the geometry
  * necessary for moving it into the correct position.
  */
@@ -25,11 +40,11 @@ class DaisyWheel {
   // Every sibling here carries a starting value; this one did not, so
   // before home() ran it held whatever the allocation had in it.
   int currentChar = -1;
-  bool homed = false;
 
   /**
-   * @brief Forgets where the wheel is, after a stop left it somewhere
-   * between two places. The next move() homes before it counts from here.
+   * @brief Forgets where the wheel is, after a stop or a search that found
+   * no magnet left it somewhere unknown. The next move() homes before it
+   * counts from here.
    */
   void lose();
 
@@ -45,28 +60,25 @@ class DaisyWheel {
   void initialize();
 
   /**
-   * @brief Moves the daisy wheel home, which should be the letter "J".
+   * @brief Finds the magnet and turns the home character, the J, under the
+   * press, offset by the align.
    *
-   * A stop halts the wheel within a step, wherever it has got to, and leaves
-   * it unreferenced.
+   * REACHED once the J is there. LOST if a turn and a half of searching
+   * never showed the magnet to the hall sensor. STOPPED if a stop halted
+   * the wheel first, within a step, wherever it had got to. Either of the
+   * last two leaves the wheel unreferenced.
    */
-  void home(int align);
+  Turn home(int align);
 
   /**
-   * @brief Moves the daisy wheel to the provided character "c".
+   * @brief Turns the slot for character "c" under the press, homing first
+   * unless it is there already.
    *
-   * Returns false if the wheel did not get there: the wheel does not carry
-   * the character, or a stop halted it on the way. Either way the press must
-   * not come down.
+   * Anything but REACHED means the wheel did not get there, and the press
+   * must not come down: NO_SLOT if the wheel does not carry the character,
+   * and otherwise however the homing or the turn after it ended.
    */
-  bool move(String c, int alignFactor);
-
-  /**
-   * @brief True if the last home() found the hall trigger. False means the
-   * wheel swept its full search range without seeing the magnet, or a stop
-   * cut the homing short, and either way its position is unreferenced.
-   */
-  bool isHomed() { return this->homed; }
+  Turn move(String c, int alignFactor);
 
   /**
    * @brief Deactivates the daisy wheel stepper motor, potentially losing its

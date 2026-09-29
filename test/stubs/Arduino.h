@@ -93,6 +93,10 @@ inline void yield() {}
 inline unsigned long millis() { return stubClockMs(); }
 inline unsigned long micros() { return stubClockMs() * 1000UL + stubClockUs(); }
 
+// The ESP32 core's draws on the hardware random number generator. This one
+// answers the bottom of the range every time, so no test depends on luck.
+inline long random(long howsmall, long) { return howsmall; }
+
 // --- recorded pin writes ---------------------------------------------------
 
 struct StubPinWrite {

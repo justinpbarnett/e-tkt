@@ -36,7 +36,7 @@ void tearDown(void) {
 static void stopAt(unsigned long atMs) {
   stubAfterDelay() = [atMs]() {
     if (millis() >= atMs) {
-      stop->raise();
+      stop->raise(StopCause::OPERATOR);
     }
   };
 }

@@ -371,7 +371,10 @@ void Network::statusGetHandler(AsyncWebServerRequest* request) {
   // to cut short.
   if (status.stopped.command != Command::IDLE) {
     const JsonObject stopped = root.createNestedObject("stopped");
+    stopped["id"] = status.stopped.id;
     stopped["command"] = commandName(status.stopped.command);
+    stopped["cause"] =
+        status.stopped.cause == StopCause::HOMING ? "homing" : "operator";
     if (status.stopped.command == Command::TAG) {
       stopped["printed"] = status.stopped.printed;
       stopped["copies"] = status.stopped.copies;

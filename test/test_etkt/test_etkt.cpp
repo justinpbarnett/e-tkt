@@ -406,6 +406,7 @@ void test_a_run_stopped_partway_through_a_label_leaves_it_on_the_tape(void) {
   const StatusUpdate status = etkt->createStatus();
   TEST_ASSERT_EQUAL_INT(Command::IDLE, status.currentCommand);
   TEST_ASSERT_EQUAL_INT(Command::TAG, status.stopped.command);
+  TEST_ASSERT_TRUE(status.stopped.cause == StopCause::OPERATOR);
   TEST_ASSERT_EQUAL_INT(0, status.stopped.printed);
   TEST_ASSERT_EQUAL_INT(3, status.stopped.copies);
   TEST_ASSERT_TRUE(status.stopped.unfinished);
@@ -413,6 +414,46 @@ void test_a_run_stopped_partway_through_a_label_leaves_it_on_the_tape(void) {
   // never reached.
   TEST_ASSERT_EQUAL_INT(REST_ANGLE, pressServo->minAngle());
   TEST_ASSERT_TRUE(display->last(DisplayCall::RENDER_IDLE)->stopped);
+}
+
+// A wheel that turned without finding its magnet ends the run the way the
+// stop button does, and the panel is told it was the wheel. Pressing on
+// would put every character after it in the wrong slot.
+void test_a_lost_wheel_ends_the_run_and_says_why(void) {
+  magnet->present = false;
+  submitTag("AB", 3);
+
+  etkt->loop();
+
+  const StatusUpdate status = etkt->createStatus();
+  TEST_ASSERT_EQUAL_INT(Command::TAG, status.stopped.command);
+  TEST_ASSERT_TRUE(status.stopped.cause == StopCause::HOMING);
+  TEST_ASSERT_EQUAL_INT(0, status.stopped.printed);
+  // Found out by the home before the lead feed, so no tape has moved and
+  // there is nothing to cut off.
+  TEST_ASSERT_FALSE(status.stopped.unfinished);
+  TEST_ASSERT_EQUAL_INT(REST_ANGLE, pressServo->minAngle());
+  TEST_ASSERT_FALSE(charStepper->energized);
+  TEST_ASSERT_TRUE(display->last(DisplayCall::RENDER_IDLE)->stopped);
+}
+
+// Two stops in a row can say the same thing: two homes of a wheel that has
+// lost its magnet, one after the other. The panel tells stops apart by id,
+// so an operator who dismissed the first still hears about the second.
+void test_each_stop_is_told_apart_from_the_last(void) {
+  magnet->present = false;
+  submit(Command::HOME);
+  etkt->loop();
+  const StoppedCommand first = etkt->createStatus().stopped;
+
+  submit(Command::HOME);
+  etkt->loop();
+
+  const StoppedCommand second = etkt->createStatus().stopped;
+  TEST_ASSERT_TRUE(second.cause == StopCause::HOMING);
+  TEST_ASSERT_TRUE(first.id != 0);
+  TEST_ASSERT_TRUE(second.id != 0);
+  TEST_ASSERT_TRUE(first.id != second.id);
 }
 
 // The panel's stop button says which stop is on its way. A stop now
@@ -515,6 +556,8 @@ int main(int, char**) {
   RUN_TEST(test_saving_cannot_be_stopped);
   RUN_TEST(test_only_a_run_of_labels_can_stop_after_a_label);
   RUN_TEST(test_a_run_stopped_partway_through_a_label_leaves_it_on_the_tape);
+  RUN_TEST(test_a_lost_wheel_ends_the_run_and_says_why);
+  RUN_TEST(test_each_stop_is_told_apart_from_the_last);
   RUN_TEST(test_a_stop_now_overtakes_a_stop_after_the_label);
   RUN_TEST(test_a_run_stopped_after_a_label_finishes_that_label_only);
   RUN_TEST(test_a_stop_during_the_finish_ends_the_celebration);

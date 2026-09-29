@@ -148,6 +148,9 @@ class Server:
         # What the last stop cut short, until the next command is accepted,
         # as ETKT keeps lastStopped. None when there is nothing to say.
         self.stopped = None
+        # The last stop's id, as ETKT keeps lastStopId. See
+        # StoppedCommand::id.
+        self.last_stop_id = 0
         # What Roll keeps in EEPROM. Kept in memory here, so every start of
         # the simulator is a device that has never counted a roll.
         self.roll_mm = device.default_roll_mm
@@ -429,7 +432,10 @@ class Server:
             # Word for word what ETKT::loop() logs.
             self.record("INFO", "Stopped " + spec.name)
             await self.pause(STOPPING_SECONDS)
-            stopped = {'command': spec.name}
+            # Only the operator stops the simulator: it has no wheel to lose.
+            self.last_stop_id += 1
+            stopped = {'id': self.last_stop_id, 'command': spec.name,
+                       'cause': 'operator'}
             if spec.name == PRINTING_COMMAND:
                 stopped['printed'] = self.printed
                 stopped['copies'] = self.copies

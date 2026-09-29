@@ -20,8 +20,11 @@ Two characters can share one: the wheel carries no 0 and no 1, so those print fr
 `CHARACTER_ALIASES` says which, and the panel warns before the tape is spent rather than after.
 
 **Home** - the daisy wheel's known position, found by turning until the **hall switch** sees the magnet.
-Everything else is counted from there.
-`HallSwitch`, `DaisyWheel::home()`.
+Everything else is counted from there, so every turn to a slot homes first.
+A wheel that turns a turn and a half without the sensor seeing the magnet is **lost**: nothing counted from where the search gave up lands on the slot it was meant for.
+A job that finds the wheel lost presses nothing more and is stopped, with the wheel as the cause.
+Only the home at boot is let off, because every character homes again before it counts.
+`HallSwitch`, and `DaisyWheel::home()`, which answers with how the turn ended.
 
 **Press** - the servo-driven arm that drives the tape into the daisy wheel.
 `Press`.
@@ -155,7 +158,9 @@ The panel offers it, as the red stop button, for printing, the two tests and loa
 It is not a command: it does not wait its turn, because it is about the command that is running.
 A stop with nothing running is not an error, since the job may have just ended.
 `/api/status` reports one that has been asked for and not yet obeyed as `stop`, so a panel opened partway through a stop says so too.
-`ETKT::stop()`, and `StopSignal`, which carries it from the web server's task to the command loop.
+The operator is not the only cause: a job that finds the wheel **lost** stops itself the same way.
+The first cause stands, so pressing stop while a lost wheel parks does not hide why the job ended.
+`ETKT::stop()`, and `StopSignal`, which carries it from the web server's task to the command loop and keeps its cause.
 
 **Stop after this label** - `POST /api/stop?after=label`, for a run that is going fine and is longer than it needs to be.
 The run ends once the label being pressed is cut, so no tape is spent on a label nobody finishes.
@@ -164,6 +169,8 @@ Nothing is cut short, so it leaves no stopped record, and the run ends with the 
 `ETKT::stopAfterLabel()`.
 
 **Stopped** - what the last stop cut short: the command, how many of a run's labels were finished, and whether it left a label **unfinished** on the tape.
+It also says what stopped it, the operator or a lost wheel, and carries an id of its own, so two stops that say the same thing are still two stops and a panel can dismiss one without hiding the next.
+The ids count up from a random start at every boot, so a stop after a reboot is not taken for one dismissed before it.
 An unfinished label is still joined to the roll and would come out on the front of the next one, so the panel offers to cut it off.
 `/api/status` reports it as `stopped` until the next command is accepted, so a panel that was not watching when a job was stopped can still say it was.
 A stop that arrived as the job was finishing anyway, on the last press of the last cut or during the celebration after it, cut nothing short and leaves no record; the machine still skips what is left of the celebration, because a stop was asked for.

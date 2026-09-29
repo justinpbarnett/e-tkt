@@ -32,12 +32,12 @@ void DaisyWheel::initialize() {
   this->stepper->setEnablePin(PIN_STEPPER_CHAR_ENABLE);
 }
 
-void DaisyWheel::home(int align) {
+Turn DaisyWheel::home(int align) {
   // Before the coils are powered, so a stop that is already up leaves the
   // wheel as it was.
   if (this->stop->shouldStop()) {
     this->lose();
-    return;
+    return Turn::STOPPED;
   }
   this->stepper->enableOutputs();
   // runs the char stepper clockwise until triggering the hall sensor, then call
@@ -55,7 +55,7 @@ void DaisyWheel::home(int align) {
                 " because the hall sensor is already triggered.");
     if (!runToNewPosition(this->stepper, position, this->stop)) {
       this->lose();
-      return;
+      return Turn::STOPPED;
     }
   }
 
@@ -73,7 +73,7 @@ void DaisyWheel::home(int align) {
     if (this->stop->shouldStop()) {
       halt(this->stepper);
       this->lose();
-      return;
+      return Turn::STOPPED;
     }
     this->stepper->run();
     // TODO: less intrusive way to avoid triggering watchdog?
@@ -82,13 +82,13 @@ void DaisyWheel::home(int align) {
     hallState = hall->triggered();
   }
 
-  this->homed = hallState;
   if (!hallState) {
     logger->error(
         "HOMING FAILED: swept 1.5 revolutions with no hall trigger. "
         "Check the magnet on the hub, the sensor gap, and the 10k "
-        "pull-up to 3V3. Continuing with an unreferenced wheel -- "
-        "characters will be wrong until this is fixed.");
+        "pull-up to 3V3.");
+    this->lose();
+    return Turn::LOST;
   }
 
   this->stepper->setCurrentPosition(0);
@@ -98,7 +98,7 @@ void DaisyWheel::home(int align) {
                             (ASSEMBLY_CALIBRATION_ALIGN * stepsPerChar),
                         this->stop)) {
     this->lose();
-    return;
+    return Turn::STOPPED;
   }
   this->stepper->setCurrentPosition(0);
   // Where the wheel now is, asked of the same table every move consults.
@@ -114,17 +114,18 @@ void DaisyWheel::home(int align) {
   this->currentChar = homeChar;
 
   delay(100);
+  return Turn::REACHED;
 }
 
-bool DaisyWheel::move(String c, int alignFactor) {
+Turn DaisyWheel::move(String c, int alignFactor) {
   if (!ENABLE_DAISYWHEEL) {
     delay(500);
-    return true;
+    return Turn::REACHED;
   }
   // Before the coils are powered, so a stop that is already up leaves the
   // wheel as it was.
   if (this->stop->shouldStop()) {
-    return false;
+    return Turn::STOPPED;
   }
 
   // reaches out for a specific character
@@ -137,19 +138,19 @@ bool DaisyWheel::move(String c, int alignFactor) {
     // that can never happen, and this path used to return with it still hot.
     logger->error(String("No character '") + c + "' on the daisy wheel");
     this->deenergize();
-    return false;
+    return Turn::NO_SLOT;
   }
   if (charIndex == this->currentChar) {
     // No need to move, we're already there.
     logger->log("Already in position");
-    return true;
+    return Turn::REACHED;
   }
 
   // calls home everytime to avoid accumulating errors
-  this->home(alignFactor);
-  if (this->stop->shouldStop()) {
-    // home() gave up partway, so there is nowhere to count from.
-    return false;
+  const Turn homing = this->home(alignFactor);
+  if (homing != Turn::REACHED) {
+    // Nowhere to count from.
+    return homing;
   }
 
   auto charDelta = charIndex - this->currentChar;
@@ -163,7 +164,7 @@ bool DaisyWheel::move(String c, int alignFactor) {
   if (charDelta == 0) {
     // No need to move, we're already there
     logger->log("Already in position");
-    return true;
+    return Turn::REACHED;
   }
 
   // runs char stepper clockwise to reach the target position
@@ -171,19 +172,16 @@ bool DaisyWheel::move(String c, int alignFactor) {
   logger->log(String("Moving ") + charDelta + " characters to position " +
               position);
   if (!runToNewPosition(this->stepper, position, this->stop)) {
-    this->currentChar = -1;
-    return false;
+    this->lose();
+    return Turn::STOPPED;
   }
   this->currentChar = charIndex;
 
   delay(25);
-  return true;
+  return Turn::REACHED;
 }
 
-void DaisyWheel::lose() {
-  this->homed = false;
-  this->currentChar = -1;
-}
+void DaisyWheel::lose() { this->currentChar = -1; }
 
 void DaisyWheel::deenergize() {
   this->stepper->disableOutputs();

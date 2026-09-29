@@ -133,6 +133,7 @@ ETKT::ETKT(Logger* logger, Settings* settings, Display* display,
   // Nothing has fed yet, so there is nothing to charge.
   this->accountedFeeds = 0;
   this->feedsAtLastCut = 0;
+  this->lastStopId = 0;
   this->calibration.align = 0;
   this->calibration.force = 0;
 }
@@ -151,6 +152,8 @@ void ETKT::initialize() {
   this->display->initialize();
   this->printhead->initialize(this->savedCalibration());
   this->feeder->initialize();
+  // Where this boot's stop ids start. See StoppedCommand::id.
+  this->lastStopId = (uint32_t)random(0, 1L << 30);
 }
 
 Calibration ETKT::savedCalibration() {
@@ -227,7 +230,7 @@ StopResult ETKT::stop() {
   }
   // Under the lock, so the stop can only land on the command it was meant
   // for: loop() clears it under the same lock as it lets that command go.
-  this->stopSignal->raise();
+  this->stopSignal->raise(StopCause::OPERATOR);
   this->lock.unlock();
 
   this->logger->log("Stopping now");
@@ -321,7 +324,9 @@ void ETKT::loop() {
   this->lock.lock();
   if (stopped) {
     StoppedCommand record;
+    record.id = ++this->lastStopId;
     record.command = running;
+    record.cause = this->stopSignal->cause();
     if (running == Command::TAG) {
       record.printed = this->printed;
       record.copies = this->command->copies;

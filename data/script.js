@@ -1202,7 +1202,14 @@ function lastStop() {
   return stopped !== null && typeof stopped === "object" ? stopped : null;
 }
 
+// Every stop has an id of its own, so two that say the same thing are still
+// two stops, and dismissing the first does not hide the second. A device on
+// firmware older than this page sends none, and its stops are told apart by
+// what they say.
 function stopKey(stopped) {
+  if (Number.isInteger(stopped.id)) {
+    return String(stopped.id);
+  }
   return [stopped.command, stopped.printed, stopped.copies, stopped.unfinished].join();
 }
 
@@ -1219,9 +1226,19 @@ function stopNotice() {
   return state.stopNote === null ? null : { text: state.stopNote, unfinished: false };
 }
 
+// What a stop cut short, and why when it was not the stop button: the
+// operator who pressed that knows why.
+function stoppedText(stopped) {
+  const lost =
+    stopped.cause === "homing"
+      ? " The daisy wheel could not find its home. Check the magnet on the wheel and the hall sensor."
+      : "";
+  return stoppedWhat(stopped) + lost;
+}
+
 // Tape fed for a label that was then not finished is still in the machine,
 // and comes out on the front of the next label unless it is cut off first.
-function stoppedText(stopped) {
+function stoppedWhat(stopped) {
   const unfinished = stopped.unfinished === true;
   const cutFirst = " Cut it off before printing again.";
   switch (stopped.command) {

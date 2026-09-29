@@ -34,7 +34,7 @@ static long stopAtStep;
 static void countStep() {
   stepsTaken++;
   if (stepsTaken == stopAtStep) {
-    stop->raise();
+    stop->raise(StopCause::OPERATOR);
   }
 }
 
@@ -201,7 +201,7 @@ void test_the_coils_are_given_time_to_come_up_before_the_first_move(void) {
 
 void test_a_stop_before_a_feed_leaves_the_motor_alone(void) {
   feeder->initialize();
-  stop->raise();
+  stop->raise(StopCause::OPERATOR);
   feeder->feed(3);
   TEST_ASSERT_EQUAL_INT(0, stepper->countOf(StepperCall::ENABLE_OUTPUTS));
   TEST_ASSERT_EQUAL_INT(0, stepper->countOf(StepperCall::MOVE));
@@ -249,7 +249,7 @@ void test_a_feed_a_stop_cut_short_counts_as_a_whole_one(void) {
 void test_a_feed_that_finishes_before_a_stop_is_not_cut_short(void) {
   feeder->initialize();
   feeder->feed(2);
-  stop->raise();
+  stop->raise(StopCause::OPERATOR);
   TEST_ASSERT_EQUAL_INT32(2, feeder->feeds());
   TEST_ASSERT_FALSE(stop->cutShort());
 }

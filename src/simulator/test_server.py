@@ -62,6 +62,16 @@ class Gate:
         await self.opened.wait()
 
 
+def what_stopped(body):
+    """What the status says the last stop cut short, less the two fields
+    every stop here has: an id of its own, and the operator as its cause.
+    Stops.test_every_stop_has_an_id_of_its_own covers those two."""
+    stopped = dict(body["stopped"])
+    del stopped["id"]
+    del stopped["cause"]
+    return stopped
+
+
 def label_waits(label):
     """The waits one label takes: one for each character, one for the top-up
     and the cut, and one for the cut's last press, which no stop cuts short."""
@@ -320,7 +330,7 @@ class Stops(SimulatorTestCase):
         self.assertNotIn("stop", body)
         # The label being pressed is left on the tape, uncut.
         self.assertEqual({"command": "tag", "printed": 0, "copies": 3,
-                          "unfinished": True}, body["stopped"])
+                          "unfinished": True}, what_stopped(body))
         # The lead, and the character that was being pressed.
         self.assertEqual(3000 - 2 * 4, body["roll"]["remaining_mm"])
 
@@ -335,7 +345,7 @@ class Stops(SimulatorTestCase):
         await self.finish()
         body = await self.status()
         self.assertEqual({"command": "tag", "printed": 1, "copies": 3,
-                          "unfinished": True}, body["stopped"])
+                          "unfinished": True}, what_stopped(body))
         # The first label whole, then the second's lead and the three
         # characters it got to.
         used = self.device.label_feeds(7) + 1 + 3
@@ -350,7 +360,7 @@ class Stops(SimulatorTestCase):
         await self.finish()
         body = await self.status()
         self.assertEqual({"command": "tag", "printed": 0, "copies": 2,
-                          "unfinished": True}, body["stopped"])
+                          "unfinished": True}, what_stopped(body))
         self.assertEqual(3000 - self.device.label_feeds(2) * 4,
                          body["roll"]["remaining_mm"])
 
@@ -368,7 +378,7 @@ class Stops(SimulatorTestCase):
         body = await self.status()
         # Cut short, but with nothing left on the tape.
         self.assertEqual({"command": "tag", "printed": 1, "copies": 3,
-                          "unfinished": False}, body["stopped"])
+                          "unfinished": False}, what_stopped(body))
         self.assertEqual(3000 - self.device.label_feeds(2) * 4,
                          body["roll"]["remaining_mm"])
 
@@ -398,7 +408,7 @@ class Stops(SimulatorTestCase):
         await self.finish()
         body = await self.status()
         self.assertEqual({"command": "tag", "printed": 0, "copies": 3,
-                          "unfinished": True}, body["stopped"])
+                          "unfinished": True}, what_stopped(body))
         self.assertFalse(any("Stopped after" in line
                              for line in self.sim.log))
 
@@ -414,7 +424,7 @@ class Stops(SimulatorTestCase):
         # Only a run of labels says how far it got, and a feed presses no
         # label to leave behind.
         self.assertEqual({"command": "feed", "unfinished": False},
-                         body["stopped"])
+                         what_stopped(body))
         # Charged in full: the simulator cannot tell whether the feed had
         # begun.
         self.assertEqual(3000 - 1 * 4, body["roll"]["remaining_mm"])
@@ -427,7 +437,22 @@ class Stops(SimulatorTestCase):
         await self.finish()
         self.assertTrue(self.logged("Stopped testfull"))
         self.assertEqual({"command": "testfull", "unfinished": True},
-                         (await self.status())["stopped"])
+                         what_stopped(await self.status()))
+
+    async def test_every_stop_has_an_id_of_its_own(self):
+        # Two stops that say the same thing, which the panel tells apart by
+        # id: one dismissed does not hide the next.
+        ids = []
+        for _ in range(2):
+            self.gate.opened.clear()
+            await self.post("/api/feed", {})
+            await self.post("/api/stop")
+            self.gate.opened.set()
+            await self.finish()
+            stopped = (await self.status())["stopped"]
+            self.assertEqual("operator", stopped["cause"])
+            ids.append(stopped["id"])
+        self.assertNotEqual(ids[0], ids[1])
 
     async def test_saving_cannot_be_stopped(self):
         self.gate.opened.clear()
