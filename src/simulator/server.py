@@ -1,7 +1,7 @@
 """A stand-in for the machine, so data/ can be worked on without one.
 
 Serves the same files the device serves out of SPIFFS, and answers the same
-endpoints it answers out of Network.cpp -- one POST per runnable row of the
+endpoints it answers out of Api.cpp -- one POST per runnable row of the
 command table, plus stop, status, capabilities and the log. None of that is
 written down here. firmware.py reads it out of src/, so a command added to
 the device shows up in the simulator with nothing to remember.
@@ -76,7 +76,7 @@ COMMAND_FEEDS = {
 # Word for word what PrinterBusyException says in src/ETKT.h.
 BUSY_MESSAGE = "The printer is already busy executing a command."
 
-# Word for word what Network::stopPostHandler() answers.
+# Word for word what Api::stop() answers.
 STOP_AFTER_MESSAGE = ("Please provide after=label to stop once the label "
                       "being pressed is cut, or leave it out to stop now")
 UNSTOPPABLE_MESSAGE = "The command running now cannot be stopped"
@@ -169,7 +169,7 @@ class Server:
         ]
 
         # One route per runnable command, straight off the firmware's table,
-        # exactly as Network.cpp::initialize() builds the real ones.
+        # exactly as Api::route() answers the real ones.
         for spec in self.device.routes():
             routes.append(web.post('/api/' + spec.name, self.endpoint(spec)))
 
@@ -224,7 +224,7 @@ class Server:
         return web.json_response(body)
 
     async def stop(self, request):
-        """Mirrors Network::stopPostHandler(), ETKT::stop() and
+        """Mirrors Api::stop(), ETKT::stop() and
         ETKT::stopAfterLabel()."""
         # In the query string rather than a body, so a stop is one bare POST.
         after = request.query.get('after')
@@ -275,7 +275,7 @@ class Server:
                 'length_um': self.device.feed_length_um,
                 'lead': self.device.lead_feeds,
             },
-            # Every row with a route, keyed by name, as Network.cpp serves
+            # Every row with a route, keyed by name, as Api.cpp serves
             # them. The panel offers a stop, and counts a run, by these.
             'commands': {spec.name: {
                 'uses_align': spec.uses_align,
@@ -399,13 +399,11 @@ class Server:
             return None, self.refuse(missing)
         value = _as_int(body[field])
         if not self.device.valid_calibration(value):
-            # "a align" reads wrong and is deliberate: Network.cpp builds
-            # this message by concatenation and does not special-case the
-            # article. Both sides saying the same words is worth more here
-            # than the grammar.
+            # Word for word what readCalibrationField() in Api.cpp says,
+            # which is the message for a missing field with the range added.
             return None, self.refuse(
-                "Please provide a %s value between %d and %d, got %d"
-                % (field, self.device.calibration_min,
+                "%s between %d and %d, got %d"
+                % (missing, self.device.calibration_min,
                    self.device.calibration_max, value))
         return value, None
 

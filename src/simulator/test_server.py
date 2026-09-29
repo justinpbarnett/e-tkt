@@ -1,4 +1,4 @@
-"""Checks that the simulator answers the way Network.cpp does.
+"""Checks that the simulator answers the way Api.cpp does.
 
 test_firmware.py covers what the simulator reads out of src/. This covers
 what it does with it: the requests it refuses and in what words, the runs of

@@ -20,7 +20,7 @@
  * no cable in it used to be unable to say anything at all about what it had
  * just done: ENABLE_SERIAL either sent everything down a USB port somebody had
  * to be watching, or dropped it. recent() holds the last LOG_HISTORY_LINES
- * either way, timestamped, so Network can serve them to a browser on the
+ * either way, timestamped, so the Api can serve them to a browser on the
  * same wifi.
  *
  * The buffer deliberately does not depend on ENABLE_SERIAL. Turning the serial

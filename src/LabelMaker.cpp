@@ -33,6 +33,7 @@
 #include <Arduino.h>
 #include <U8g2lib.h>
 
+#include "Api.h"
 #include "ArduinoDrivers.h"
 #include "Configuration.h"
 #include "DaisyWheel.h"
@@ -96,7 +97,10 @@ Printhead* printhead = new Printhead(logger, daisywheel, press, stopSignal);
 Feeder* feeder = new Feeder(logger, feedStepper, stopSignal);
 ETKT* etkt = new ETKT(logger, settings, display, printhead, feeder, roll, sound,
                       ledFinish, ledChar, stopSignal);
-Network* network = new Network(logger, display, etkt, WIFI_RESET_PIN);
+// Everything the device answers under /api/, which the webserver hands every
+// such request to.
+Api* api = new Api(etkt, logger);
+Network* network = new Network(logger, display, api, WIFI_RESET_PIN);
 
 void setup() {
   // Initialize hardware

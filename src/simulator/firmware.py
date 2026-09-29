@@ -91,7 +91,7 @@ class Firmware:
         return None
 
     def routes(self):
-        """The commands that get a POST endpoint. Mirrors Network.cpp."""
+        """The commands that get a POST endpoint. Mirrors Api::route()."""
         return [spec for spec in self.commands if spec.runnable]
 
     def valid_calibration(self, value):

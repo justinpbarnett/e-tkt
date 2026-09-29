@@ -107,7 +107,7 @@ void test_peak_never_exceeds_servo_range(void) {
 
 // --- calibration value validation ----------------------------------------
 // align and force are both 1-9 in the UI, and a POST of 0 used to reach
-// EEPROM unchallenged. Network.cpp refuses out-of-range values outright
+// EEPROM unchallenged. Api.cpp refuses out-of-range values outright
 // rather than clamping, because a clamp is silent: the panel would report the
 // save succeeded while the machine ran on a different number.
 

@@ -195,6 +195,13 @@ So the job runner and every module it drives build against recording fakes on a 
 Adapters: `ArduinoDrivers.h` and `OledDisplay` for the device, `test/fakes` for the tests.
 `test/stubs` stands in for the rest of what the board supplies: the Arduino core, Preferences and the sounder.
 
+**Api** - `Api.cpp`, everything the device answers under `/api/`.
+That is the routes, the checks on a request, the words of every refusal, and the JSON of every reply.
+It takes a `Request` and gives back a `Reply`, so the host tests check every reply.
+The webserver in `Network.cpp` is an adapter in front of it.
+It turns each HTTP request under `/api/` into a `Request`, sends the `Reply` back as it comes, and has no rules of its own.
+A reply too large for its document is a 500 and not a reply with fields missing, and every 500 also goes in the **log**.
+
 **Per-machine calibration** - `Machine.h`.
 The seven numbers that differ between two physically built E-TKTs: the two press angles, the press bite, the hall sensor's polarity and threshold, the align offset, and the feeder direction.
 Everything that is the same on every E-TKT ever built stays in `Configuration.h`.

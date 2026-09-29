@@ -1,20 +1,12 @@
 #pragma once
 
 #include <Arduino.h>
-#include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
 #include <ESPAsyncWiFiManager.h>
-#include <ESPmDNS.h>
-#include <WiFi.h>
 
-#include "ArduinoJson.h"
-#include "AsyncJson.h"
-#include "Configuration.h"
+#include "Api.h"
 #include "Display.h"
-#include "ETKT.h"
 #include "Logger.h"
-#include "SPIFFS.h"
-#include "esp_wifi.h"
 
 /**
  * @brief Manages connection to the network.
@@ -22,7 +14,8 @@
  * @details Handles:
  *  - Setting up WiFi credentials, including creating a soft AP for
  *    configuration
- *  - Serving the web interface and API endpoints
+ *  - Serving the web interface, and handing every request under /api/ to the
+ *    Api, which answers it
  *  - Advertising the device over MDNS.
  */
 class Network {
@@ -35,7 +28,7 @@ class Network {
   AsyncWebServer* server;
   DNSServer* dns;
   Display* display;
-  ETKT* etkt;
+  Api* api;
 
   // WiFi reset button pin
   uint8_t resetPin;
@@ -51,33 +44,12 @@ class Network {
    */
   void clearWiFiCredentials();
 
-  /**
-   * Handles a POST to /api/<name> for any command in ETKT::COMMANDS. spec is
-   * the row that route was registered from, and says which body fields to
-   * read; it points into static storage and outlives the request.
-   */
-  void commandPostHandler(const CommandSpec* spec,
-                          AsyncWebServerRequest* request, JsonVariant& json);
-  void statusGetHandler(AsyncWebServerRequest* request);
-
-  /**
-   * Handles a POST to /api/stop, which stops what the machine is doing now,
-   * or with ?after=label asks a run of labels to end once the label being
-   * pressed is cut. Answered while the machine is busy, which is the only time
-   * anyone asks, so it cannot be a row in ETKT::COMMANDS: those are refused
-   * while another command runs.
-   */
-  void stopPostHandler(AsyncWebServerRequest* request);
-  void capabilitiesGetHandler(AsyncWebServerRequest* request);
-  void logGetHandler(AsyncWebServerRequest* request);
-  void notFoundHandler(AsyncWebServerRequest* request);
-
  public:
-  Network(Logger* logger, Display* display, ETKT* etkt, uint8_t resetPin);
+  Network(Logger* logger, Display* display, Api* api, uint8_t resetPin);
   ~Network();
 
   /**
-   * Connects to the network, starts the captive portal if necessary, and starst
+   * Connects to the network, starts the captive portal if necessary, and starts
    * the webapp's server.
    */
   void initialize();

@@ -5,10 +5,9 @@
 // stopped, what a stop leaves on the tape, what the panel is told afterwards
 // -- and until these tests the only way to check one was a real machine and
 // a real roll of tape. The machine here is the real one, module for module,
-// with fakes where it meets the hardware: FakeServo and FakeStepper for the
-// three motors, FakeDisplay for the OLED, and the stubs for the core, the
-// sounder and the EEPROM. A stop arrives the way it does on the board, from
-// outside the job while the job waits or turns a motor.
+// with fakes where it meets the hardware: a HostMachine, which the Api's
+// tests build too. A stop arrives the way it does on the board, from outside
+// the job while the job waits or turns a motor.
 //
 // Run with:  pio test -e native
 #include <unity.h>
@@ -17,23 +16,12 @@
 #include <vector>
 
 #include "Arduino.h"
-#include "DaisyWheel.h"
-#include "ETKT.h"
-#include "FakeDisplay.h"
-#include "FakeDrivers.h"
-#include "FakeMagnet.h"
-#include "Feeder.h"
-#include "HallSwitch.h"
-#include "Light.h"
-#include "Logger.h"
-#include "Press.h"
-#include "Printhead.h"
-#include "Roll.h"
-#include "Settings.h"
-#include "Sound.h"
-#include "StopSignal.h"
-#include "StrokeLog.h"
+#include "HostMachine.h"
 
+static HostMachine* machine;
+
+// The machine's modules by name, so a test reads as it would against the
+// modules themselves.
 static FakeServo* pressServo;
 static FakeStepper* charStepper;
 static FakeStepper* feedStepper;
@@ -42,69 +30,28 @@ static FakeMagnet* magnet;
 static StrokeLog* strokes;
 
 static Logger* logger;
-static StopSignal* stopSignal;
-static Sound* sound;
 static Settings* settings;
 static Roll* roll;
-static Light* ledFinish;
-static Light* ledChar;
-static Press* press;
-static HallSwitch* hall;
-static DaisyWheel* daisywheel;
-static Printhead* printhead;
 static Feeder* feeder;
 static ETKT* etkt;
 
 void setUp(void) {
   stubReset();
-  pressServo = new FakeServo();
-  charStepper = new FakeStepper();
-  feedStepper = new FakeStepper();
-  display = new FakeDisplay();
-  // Anywhere but where the shaft starts, so the boot home has to find it.
-  magnet = new FakeMagnet(charStepper, 1000);
-  magnet->install();
-  strokes = new StrokeLog(pressServo, magnet);
-
-  logger = new Logger();
-  stopSignal = new StopSignal();
-  sound = new Sound(stopSignal);
-  settings = new Settings(logger);
-  roll = new Roll(logger);
-  ledFinish = new Light(FINISH_LED_PIN, stopSignal);
-  ledChar = new Light(CHARACTER_LED_PIN, stopSignal);
-  press = new Press(logger, SERVO_PIN, ledChar, pressServo);
-  hall = new HallSwitch(logger, HALL_PIN);
-  daisywheel = new DaisyWheel(logger, hall, charStepper, stopSignal);
-  printhead = new Printhead(logger, daisywheel, press, stopSignal);
-  feeder = new Feeder(logger, feedStepper, stopSignal);
-  etkt = new ETKT(logger, settings, display, printhead, feeder, roll, sound,
-                  ledFinish, ledChar, stopSignal);
-  etkt->initialize();
-  display->clear();
+  machine = new HostMachine();
+  pressServo = &machine->pressServo;
+  charStepper = &machine->charStepper;
+  feedStepper = &machine->feedStepper;
+  display = &machine->display;
+  magnet = &machine->magnet;
+  strokes = &machine->strokes;
+  logger = &machine->logger;
+  settings = &machine->settings;
+  roll = &machine->roll;
+  feeder = &machine->feeder;
+  etkt = &machine->etkt;
 }
 
-void tearDown(void) {
-  delete etkt;
-  delete feeder;
-  delete printhead;
-  delete daisywheel;
-  delete hall;
-  delete press;
-  delete ledChar;
-  delete ledFinish;
-  delete roll;
-  delete settings;
-  delete sound;
-  delete stopSignal;
-  delete logger;
-  delete strokes;
-  delete magnet;
-  delete display;
-  delete feedStepper;
-  delete charStepper;
-  delete pressServo;
-}
+void tearDown(void) { delete machine; }
 
 static void submit(Command command) {
   CommandOptions options;

@@ -21,6 +21,7 @@
 //     outlives any one module the way flash outlives a reboot. ESP32Tone
 //     records every note, and ESP.restart() counts the reboots it would have
 //     done.
+//   - The heap has as much memory free as a test says it has.
 //
 // Everything is header-only and every piece of recorded state lives in a
 // function-local static, so there is no companion .cpp to keep in the build.
@@ -164,6 +165,19 @@ inline int& stubRestarts() {
   return restarts;
 }
 
+// --- memory ----------------------------------------------------------------
+
+// What the heap says it has free. See esp_heap_caps.h beside this file.
+struct StubHeap {
+  size_t freeBytes;
+  size_t largestFreeBlockBytes;
+};
+
+inline StubHeap& stubHeap() {
+  static StubHeap heap = {0, 0};
+  return heap;
+}
+
 inline void stubReset() {
   stubClockMs() = 0;
   stubClockUs() = 0;
@@ -176,6 +190,8 @@ inline void stubReset() {
   stubNvs().clear();
   stubTones().clear();
   stubRestarts() = 0;
+  stubHeap().freeBytes = 0;
+  stubHeap().largestFreeBlockBytes = 0;
 }
 
 inline void pinMode(uint8_t, uint8_t) {}
@@ -256,6 +272,10 @@ class String {
   int indexOf(const String& needle) const {
     const size_t at = this->value.find(needle.value);
     return at == std::string::npos ? -1 : (int)at;
+  }
+
+  bool startsWith(const String& prefix) const {
+    return this->value.compare(0, prefix.value.length(), prefix.value) == 0;
   }
 };
 
