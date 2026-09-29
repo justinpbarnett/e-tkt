@@ -210,27 +210,24 @@ Reply Api::route(const Request& request) {
     }
   }
 
-  if (request.path == "/api/stop") {
-    return request.method == Method::POST ? this->stop(request)
-                                          : wrongMethod(request, Method::POST);
-  }
-
-  if (request.path == "/api/capabilities") {
-    return request.method == Method::GET ? this->capabilities()
-                                         : wrongMethod(request, Method::GET);
-  }
-
-  if (request.path == "/api/status") {
-    return request.method == Method::GET ? this->status()
-                                         : wrongMethod(request, Method::GET);
-  }
-
-  // What the machine has been doing. Plain text, because the only reader is
-  // somebody stood at the bench opening http://e-tkt.local/api/log in a
-  // phone browser to find out why the last label came out wrong.
-  if (request.path == "/api/log") {
-    return request.method == Method::GET ? this->log()
-                                         : wrongMethod(request, Method::GET);
+  // Every other route, each with the one method it answers to.
+  struct Route {
+    const char* path;
+    Method method;
+    Reply (Api::*answer)(const Request& request);
+  };
+  static const Route routes[] = {
+      {"/api/stop", Method::POST, &Api::stop},
+      {"/api/capabilities", Method::GET, &Api::capabilities},
+      {"/api/status", Method::GET, &Api::status},
+      {"/api/log", Method::GET, &Api::log},
+  };
+  for (const Route& route : routes) {
+    if (request.path == route.path) {
+      return request.method == route.method
+                 ? (this->*route.answer)(request)
+                 : wrongMethod(request, route.method);
+    }
   }
   return errorReply(404, "Not found");
 }
@@ -286,7 +283,7 @@ Reply Api::command(const CommandSpec* spec, const Request& request) {
 }
 
 // What the device is doing, which the panel polls once a second.
-Reply Api::status() {
+Reply Api::status(const Request& /*request*/) {
   DynamicJsonDocument doc(STATUS_JSON_BYTES);
   const StatusUpdate status = this->etkt->createStatus();
   doc["progress"] = status.progress;
@@ -385,7 +382,7 @@ Reply Api::stop(const Request& request) {
 // a literal in calibrationValuesReady(). Only the constants reach the check
 // that actually refuses a bad value, so the other three were a promise the
 // panel made on the device's behalf.
-Reply Api::capabilities() {
+Reply Api::capabilities(const Request& /*request*/) {
   DynamicJsonDocument doc(CAPABILITIES_JSON_BYTES);
 
   doc["printable"] = printableCharacters();
@@ -460,7 +457,10 @@ Reply Api::capabilities() {
 // The last lines the device logged, oldest first. Until this existed the only
 // way to read them was a USB cable and a serial monitor, which is a problem
 // for a machine that is on a bench, on wifi, and printing a label wrong.
-Reply Api::log() {
+// Plain text, because the only reader is somebody stood at the bench opening
+// http://e-tkt.local/api/log in a phone browser to find out why the last
+// label came out wrong.
+Reply Api::log(const Request& /*request*/) {
   Reply reply = {200, TEXT_TYPE, this->logger->recent(), NULL};
   return reply;
 }

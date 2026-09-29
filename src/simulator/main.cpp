@@ -307,23 +307,12 @@ class Simulator {
   }
 
   /**
-   * @brief Drops what the fakes and the stubs recorded.
-   *
-   * They record for tests, which read the recording afterwards. The
-   * simulator reads none of it, and a day of labels would record millions of
-   * steps. The last stroke stays, since StrokeLog adds to it while the press
-   * is down.
+   * @brief Drops what the fakes and the stubs recorded, which the simulator
+   * never reads. See HostMachine::forget().
    */
   void forget() {
     if (this->machine != NULL) {
-      this->machine->pressServo.calls.clear();
-      this->machine->charStepper.calls.clear();
-      this->machine->feedStepper.calls.clear();
-      this->machine->display.calls.clear();
-      std::vector<Stroke>& strokes = this->machine->strokes.strokes;
-      if (strokes.size() > 1) {
-        strokes.erase(strokes.begin(), strokes.end() - 1);
-      }
+      this->machine->forget();
     }
     stubAnalogWrites().clear();
     stubDigitalWrites().clear();

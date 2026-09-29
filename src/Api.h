@@ -69,12 +69,13 @@ class Api {
   Reply route(const Request& request);
 
   // One per route, each answering a request the route's method and path have
-  // already matched.
+  // already matched. The routes that are not commands are a table in route(),
+  // so each takes the request whether it reads it or not.
   Reply command(const CommandSpec* spec, const Request& request);
-  Reply status();
+  Reply status(const Request& request);
   Reply stop(const Request& request);
-  Reply capabilities();
-  Reply log();
+  Reply capabilities(const Request& request);
+  Reply log(const Request& request);
 
  public:
   // The longest body a command may send. Several times what the longest label

@@ -13,6 +13,8 @@
 // constructor returns the machine has booted: the wheel has found home, and
 // the screen's record of what booting drew is cleared.
 
+#include <vector>
+
 #include "Arduino.h"
 #include "DaisyWheel.h"
 #include "ETKT.h"
@@ -74,5 +76,25 @@ class HostMachine {
     this->magnet.install();
     this->etkt.initialize();
     this->display.clear();
+  }
+
+  /**
+   * @brief Drops what the fakes have recorded so far.
+   *
+   * They record for tests, which read the recording afterwards. The
+   * simulator runs its machine for longer than any test and reads none of
+   * it, and a day of labels would record millions of steps. The last stroke
+   * stays, since StrokeLog adds to it while the press is down, and the servo
+   * stays attached, which FakeServo::clear() would undo.
+   */
+  void forget() {
+    this->pressServo.calls.clear();
+    this->charStepper.clear();
+    this->feedStepper.clear();
+    this->display.clear();
+    std::vector<Stroke>& made = this->strokes.strokes;
+    if (made.size() > 1) {
+      made.erase(made.begin(), made.end() - 1);
+    }
   }
 };
