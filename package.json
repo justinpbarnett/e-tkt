@@ -1,0 +1,12 @@
+{
+  "name": "e-tkt-panel",
+  "private": true,
+  "description": "The panel's tests, run by node with nothing to install. The type is what lets node load the modules in data/ as the browser does.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test \"test/panel/*.test.js\""
+  }
+}

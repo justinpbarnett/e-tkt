@@ -424,7 +424,7 @@ Reply Api::capabilities() {
   // What the panel needs to work out how much tape a label takes: how far a
   // feed moves it, and the blank feed ahead of every label. The rest of the
   // rule -- a feed per character, and the top-up to label.minimum -- is
-  // labelFeeds() in Tape.h, which script.js restates.
+  // labelFeeds() in Tape.h, which data/tape.js restates.
   const JsonObject feed = doc.createNestedObject("feed");
   feed["length_um"] = FEED_LENGTH_UM;
   feed["lead"] = LEAD_FEEDS;

@@ -399,21 +399,16 @@ class Panel(RelayTestCase):
         with open(os.path.join(ROOT, "data", "style.css"), "rb") as sheet:
             self.assertEqual(sheet.read(), await response.read())
 
-    async def test_the_panel_has_words_for_every_command_the_firmware_offers(
+    async def test_the_panel_tests_use_the_capabilities_the_firmware_serves(
             self):
-        # data/script.js warns in the console when the two disagree, where
-        # nobody at the bench looks. This is the same check, where a
-        # disagreement fails.
+        # test/panel/ holds every decision the panel makes to the reply in
+        # capabilities.json, the wording for each command among them. A copy
+        # that drifted from the firmware would keep those tests passing
+        # against a device that no longer exists.
         response = await self.client.get("/api/capabilities")
-        offered = set((await response.json())["commands"])
-        with open(os.path.join(ROOT, "data", "script.js"),
-                  encoding="utf-8") as script:
-            source = script.read()
-        table = re.search(r"const COMMAND_LABELS = \{(.*?)\n\};", source,
-                          re.S)
-        self.assertIsNotNone(table, "no COMMAND_LABELS table in script.js")
-        named = set(re.findall(r"^\s*(\w+):", table.group(1), re.M))
-        self.assertEqual(offered, named)
+        with open(os.path.join(ROOT, "test", "panel", "capabilities.json"),
+                  encoding="utf-8") as reply:
+            self.assertEqual(json.load(reply), await response.json())
 
 
 class Text(RelayTestCase):

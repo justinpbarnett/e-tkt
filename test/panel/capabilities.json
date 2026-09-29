@@ -1,0 +1,120 @@
+{
+  "printable": " $-.0123456789@ABCDEFGHIJKLMNOPQRSTUVWXYZ€☆♡♪",
+  "aliases": {
+    "0": "O",
+    "1": "I"
+  },
+  "calibration": {
+    "min": 1,
+    "max": 9
+  },
+  "label": {
+    "minimum": 6,
+    "maximum": 249
+  },
+  "copies": {
+    "minimum": 1,
+    "maximum": 500
+  },
+  "roll": {
+    "minimum_mm": 500,
+    "maximum_mm": 10000,
+    "default_mm": 3000
+  },
+  "feed": {
+    "length_um": 4000,
+    "lead": 1
+  },
+  "commands": {
+    "cut": {
+      "uses_align": false,
+      "uses_force": false,
+      "label_field": null,
+      "field_is_label": false,
+      "prints_run": false,
+      "uses_roll_length": false,
+      "stoppable": true,
+      "presses_label": false
+    },
+    "feed": {
+      "uses_align": false,
+      "uses_force": false,
+      "label_field": null,
+      "field_is_label": false,
+      "prints_run": false,
+      "uses_roll_length": false,
+      "stoppable": true,
+      "presses_label": false
+    },
+    "reel": {
+      "uses_align": false,
+      "uses_force": false,
+      "label_field": null,
+      "field_is_label": false,
+      "prints_run": false,
+      "uses_roll_length": true,
+      "stoppable": true,
+      "presses_label": false
+    },
+    "testalign": {
+      "uses_align": true,
+      "uses_force": false,
+      "label_field": null,
+      "field_is_label": false,
+      "prints_run": false,
+      "uses_roll_length": false,
+      "stoppable": true,
+      "presses_label": false
+    },
+    "testfull": {
+      "uses_align": true,
+      "uses_force": true,
+      "label_field": null,
+      "field_is_label": false,
+      "prints_run": false,
+      "uses_roll_length": false,
+      "stoppable": true,
+      "presses_label": true
+    },
+    "save": {
+      "uses_align": true,
+      "uses_force": true,
+      "label_field": null,
+      "field_is_label": false,
+      "prints_run": false,
+      "uses_roll_length": false,
+      "stoppable": false,
+      "presses_label": false
+    },
+    "tag": {
+      "uses_align": false,
+      "uses_force": false,
+      "label_field": "tag",
+      "field_is_label": true,
+      "prints_run": true,
+      "uses_roll_length": false,
+      "stoppable": true,
+      "presses_label": true
+    },
+    "home": {
+      "uses_align": false,
+      "uses_force": false,
+      "label_field": null,
+      "field_is_label": false,
+      "prints_run": false,
+      "uses_roll_length": false,
+      "stoppable": true,
+      "presses_label": false
+    },
+    "move": {
+      "uses_align": false,
+      "uses_force": false,
+      "label_field": "character",
+      "field_is_label": false,
+      "prints_run": false,
+      "uses_roll_length": false,
+      "stoppable": true,
+      "presses_label": false
+    }
+  }
+}

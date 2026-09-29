@@ -121,7 +121,7 @@ So the panel warns when a print looks like more than is left, but does not refus
 
 **Labels that fit** - how many of a label the tape left holds, each one taking the lead, a feed per character and the top-up, and the cut taking none.
 Rounded down, because a label that would run off the end of the tape is not one that fits.
-`labelsThatFit()` in `Tape.h`, restated in `script.js`, which is where it is used.
+`labelsThatFit()` in `Tape.h`, restated in `data/tape.js`, which is where it is used.
 
 ## Commands
 
@@ -226,3 +226,6 @@ A wait takes its time on the machine divided by `--speed`, and a move of the whe
 **Panel** - the web UI in `data/`, served from SPIFFS.
 It asks the device what it will accept at startup (`/api/capabilities`) instead of deciding for itself.
 It polls `/api/status` every second, and every five while the page is hidden, so the tape left and a label sent from another phone show without a reload.
+`script.js` reads the page and draws it.
+What the page says and decides is worked out in the ES modules beside it, which never touch the page, so `node --test "test/panel/*.test.js"` covers them.
+`test/panel/capabilities.json` is the `/api/capabilities` reply those tests run against, and the simulator's tests hold it to the firmware's.
