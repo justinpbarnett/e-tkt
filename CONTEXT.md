@@ -157,9 +157,10 @@ The seven numbers that differ between two physically built E-TKTs: the two press
 Everything that is the same on every E-TKT ever built stays in `Configuration.h`.
 The question that decides which file a value belongs in is "would you change this when you build a second machine from the same design?".
 
-**Bench rig** - a `BENCH_*` block in `Configuration.h` that replaces `loop()` with a jig for teaching one of those numbers: sweeping the servo, watching the hall sensor.
-Lifted into `BenchRigs` so the device's own code does not carry them.
-They come out once the last machine is built.
+**Bench rig** - a firmware of its own that proves out one part of the machine or teaches one of those numbers, such as sweeping the servo or watching the hall sensor.
+Each one is a file in `src/bench/` with its own `setup()` and `loop()`, built by its own `bench-*` env in place of `LabelMaker.cpp`, so the label maker carries none of them and every one of them still compiles.
+A rig uses the label maker's own modules, so the hall rig reads the sensor through `HallSwitch` and sees the same edges that homing sees.
+Flash `serial-upload` afterwards to put the label maker back.
 
 **Simulator** - `src/simulator`, a Python stand-in that serves the panel without a machine.
 It reads the descriptor table, the character set, the calibration range and the tape's numbers out of `src/` rather than restating them, because when it restated them it drifted and every button returned a 404.

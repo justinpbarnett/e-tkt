@@ -30,10 +30,10 @@
 
 // --- press --------------------------------------------------------------
 // LOW angle drives the press INTO the daisy wheel, HIGH swings it clear.
-// Teach these with BENCH_SERVO_TEST (Configuration.h), then read
-// docs/diy/assembly/04_servo.md: power the board FIRST so the servo homes to
-// REST_ANGLE, and only then push the P_press on with its lateral line 100%
-// vertical. Fitting the part first and teaching angles afterwards gives a
+// Teach these with the servo bench rig (src/bench/servo.cpp, env:bench-servo),
+// then read docs/diy/assembly/04_servo.md: power the board FIRST so the servo
+// homes to REST_ANGLE, and only then push the P_press on with its lateral line
+// 100% vertical. Fitting the part first and teaching angles afterwards gives a
 // stroke roughly twice as long as the design intends.
 //
 // REST_ANGLE: press clear of the wheel, P_press lateral line vertical here.
@@ -56,8 +56,9 @@
 // and stops, instead of driving to the "J" position.
 #define INVERT_HALL_SENSOR_LOGIC false
 // analogRead() below this counts as the magnet being present, out of 4096.
-// Sweep the wheel with BENCH_HALL_MONITOR and put this between the two
-// readings. Machine 1, measured 2026-09-18: magnet present 0, clear 4095.
+// The hall bench rig (src/bench/hall.cpp, env:bench-hall) sweeps the wheel and
+// logs the lowest and highest readings: put this between them. Machine 1,
+// measured 2026-09-18: magnet present 0, clear 4095.
 #define HALL_SENSOR_THRESHOLD 128
 // Nudges the home position to take up the slack in where the sensor ended up
 // sitting. -1.0 to 1.0, in characters.

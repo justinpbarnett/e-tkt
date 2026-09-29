@@ -34,7 +34,6 @@
 #include <U8g2lib.h>
 
 #include "ArduinoDrivers.h"
-#include "BenchRigs.h"
 #include "Characters.h"
 #include "Configuration.h"
 #include "DaisyWheel.h"
@@ -93,11 +92,9 @@ HallSwitch* hall = new HallSwitch(logger, HALL_PIN);
 DaisyWheel* daisywheel =
     new DaisyWheel(logger, hall, characters, settings, charStepper, stopSignal);
 Feeder* feeder = new Feeder(logger, feedStepper, stopSignal);
-BenchRigs* benchRigs =
-    new BenchRigs(logger, sound, press, feeder, ledChar, ledFinish);
 ETKT* etkt =
     new ETKT(logger, settings, characters, display, daisywheel, hall, feeder,
-             roll, press, sound, ledFinish, ledChar, stopSignal, benchRigs);
+             roll, press, sound, ledFinish, ledChar, stopSignal);
 Network* network = new Network(logger, display, etkt, WIFI_RESET_PIN);
 
 void setup() {

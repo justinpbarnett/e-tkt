@@ -20,6 +20,7 @@ void HallSwitch::initialize() {
 }
 
 bool HallSwitch::triggered() {
-  return (analogRead(this->pin) < HALL_SENSOR_THRESHOLD) ^
-         INVERT_HALL_SENSOR_LOGIC;
+  return (this->reading() < HALL_SENSOR_THRESHOLD) ^ INVERT_HALL_SENSOR_LOGIC;
 }
+
+int HallSwitch::reading() { return analogRead(this->pin); }

@@ -7,7 +7,6 @@
 #include <mutex>
 #include <thread>
 
-#include "BenchRigs.h"
 #include "Characters.h"
 #include "Configuration.h"
 #include "DaisyWheel.h"
@@ -240,9 +239,6 @@ class ETKT {
   Characters* characters;
   Roll* roll;
 
-  // Temporary. Delete with the rest of BenchRigs once machine 3 is finished.
-  BenchRigs* benchRigs;
-
   // Device state, which should only ever be modified inside an exclusive lock.
   CommandOptions* command = NULL;
   int progress;  // percent, 0 to 99. See Progress.h.
@@ -336,7 +332,7 @@ class ETKT {
   ETKT(Logger* logger, Settings* settings, Characters* characters,
        Display* display, DaisyWheel* daisywheel, HallSwitch* hall,
        Feeder* feeder, Roll* roll, Press* press, Sound* sound, Light* ledFinish,
-       Light* ledChar, StopSignal* stopSignal, BenchRigs* benchRigs);
+       Light* ledChar, StopSignal* stopSignal);
   ~ETKT();
 
   /**

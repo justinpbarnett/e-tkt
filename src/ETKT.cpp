@@ -112,8 +112,7 @@ const char* commandName(Command command) {
 ETKT::ETKT(Logger* logger, Settings* settings, Characters* characters,
            Display* display, DaisyWheel* daisywheel, HallSwitch* hall,
            Feeder* feeder, Roll* roll, Press* press, Sound* sound,
-           Light* ledFinish, Light* ledChar, StopSignal* stopSignal,
-           BenchRigs* benchRigs) {
+           Light* ledFinish, Light* ledChar, StopSignal* stopSignal) {
   // Upstream never assigned this one, and initialize() dereferences it on its
   // first line. It only ever worked because Logger holds no state, so the
   // uninitialised pointer was never actually read through.
@@ -130,7 +129,6 @@ ETKT::ETKT(Logger* logger, Settings* settings, Characters* characters,
   this->ledChar = ledChar;
   this->characters = characters;
   this->stopSignal = stopSignal;
-  this->benchRigs = benchRigs;
 
   this->command = NULL;
   this->progress = 0;
@@ -154,21 +152,13 @@ void ETKT::initialize() {
   this->ledFinish->initialize();
   this->ledChar->initialize();
   this->sound->initialize();
-
-  this->benchRigs->beforePeripherals();
   this->settings->initialize();
   this->roll->initialize();
   this->display->initialize();
   this->hall->initialize();
   this->press->initialize();
   this->feeder->initialize();
-
-  this->benchRigs->beforeHoming();
-
   this->daisywheel->initialize();
-
-  // The feeder bench rig feeds at boot. If there is tape in, that was tape.
-  this->accountForTape();
 }
 
 StatusUpdate ETKT::createStatus() {
