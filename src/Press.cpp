@@ -6,6 +6,7 @@
 #include "Drivers.h"
 #include "Light.h"
 #include "Logger.h"
+#include "Motion.h"
 #include "PressGeometry.h"
 
 Press::Press(Logger* logger, uint8_t pin, Light* pressLed, ServoDriver* servo) {
@@ -53,14 +54,12 @@ void Press::settle(int angle, int holdMs) {
 }
 
 // How long sweep() and settle() take, for pressUs().
-static unsigned long sweepMs(int fromAngle, int toAngle, int stepMs) {
-  return (abs(toAngle - fromAngle) + 1) * stepMs;
+static unsigned long sweepUs(int fromAngle, int toAngle, int stepMs) {
+  return (abs(toAngle - fromAngle) + 1) * stepMs * 1000UL;
 }
 
-static unsigned long settleMs(int holdMs) {
-  // Whole settle steps, until holdMs is covered.
-  const int steps = (holdMs + PRESS_SETTLE_STEP_MS - 1) / PRESS_SETTLE_STEP_MS;
-  return steps * PRESS_SETTLE_STEP_MS;
+static unsigned long settleUs(int holdMs) {
+  return waitedUs(holdMs * 1000UL, PRESS_SETTLE_STEP_MS * 1000UL);
 }
 
 static int rampStepMs(bool strong, bool slow) {
@@ -111,10 +110,8 @@ unsigned long Press::pressUs(bool strong, int force) const {
   const int peakAngle =
       pressPeakAngle(REST_ANGLE, STAMP_ANGLE, PRESS_BITE_AT_MAX_FORCE, force);
   // In to the peak and the dwell there, then out to rest and the dwell there.
-  const unsigned long ms =
-      sweepMs(REST_ANGLE, peakAngle, stepMs) + settleMs(PRESS_DWELL_MS) +
-      sweepMs(peakAngle, REST_ANGLE, stepMs) + settleMs(PRESS_DWELL_MS);
-  return ms * 1000UL;
+  return sweepUs(REST_ANGLE, peakAngle, stepMs) + settleUs(PRESS_DWELL_MS) +
+         sweepUs(peakAngle, REST_ANGLE, stepMs) + settleUs(PRESS_DWELL_MS);
 }
 
 void Press::rest() { this->servo->write(REST_ANGLE); }

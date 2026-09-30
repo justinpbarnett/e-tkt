@@ -15,3 +15,17 @@ export function labelMaker() {
 export function capabilitiesReply() {
   return JSON.parse(readFileSync(new URL("capabilities.json", import.meta.url), "utf8"));
 }
+
+// What the page knows of the command running, as script.js hands it to
+// activity() and stopOffer() in status.js and to timeLeftText() in
+// timing.js: a cut the device has reported, but for what overrides says.
+export function running(overrides) {
+  return {
+    command: "cut",
+    status: { busy: true, command: "cut" },
+    stop: null,
+    sentCopies: null,
+    offline: false,
+    ...overrides,
+  };
+}

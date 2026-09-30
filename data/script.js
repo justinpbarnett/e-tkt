@@ -707,8 +707,8 @@ function scheduleEstimate() {
 // Only while the run could be printed: the time is under the print button,
 // and says how long pressing it would take.
 async function askEstimate() {
-  const run = formRun();
-  if (run === null || runningCommand() !== null || state.missedPolls >= OFFLINE_AFTER_MISSES) {
+  const run = printableRun();
+  if (run === null) {
     return;
   }
   const request = state.estimates.ask(run);
@@ -791,16 +791,22 @@ function formRun() {
   return { tag: buildTreatedLabel().toLowerCase(), copies: copies, cut: el.cutInput.checked };
 }
 
-function canPrint() {
-  return runningCommand() === null && state.missedPolls < OFFLINE_AFTER_MISSES && formRun() !== null;
+// The run on the form while pressing print would send it: the machine is
+// idle and in touch, and the form has a run the device would take. null
+// otherwise. The print button and the estimate under it both go by this.
+function printableRun() {
+  if (runningCommand() !== null || state.missedPolls >= OFFLINE_AFTER_MISSES) {
+    return null;
+  }
+  return formRun();
 }
 
 // sends the label to the device
 async function printLabels() {
-  if (!canPrint()) {
+  const run = printableRun();
+  if (run === null) {
     return;
   }
-  const run = formRun();
   // Puts a phone's keyboard away, so the label printing is what is on screen.
   el.input.blur();
   state.sentCopies = run.copies;
@@ -1254,8 +1260,9 @@ function renderPrintView(running, offer, focused) {
 
   // print, or what the machine is doing instead
   const run = formRun();
+  const printable = printableRun();
   setText(el.printButton, chosen.printText);
-  el.printButton.disabled = busy || offline || run === null;
+  el.printButton.disabled = printable === null;
   el.printButton.hidden = busy;
   el.activity.hidden = !busy;
   if (busy) {
@@ -1270,7 +1277,7 @@ function renderPrintView(running, offer, focused) {
   }
 
   // and how long it takes
-  if (!busy && !offline && run !== null && !state.estimates.askedLast(run)) {
+  if (printable !== null && !state.estimates.askedLast(printable)) {
     scheduleEstimate();
   }
   setText(el.timeNote, timeText(running, device, state.estimates.text(run)));

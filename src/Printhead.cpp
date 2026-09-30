@@ -36,7 +36,7 @@ Turn Printhead::stopIfLost(Turn turn) {
   return turn;
 }
 
-bool Printhead::readyToPress(Turn turn) {
+bool Printhead::waitToPress(Turn turn) {
   if (turn != Turn::REACHED) {
     return false;
   }
@@ -64,7 +64,7 @@ void Printhead::stamp(const String& character, const Calibration& calibration) {
   }
   const Turn turn =
       this->stopIfLost(this->daisywheel->move(character, calibration.align));
-  if (this->readyToPress(turn)) {
+  if (this->waitToPress(turn)) {
     this->press->press(false, calibration.force, false);
   }
 }
@@ -83,13 +83,13 @@ void Printhead::cut(const Calibration& calibration) {
   if (turn == Turn::NO_SLOT) {
     this->logger->warn("Skipped the cut: the wheel would not reach the mark");
   }
-  if (this->readyToPress(turn)) {
+  if (this->waitToPress(turn)) {
     this->press->press(true, calibration.force, false);
   }
 }
 
 void Printhead::testPress(const Calibration& calibration) {
-  if (!this->readyToPress(
+  if (!this->waitToPress(
           this->stopIfLost(this->daisywheel->move("M", calibration.align)))) {
     return;
   }
@@ -119,19 +119,29 @@ unsigned long Printhead::homeUs(const Calibration& calibration) const {
   return this->daisywheel->homeUs(CHAR_HOME_CHARACTER, calibration.align);
 }
 
-unsigned long Printhead::stampUs(const String& from, const String& character,
+unsigned long Printhead::stampUs(String* wheel, const String& character,
                                  unsigned long tapeUs,
                                  const Calibration& calibration) const {
   // Nothing to turn to or press, and stamp() does not wait for the tape.
-  if (wheelSlot(character) < 0) {
+  if (character == " ") {
     return tapeUs;
   }
-  return this->pressedUs(from, character, tapeUs, false, calibration);
+  if (wheelSlot(character) < 0) {
+    *wheel = "";
+    return tapeUs;
+  }
+  const unsigned long us =
+      this->pressedUs(*wheel, character, tapeUs, false, calibration);
+  *wheel = character;
+  return us;
 }
 
-unsigned long Printhead::cutUs(const String& from, unsigned long tapeUs,
+unsigned long Printhead::cutUs(String* wheel, unsigned long tapeUs,
                                const Calibration& calibration) const {
-  return this->pressedUs(from, CUT_CHARACTER, tapeUs, true, calibration);
+  const unsigned long us =
+      this->pressedUs(*wheel, CUT_CHARACTER, tapeUs, true, calibration);
+  *wheel = CUT_CHARACTER;
+  return us;
 }
 
 unsigned long Printhead::pressedUs(const String& from, const String& slot,

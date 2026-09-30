@@ -10,7 +10,7 @@ import {
   readCapabilities,
   stopOffer,
 } from "../../data/status.js";
-import { capabilitiesReply, labelMaker } from "./device.js";
+import { capabilitiesReply, labelMaker, running } from "./device.js";
 
 test("the label maker's capabilities read as the numbers the panel works from", () => {
   // Everything the panel validates and counts with arrives in this one reply,
@@ -105,19 +105,6 @@ test("a status is a run being printed only while the device prints one", () => {
   // does.
   assert.equal(printingRun(printing, null), null);
 });
-
-// What the page knows of the command running, as it hands it to activity()
-// and stopOffer(): here, a cut the device has reported.
-function running(overrides) {
-  return {
-    command: "cut",
-    status: { busy: true, command: "cut" },
-    stop: null,
-    sentCopies: null,
-    offline: false,
-    ...overrides,
-  };
-}
 
 test("a command that prints no labels has no number to show while it runs", () => {
   // The device counts progress only through the labels it presses, so

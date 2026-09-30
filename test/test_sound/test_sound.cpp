@@ -1,4 +1,4 @@
-// Host-side tests for the tune a job opens with, and how long it takes.
+// Host-side tests for the tune a run opens with, and how long it takes.
 //
 // The buzzer is ESP32Tone's, stubbed in test/stubs/ESP32Tone.h: every note
 // is recorded, and holds up the caller for its length on the virtual clock,

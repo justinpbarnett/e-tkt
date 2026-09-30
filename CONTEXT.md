@@ -167,7 +167,7 @@ It builds and runs on a host against fakes, so `test/test_etkt` checks those rul
 **Busy** - a command is running.
 The machine runs one at a time, and a second request is refused with a 409: the request was fine, the machine was not.
 
-**Run** - one `tag` request for more than one label: the same label pressed `copies` times, one after another.
+**Run** - one `tag` request: the same label pressed `copies` times, one after another.
 Whether a command prints one is a **command fact**, and `tag` is the only command it holds for.
 `copies` is 1 to `MAX_COPIES`, and a request without it prints one.
 `cut` says whether each label is cut off as it finishes, and a request without it cuts.

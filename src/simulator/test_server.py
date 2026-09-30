@@ -314,21 +314,24 @@ class Pacing(RelayTestCase):
 
     async def test_a_status_has_the_time_it_was_answered_at(self):
         # Partway through a wait too, such as the tune a run starts with: the
-        # machine's clock is never already at the end of it. Between the
-        # wall clock's times either side of each ask, give or take what the
-        # host is late by.
-        late = 20
+        # machine's clock is never already at the end of it, which would put
+        # it ahead of the wall clock. It is at most a millisecond ahead,
+        # the one it has just moved into, and idle it is set to the wall
+        # clock's millisecond below. A host that is late, or busy, leaves
+        # the machine behind by as long, so from below all there is to say
+        # is that the clock moves on.
         first_asked, first, first_answered = await self.uptime()
         await self.press(" HELLO ")
         wall = asyncio.get_running_loop()
         end = wall.time() + 1.5
+        last = first
         while wall.time() < end:
             asked, uptime, answered = await self.uptime()
-            self.assertGreaterEqual(uptime - first,
-                                    asked - first_answered - late)
-            self.assertLessEqual(uptime - first,
-                                 answered - first_asked + late)
+            self.assertLessEqual(uptime - first, answered - first_asked + 2)
+            self.assertGreaterEqual(uptime, last)
+            last = uptime
             await asyncio.sleep(0.01)
+        self.assertGreater(last, first)
 
 
 class Reboots(RelayTestCase):

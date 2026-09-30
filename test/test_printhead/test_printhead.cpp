@@ -440,9 +440,42 @@ static unsigned long timeCut(int feeds, const Calibration& calibration) {
   return micros() - start;
 }
 
-// Every job homes a parked wheel first, and a parked wheel has lost its
-// place. So the estimate counts the longest search there is: from the J,
-// which sits just past the magnet.
+// A character, or the cut mark for the cut, pressed with the wheel at
+// `from` and `feeds` of tape feeding.
+struct Stamping {
+  const char* from;
+  const char* character;
+  int feeds;
+
+  bool cutting() const { return String(this->character) == CUT_CHARACTER; }
+
+  String name() const {
+    return String(this->from) + " to '" + this->character + "' over " +
+           this->feeds;
+  }
+};
+
+// How long the estimate says a stamping takes, with tapeUs of feeding.
+static unsigned long estimateOf(const Stamping& stamping, unsigned long tapeUs,
+                                const Calibration& calibration) {
+  String wheel = stamping.from;
+  return stamping.cutting() ? printhead->cutUs(&wheel, tapeUs, calibration)
+                            : printhead->stampUs(&wheel, stamping.character,
+                                                 tapeUs, calibration);
+}
+
+// And how long it takes, from the wheel at rest at `from`.
+static unsigned long timeOf(const Stamping& stamping,
+                            const Calibration& calibration) {
+  printhead->turnTo(stamping.from, calibration);
+  return stamping.cutting()
+             ? timeCut(stamping.feeds, calibration)
+             : timeCharacter(stamping.character, stamping.feeds, calibration);
+}
+
+// A run homes the wheel before its first label, and the job before it
+// parked the wheel, which lost its place. So the estimate counts the longest
+// search there is: from the J, which sits just past the magnet.
 void test_the_estimate_of_a_home_is_how_long_it_takes_from_the_j(void) {
   const Calibration calibration = {5, 5};
   printhead->turnTo(CHAR_HOME_CHARACTER, calibration);
@@ -468,36 +501,30 @@ void test_no_parked_wheel_takes_longer_to_home_than_the_estimate(void) {
 // Where the wheel turns for longer than the tape feeds, and where it does
 // not turn at all.
 void test_the_estimate_of_a_character_is_how_long_it_takes(void) {
-  struct Stamping {
-    const char* from;
-    const char* character;
-    int feeds;
-  };
   const Stamping stampings[] = {
       {"A", " ", 1}, {"A", " ", 2}, {"A", "A", 1},
       {"K", "I", 1}, {"J", "I", 1}, {"K", "@", 1},
   };
   const Calibration calibration = {5, 5};
   for (const Stamping& stamping : stampings) {
-    printhead->turnTo(stamping.from, calibration);
-    const String name = String(stamping.from) + " to '" + stamping.character +
-                        "' over " + stamping.feeds;
     TEST_ASSERT_EQUAL_UINT32_MESSAGE(
-        timeCharacter(stamping.character, stamping.feeds, calibration),
-        printhead->stampUs(stamping.from, stamping.character,
-                           feeder->feedUs(stamping.feeds), calibration),
-        name.c_str());
+        timeOf(stamping, calibration),
+        estimateOf(stamping, feeder->feedUs(stamping.feeds), calibration),
+        stamping.name().c_str());
   }
 }
 
 void test_the_estimate_of_a_cut_is_how_long_it_takes(void) {
-  const char* froms[] = {"K", CUT_CHARACTER};
+  const Stamping stampings[] = {
+      {"K", CUT_CHARACTER, 1},
+      {CUT_CHARACTER, CUT_CHARACTER, 1},
+  };
   const Calibration calibration = {5, 5};
-  for (size_t i = 0; i < sizeof(froms) / sizeof(froms[0]); i++) {
-    printhead->turnTo(froms[i], calibration);
+  for (const Stamping& stamping : stampings) {
     TEST_ASSERT_EQUAL_UINT32_MESSAGE(
-        timeCut(1, calibration),
-        printhead->cutUs(froms[i], feeder->feedUs(1), calibration), froms[i]);
+        timeOf(stamping, calibration),
+        estimateOf(stamping, feeder->feedUs(stamping.feeds), calibration),
+        stamping.name().c_str());
   }
 }
 
@@ -506,11 +533,6 @@ void test_the_estimate_of_a_cut_is_how_long_it_takes(void) {
 // the feed can come that much late, which the estimate does not count. It
 // shows where the tape outlasts the turn.
 void test_a_feed_that_outlasts_the_turn_runs_a_little_over_the_estimate(void) {
-  struct Stamping {
-    const char* from;
-    const char* character;
-    int feeds;
-  };
   const Stamping stampings[] = {
       {"J", "A", 2},
       {"I", "K", 1},
@@ -518,23 +540,13 @@ void test_a_feed_that_outlasts_the_turn_runs_a_little_over_the_estimate(void) {
   };
   const Calibration calibration = {5, 5};
   for (const Stamping& stamping : stampings) {
-    const String name = String(stamping.from) + " to '" + stamping.character +
-                        "' over " + stamping.feeds;
-    const bool cutting = String(stamping.character) == CUT_CHARACTER;
-    auto estimate = [&](unsigned long tapeUs) {
-      return cutting ? printhead->cutUs(stamping.from, tapeUs, calibration)
-                     : printhead->stampUs(stamping.from, stamping.character,
-                                          tapeUs, calibration);
-    };
-    const unsigned long estimated = estimate(feeder->feedUs(stamping.feeds));
-    TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(estimate(0), estimated,
-                                            name.c_str());
+    const String name = stamping.name();
+    const unsigned long estimated =
+        estimateOf(stamping, feeder->feedUs(stamping.feeds), calibration);
+    TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(
+        estimateOf(stamping, 0, calibration), estimated, name.c_str());
 
-    printhead->turnTo(stamping.from, calibration);
-    const unsigned long taken =
-        cutting
-            ? timeCut(stamping.feeds, calibration)
-            : timeCharacter(stamping.character, stamping.feeds, calibration);
+    const unsigned long taken = timeOf(stamping, calibration);
     TEST_ASSERT_GREATER_OR_EQUAL_UINT32_MESSAGE(estimated, taken, name.c_str());
     TEST_ASSERT_LESS_THAN_UINT32_MESSAGE(
         estimated + stamping.feeds * STEPS_PER_FEED * HOME_SWEEP_POLL_US, taken,

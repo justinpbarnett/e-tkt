@@ -4,8 +4,8 @@
 // compile and run the job runner and every module it drives off the board.
 //
 // This is not an emulator and does not try to be. It supplies the handful of
-// names those modules reach for, and it makes the ones that matter
-// observable:
+// names those modules reach for, and AccelStepper with them, and it makes the
+// ones that matter observable:
 //
 //   - delay() does not sleep. It advances a virtual clock, which millis()
 //     reads back. A test can therefore assert how long the press holds at its
@@ -47,6 +47,12 @@
 using std::abs;
 using std::max;
 using std::min;
+
+// And these two as the core has them, for AccelStepper, which the fake
+// steppers keep inside to say when a step is due. See FakeStepper.
+typedef bool boolean;
+#define constrain(amt, low, high) \
+  ((amt) < (low) ? (low) : ((amt) > (high) ? (high) : (amt)))
 
 // --- pin modes and levels --------------------------------------------------
 

@@ -62,7 +62,7 @@ std::vector<Sound::Note> Sound::tune(const String& label) const {
     return notes;
   }
 
-  // plays a music according to the label letters
+  // Any other label plays its own characters, one note each.
   const std::vector<String> characters = Utility::characters(label);
   const int length = characters.size();
   for (int i = 0; i < length; i++) {

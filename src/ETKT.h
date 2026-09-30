@@ -270,7 +270,7 @@ struct StatusUpdate {
   // press takes to finish its stroke.
   PendingStop stop = PendingStop::NONE;
   // For a run of labels: how long one of its labels takes, from its start to
-  // the start of the next, and how long the run has left, the finish
+  // the start of the next, and how long the run has left, the celebration
   // included. Both 0 unless a tag is running.
   uint32_t labelMs = 0;
   uint32_t remainingMs = 0;
@@ -306,7 +306,7 @@ struct RunEstimate {
   // next. The first label waits for the tune and the home as well.
   uint32_t labelMs = 0;
   // The whole run, from the job being taken to the machine going idle: the
-  // press settling, the tune, the home, every label and the finish.
+  // press settling, the tune, the home, every label and the celebration.
   uint32_t runMs = 0;
 };
 
@@ -319,6 +319,58 @@ class PrinterBusyException : public std::exception {
 
 class ETKT {
  private:
+  /**
+   * @brief Which label of the running run is being pressed, and how long
+   * the run has left: what the run was estimated to take, until it has
+   * timed labels of its own. What StatusUpdate::copy, labelMs and
+   * remainingMs are read from.
+   *
+   * It keeps no lock of its own. ETKT reads and writes it under its lock.
+   */
+  class RunClock {
+   public:
+    /**
+     * @brief A run of `copies` labels, estimated at `expected`, begins at
+     * `nowMs`, on its first label.
+     */
+    void start(const RunEstimate& expected, int copies, unsigned long nowMs);
+
+    /**
+     * @brief Label `copy` of the run, counting from 1, begins at `nowMs`.
+     */
+    void labelStarted(int copy, unsigned long nowMs);
+
+    /**
+     * @brief Which label is being pressed, counting from 1. 0 until a run
+     * starts.
+     */
+    int copy() const;
+
+    /**
+     * @brief How long a label of the run takes: the estimate until the run
+     * has timed one, and then what it timed.
+     */
+    uint32_t labelMs() const;
+
+    /**
+     * @brief When the run will be done, by millis(): the estimate until its
+     * first label is done, and then counted on from the label being
+     * pressed. A run that `endsWithThisLabel` is done after the label being
+     * pressed, and still has the celebration.
+     */
+    unsigned long endMs(bool endsWithThisLabel) const;
+
+   private:
+    RunEstimate expected;
+    int copies = 0;
+    // See copy().
+    int current = 0;
+    // When the run, its second label and the label being pressed began.
+    unsigned long startMs = 0;
+    unsigned long secondLabelStartMs = 0;
+    unsigned long labelStartMs = 0;
+  };
+
   // Device hardware
   Logger* logger;
   Light* ledFinish;
@@ -333,16 +385,9 @@ class ETKT {
   // Device state, which should only ever be modified inside an exclusive lock.
   CommandOptions* command = NULL;
   int progress;  // percent, 0 to 99. See Progress.h.
-  int copy;      // which label of a run, from 1; 0 when no tag is running
   int printed;   // labels of the run finished; 0 when no tag is running
-  bool stoppingAfterLabel;  // see stopAfterLabel()
-  // What the running run was estimated to take, and when it began, its
-  // second label began, and the label being pressed began. What
-  // StatusUpdate::labelMs and remainingMs are worked out from.
-  RunEstimate runEstimate;
-  unsigned long runStartMs;
-  unsigned long secondLabelStartMs;
-  unsigned long labelStartMs;
+  bool stoppingAfterLabel;     // see stopAfterLabel()
+  RunClock runClock;           // the running run's; see RunClock
   StoppedCommand lastStopped;  // see StatusUpdate::stopped
   uint32_t lastStopId;         // see StoppedCommand::id
   std::mutex lock;
@@ -406,19 +451,6 @@ class ETKT {
    * the StopSignal's cutShort(), rather than anything this returns.
    */
   void printLabel(const String& label, int copy, int copies);
-
-  /**
-   * @brief How long a label of the running run takes: the estimate until
-   * the run has timed one, and then what it timed. Under the lock.
-   */
-  uint32_t labelMs() const;
-
-  /**
-   * @brief When the running run will be done, by millis(): the estimate
-   * until its first label is done, and then counted on from the label being
-   * pressed. Under the lock.
-   */
-  unsigned long runEndMs() const;
 
   /**
    * @brief estimate(), at a calibration of its own.
@@ -510,9 +542,10 @@ class ETKT {
   StopResult stopAfterLabel();
 
   /**
-   * @brief How long submit(options) would take, for a run of labels: worked
-   * out from the ramps and waits the machine runs, not timed, so it can be
-   * asked for before the run is sent, and while another one prints.
+   * @brief How long the run `options` asks for takes, from the job being
+   * taken to the machine going idle: worked out from the ramps and waits
+   * the machine runs, not timed, so it can be asked for before the run is
+   * sent, and while another one prints.
    *
    * At the saved calibration, which is what a run presses at. The home that
    * opens the run is counted as the longest search there is, so a run can

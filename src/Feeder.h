@@ -8,7 +8,7 @@
 #include "Motion.h"
 #include "StopSignal.h"
 
-// The waits around a run of feeds, all from the original firmware: the coils
+// The waits around feeding, all from the original firmware: the coils
 // are given FEED_SETTLE_ON_MS to come up before the first step, the motor
 // FEED_GAP_MS at the end of each feed, and the tape FEED_SETTLE_OFF_MS once
 // the coils let go before anything else happens.
@@ -33,7 +33,7 @@ constexpr long STEPS_PER_FEED = FEED_MOTOR_STEPS_PER_REVOLUTION / 8;
  */
 class Feeder : public Background {
  private:
-  // Where a run of feeds is up to. The coils are live from SETTLING_ON
+  // Where the feeds asked for are up to. The coils are live from SETTLING_ON
   // through GAP, and free in SETTLING_OFF and IDLE.
   enum class Phase {
     IDLE,
@@ -82,7 +82,8 @@ class Feeder : public Background {
    * done.
    *
    * A stop halts the motor within a step and drops the feeds still to come.
-   * One already up when this is called asks for nothing.
+   * One already up when this is called asks for nothing. With ENABLE_FEED
+   * off nothing moves, and it waits half a second in place of the feeds.
    */
   void start(int feeds);
 

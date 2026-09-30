@@ -8,15 +8,23 @@
 // the virtual clock from test/stubs/Arduino.h, so a test can assert on the
 // sequence and on how long each part of it took.
 
+#include <AccelStepper.h>
 #include <stdint.h>
 
-#include <algorithm>
-#include <cmath>
 #include <functional>
 #include <vector>
 
 #include "Arduino.h"
 #include "Drivers.h"
+#include "Motion.h"
+
+// The estimates count each turn of a loop that keeps a motor going as
+// MOTOR_LOOP_US, and on the host a turn takes as long as the stub's yield().
+// The tests that hold an estimate to the time the fakes took need the two to
+// agree.
+static_assert(STUB_YIELD_US == MOTOR_LOOP_US,
+              "The host's yield() must take as long as the estimates count "
+              "for a turn of the motor loop");
 
 /**
  * @brief Every servo call, in order, with the time it happened.
@@ -165,16 +173,19 @@ struct StepperCall {
 };
 
 /**
- * @brief A stepper that steps when AccelStepper would.
+ * @brief A stepper that steps when AccelStepper would, because it keeps one
+ * inside to say when.
  *
- * It keeps the library's own speed state and does its sums (AccelStepper
- * 1.64, the version the board builds against), under the library's names,
- * so a step lands when the real one would: run() steps once micros() has
- * moved on by the step interval, speeding up and slowing down on the same
- * curve. Time passes here only when something moves the clock on, and every
- * loop that drives a motor does, a yield() or a delayMicroseconds() each
- * time round. So a move takes as long in the tests as it does on the
- * machine, and two motors driven from one loop run side by side.
+ * That is the library the board builds against, at the version
+ * platformio.ini pins, on its functional interface, which leaves each step to
+ * a function of the caller's. Here that function does nothing, so the
+ * library only keeps the speed state and does its sums: run() steps once
+ * micros() has moved on by the step interval, speeding up and slowing down on
+ * the board's own curve. Time passes here only when something moves the
+ * clock on, and every loop that drives a motor does, a yield() or a
+ * delayMicroseconds() each time round. So a move takes as long in the tests
+ * as it does on the machine, and two motors driven from one loop run side by
+ * side.
  *
  * As on the board, the defaults before setMaxSpeed() and setAcceleration()
  * are a step a second, which is a crawl. Both firmware callers set their own
@@ -182,72 +193,14 @@ struct StepperCall {
  */
 class FakeStepper : public StepperDriver {
  private:
-  long position = 0;
-  long target = 0;
+  // What the library calls to take each step, forward or back.
+  static void stepNothing() {}
 
-  // AccelStepper's speed state. n counts steps into the ramp, negative while
-  // slowing down; c0 is the first interval, cn the current one and cmin the
-  // one at full speed, all in microseconds.
-  long n = 0;
-  float c0 = 0;
-  float cn = 0;
-  float cmin = 1;
-  float speed = 0;
-  unsigned long stepInterval = 0;
-  unsigned long lastStepTime = 0;
-  bool clockwise = false;
+  AccelStepper library;
 
   void record(StepperCall::Kind kind, long value) {
     StepperCall c = {kind, value, millis()};
     this->calls.push_back(c);
-  }
-
-  // AccelStepper::computeNewSpeed(), line for line: the interval to the next
-  // step, from how far there is to go and how fast the motor is turning.
-  void computeNewSpeed() {
-    const long distanceTo = this->distanceToGo();
-    const long stepsToStop =
-        (long)((this->speed * this->speed) / (2.0 * this->acceleration));
-    if (distanceTo == 0 && stepsToStop <= 1) {
-      this->stepInterval = 0;
-      this->speed = 0;
-      this->n = 0;
-      return;
-    }
-    if (distanceTo > 0) {
-      if (this->n > 0) {
-        if (stepsToStop >= distanceTo || !this->clockwise) {
-          this->n = -stepsToStop;
-        }
-      } else if (this->n < 0) {
-        if (stepsToStop < distanceTo && this->clockwise) {
-          this->n = -this->n;
-        }
-      }
-    } else if (distanceTo < 0) {
-      if (this->n > 0) {
-        if (stepsToStop >= -distanceTo || this->clockwise) {
-          this->n = -stepsToStop;
-        }
-      } else if (this->n < 0) {
-        if (stepsToStop < -distanceTo && !this->clockwise) {
-          this->n = -this->n;
-        }
-      }
-    }
-    if (this->n == 0) {
-      this->cn = this->c0;
-      this->clockwise = distanceTo > 0;
-    } else {
-      this->cn = this->cn - ((2.0 * this->cn) / ((4.0 * this->n) + 1));
-      this->cn = std::max(this->cn, this->cmin);
-    }
-    this->n++;
-    this->stepInterval = this->cn;
-    this->speed = 1000000.0 / this->cn;
-    if (!this->clockwise) {
-      this->speed = -this->speed;
-    }
   }
 
  public:
@@ -260,47 +213,25 @@ class FakeStepper : public StepperDriver {
   // position the hall sensor and the press see. See FakeMagnet.h.
   long shaft = 0;
 
-  // What the firmware last set, AccelStepper's defaults until then.
-  float maxSpeed = 1;
-  float acceleration = 1;
-
   // Called after every step run() takes, which is where a test raises a stop
   // partway through a move: on the board the stop arrives from another task
   // while the motor turns, and here nothing else is running.
   std::function<void()> afterStep;
 
-  FakeStepper() {
-    // What AccelStepper's constructor does with its defaults.
-    this->c0 = 0.676 * sqrt(2.0 / this->acceleration) * 1000000.0;
-    this->cmin = 1000000.0 / this->maxSpeed;
-  }
+  FakeStepper() : library(stepNothing, stepNothing) {}
+
+  // What the firmware last set, AccelStepper's defaults until then.
+  float maxSpeed() { return this->library.maxSpeed(); }
+  float acceleration() { return this->library.acceleration(); }
 
   void setMaxSpeed(float speed) override {
     this->record(StepperCall::SET_MAX_SPEED, (long)speed);
-    speed = std::fabs(speed);
-    if (this->maxSpeed != speed) {
-      this->maxSpeed = speed;
-      this->cmin = 1000000.0 / speed;
-      if (this->n > 0) {
-        this->n =
-            (long)((this->speed * this->speed) / (2.0 * this->acceleration));
-        this->computeNewSpeed();
-      }
-    }
+    this->library.setMaxSpeed(speed);
   }
 
   void setAcceleration(float acceleration) override {
     this->record(StepperCall::SET_ACCELERATION, (long)acceleration);
-    if (acceleration == 0) {
-      return;
-    }
-    acceleration = std::fabs(acceleration);
-    if (this->acceleration != acceleration) {
-      this->n = this->n * (this->acceleration / acceleration);
-      this->c0 = 0.676 * sqrt(2.0 / acceleration) * 1000000.0;
-      this->acceleration = acceleration;
-      this->computeNewSpeed();
-    }
+    this->library.setAcceleration(acceleration);
   }
 
   void setPinsInverted(bool directionInvert, bool stepInvert,
@@ -315,46 +246,33 @@ class FakeStepper : public StepperDriver {
     this->record(StepperCall::SET_ENABLE_PIN, enablePin);
   }
 
-  long currentPosition() override { return this->position; }
+  long currentPosition() override { return this->library.currentPosition(); }
 
   void setCurrentPosition(long position) override {
-    this->position = position;
-    this->target = position;
-    this->n = 0;
-    this->stepInterval = 0;
-    this->speed = 0;
+    this->library.setCurrentPosition(position);
     this->record(StepperCall::SET_CURRENT_POSITION, position);
   }
 
   void move(long relative) override {
     this->record(StepperCall::MOVE, relative);
-    const long absolute = this->position + relative;
-    if (this->target != absolute) {
-      this->target = absolute;
-      this->computeNewSpeed();
-    }
+    this->library.move(relative);
   }
 
-  // AccelStepper::run() and runSpeed(): at most one step, once its interval
-  // is up, and true for as long as the motor is still turning or has
-  // somewhere left to go.
   bool run() override {
-    if (this->stepInterval != 0 &&
-        micros() - this->lastStepTime >= this->stepInterval) {
-      const long step = this->clockwise ? 1 : -1;
-      this->position += step;
+    const long before = this->library.currentPosition();
+    const bool turning = this->library.run();
+    const long step = this->library.currentPosition() - before;
+    if (step != 0) {
       this->shaft += step;
-      this->lastStepTime = micros();
       this->record(StepperCall::STEP, step);
-      this->computeNewSpeed();
       if (this->afterStep) {
         this->afterStep();
       }
     }
-    return this->speed != 0 || this->distanceToGo() != 0;
+    return turning;
   }
 
-  long distanceToGo() override { return this->target - this->position; }
+  long distanceToGo() override { return this->library.distanceToGo(); }
 
   void enableOutputs() override {
     this->energized = true;

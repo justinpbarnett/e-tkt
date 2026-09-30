@@ -7,10 +7,10 @@
 namespace {
 
 // One move's speed state, and AccelStepper's computeNewSpeed() line for line,
-// in the library's own types, so that every interval rounds the way the
-// library's does. The fake the host tests run the firmware on,
-// test/fakes/FakeDrivers.h, has the same lines: that one is the motor, and
-// this one counts for the estimates.
+// as of 1.64, the version platformio.ini pins, in the library's own types, so
+// that every interval rounds the way the library's does. The host tests time
+// the fake steppers in test/fakes/FakeDrivers.h by the library itself, and
+// hold these lines to it.
 class Ramp {
  public:
   // What move() does, from rest.

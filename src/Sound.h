@@ -12,7 +12,7 @@
 #define NOTE_DURATION_DECREASE 2
 
 /**
- * @brief Controls the buzzer to play single notes, and the tune a job opens
+ * @brief Controls the buzzer to play single notes, and the tune a run opens
  * with.
  */
 class Sound {
@@ -52,7 +52,7 @@ class Sound {
   void play(String character, int duration = 1000);
 
   /**
-   * @brief Plays the tune a job opens with, from the label text: each
+   * @brief Plays the tune a run opens with, from the label text: each
    * character's note, the notes shorter one by one on a long label.
    *
    * The labels that name the pocket calculator play the melody of

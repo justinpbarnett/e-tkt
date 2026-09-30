@@ -17,6 +17,7 @@
 #include "CharacterSet.h"
 #include "Configuration.h"
 #include "DaisyWheel.h"
+#include "FakeBackground.h"
 #include "FakeDrivers.h"
 #include "FakeMagnet.h"
 #include "HallSwitch.h"
@@ -25,22 +26,14 @@
 #include "PressGeometry.h"
 #include "StopSignal.h"
 
-// What runs while the wheel turns, as the tape does on the machine. This one
-// only notes when it got a turn.
-class Watching : public Background {
- public:
-  std::vector<unsigned long> atUs;
-  void keepGoing() override { this->atUs.push_back(micros()); }
-  void finish() override {}
-};
-
 static FakeStepper* charStepper;
 static FakeMagnet* magnet;
 
 static Logger* logger;
 static StopSignal* stopSignal;
 static HallSwitch* hall;
-static Watching* tape;
+// What runs while the wheel turns, as the tape does on the machine.
+static FakeBackground* tape;
 static DaisyWheel* daisywheel;
 
 void setUp(void) {
@@ -53,7 +46,7 @@ void setUp(void) {
   logger = new Logger();
   stopSignal = new StopSignal();
   hall = new HallSwitch(logger, HALL_PIN);
-  tape = new Watching();
+  tape = new FakeBackground();
   daisywheel = new DaisyWheel(logger, hall, charStepper, stopSignal, tape);
   daisywheel->initialize();
 }
@@ -211,19 +204,13 @@ void test_a_turn_keeps_the_tape_going_the_whole_way(void) {
   daisywheel->home(5);
   // Turned by hand onto the magnet, so homing starts by stepping off it.
   charStepper->shaft = 1000 + FakeMagnet::ARC / 2;
-  tape->atUs.clear();
+  tape->clear();
   const unsigned long began = micros();
 
   TEST_ASSERT_TRUE(daisywheel->move("Z", 5) == Turn::REACHED);
 
-  const unsigned long ended = micros();
   TEST_ASSERT_FALSE(tape->atUs.empty());
-  unsigned long longest = tape->atUs.front() - began;
-  for (size_t i = 1; i < tape->atUs.size(); i++) {
-    longest = max(longest, tape->atUs[i] - tape->atUs[i - 1]);
-  }
-  longest = max(longest, ended - tape->atUs.back());
-  TEST_ASSERT_LESS_THAN_UINT32(1000, longest);
+  TEST_ASSERT_LESS_THAN_UINT32(1000, tape->longestWaitUs(began, micros()));
 }
 
 // --- how long it takes ----------------------------------------------------
@@ -248,7 +235,7 @@ void test_the_estimate_of_a_home_is_how_long_it_takes(void) {
     const int align = aligns[a];
     for (const String& from : everyCharacter()) {
       daisywheel->move(from, align);
-      tape->atUs.clear();
+      tape->clear();
       const unsigned long start = micros();
       TEST_ASSERT_TRUE(daisywheel->home(align) == Turn::REACHED);
       TEST_ASSERT_EQUAL_UINT32_MESSAGE(
@@ -272,7 +259,7 @@ void test_the_estimate_of_a_turn_is_how_long_it_takes(void) {
     const String from = froms[f];
     for (const String& to : everyCharacter()) {
       daisywheel->move(from, 5);
-      tape->atUs.clear();
+      tape->clear();
       const unsigned long start = micros();
       TEST_ASSERT_TRUE(daisywheel->move(to, 5) == Turn::REACHED);
       TEST_ASSERT_EQUAL_UINT32_MESSAGE(micros() - start,

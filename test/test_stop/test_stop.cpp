@@ -9,6 +9,7 @@
 
 #include "Arduino.h"
 #include "Configuration.h"
+#include "FakeBackground.h"
 #include "FakeDrivers.h"
 #include "Motion.h"
 #include "StopSignal.h"
@@ -17,18 +18,7 @@ static FakeStepper* stepper;
 static StopSignal* stop;
 
 // What runs while the motor turns, as the tape does while the wheel turns.
-// This one only notes when it got a turn, and where the motor was then.
-class Watching : public Background {
- public:
-  std::vector<long> positions;
-  std::vector<unsigned long> atMs;
-  void keepGoing() override {
-    this->positions.push_back(stepper->currentPosition());
-    this->atMs.push_back(millis());
-  }
-  void finish() override {}
-};
-static Watching* background;
+static FakeBackground* background;
 
 static long stepsTaken;
 static long stopAtStep;
@@ -49,7 +39,7 @@ void setUp(void) {
   stepper->setMaxSpeed(CHARACTER_STEPPER_MAX_SPEED);
   stepper->setAcceleration(CHARACTER_STEPPER_MAX_ACCELERATION);
   stop = new StopSignal();
-  background = new Watching();
+  background = new FakeBackground(stepper);
   stepsTaken = 0;
   stopAtStep = 0;
   stepper->afterStep = countStep;
@@ -182,33 +172,25 @@ void test_a_halted_motor_is_left_holding(void) {
 // Nothing turns a motor for you. Whatever runs beside a move gets its turns
 // from the loop that makes it, so the move must never keep it waiting.
 
-// The longest the background went without a turn, in milliseconds.
-static unsigned long longestWait() {
-  unsigned long longest = 0;
-  for (size_t i = 1; i < background->atMs.size(); i++) {
-    longest = max(longest, background->atMs[i] - background->atMs[i - 1]);
-  }
-  return longest;
-}
-
 void test_a_move_keeps_the_background_going_as_it_turns(void) {
+  const unsigned long start = micros();
   TEST_ASSERT_TRUE(runToNewPosition(stepper, 42, stop, background));
   bool partway = false;
   for (long position : background->positions) {
     partway = partway || (position > 0 && position < 42);
   }
   TEST_ASSERT_TRUE_MESSAGE(partway, "a turn partway, not only either end");
-  TEST_ASSERT_TRUE(longestWait() <= 1);
+  TEST_ASSERT_LESS_THAN_UINT32(1000,
+                               background->longestWaitUs(start, micros()));
 }
 
 void test_a_pause_keeps_the_background_going_for_as_long_as_it_lasts(void) {
-  const unsigned long start = millis();
+  const unsigned long start = micros();
   pause(100, background);
-  TEST_ASSERT_TRUE(millis() - start >= 100);
-  TEST_ASSERT_FALSE(background->atMs.empty());
-  TEST_ASSERT_TRUE(background->atMs.front() - start <= 1);
-  TEST_ASSERT_TRUE(background->atMs.back() - start >= 99);
-  TEST_ASSERT_TRUE(longestWait() <= 1);
+  TEST_ASSERT_TRUE(micros() - start >= 100000UL);
+  TEST_ASSERT_FALSE(background->atUs.empty());
+  TEST_ASSERT_LESS_THAN_UINT32(1000,
+                               background->longestWaitUs(start, micros()));
 }
 
 int main(int, char**) {

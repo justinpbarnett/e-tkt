@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { Estimates, estimateText, timeLeftText, timeText } from "../../data/timing.js";
-import { labelMaker } from "./device.js";
+import { labelMaker, running } from "./device.js";
 
 test("a run of labels is estimated label by label and in all before it is sent", () => {
   // What api/tag/estimate answered for 100 of " HELLO ", cut: a tenth of a
@@ -50,7 +50,7 @@ test("without an estimate the page can read, it says nothing of the time", () =>
 // A run of " HELLO " the device reports on, as the page hands it to
 // timeLeftText(): label 3 of 100, and what the device says it has left.
 function printing(status = {}, stop = null) {
-  return {
+  return running({
     command: "tag",
     status: {
       busy: true,
@@ -64,8 +64,7 @@ function printing(status = {}, stop = null) {
     },
     stop: stop,
     sentCopies: 100,
-    offline: false,
-  };
+  });
 }
 
 test("a run printing says how long it has left, and how long its labels are taking", () => {
@@ -220,7 +219,7 @@ test("while a run prints, the page says how long it has left", () => {
 });
 
 test("before a run prints, the page says how long the run on the form would take", () => {
-  const idle = { command: null, status: { busy: false }, stop: null, sentCopies: null, offline: false };
+  const idle = running({ command: null, status: { busy: false } });
   assert.equal(timeText(idle, labelMaker(), ON_THE_FORM), ON_THE_FORM);
   // Sent, and not yet under way: it is still the run that is about to print.
   assert.equal(timeText({ ...idle, command: "tag" }, labelMaker(), ON_THE_FORM), ON_THE_FORM);
@@ -229,13 +228,7 @@ test("before a run prints, the page says how long the run on the form would take
 test("while the machine does anything else, the page says nothing of the time", () => {
   // Under a bar that says it is feeding, the time the run on the form
   // would take reads as how long the feed takes.
-  const feeding = {
-    command: "feed",
-    status: { busy: true, command: "feed" },
-    stop: null,
-    sentCopies: null,
-    offline: false,
-  };
+  const feeding = running({ command: "feed", status: { busy: true, command: "feed" } });
   assert.equal(timeText(feeding, labelMaker(), ON_THE_FORM), "");
   // Sent, and not yet under way.
   assert.equal(timeText({ ...feeding, status: { busy: false } }, labelMaker(), ON_THE_FORM), "");

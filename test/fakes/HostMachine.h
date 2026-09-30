@@ -99,3 +99,17 @@ class HostMachine {
     }
   }
 };
+
+/**
+ * @brief A run of `copies` of `label`, cut or not, as the Api hands one to
+ * the job runner.
+ */
+inline CommandOptions tagOptions(const String& label, int copies = 1,
+                                 bool cut = true) {
+  CommandOptions options;
+  options.command = Command::TAG;
+  options.label = label;
+  options.copies = copies;
+  options.cut = cut;
+  return options;
+}

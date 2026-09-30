@@ -683,10 +683,7 @@ void test_the_longest_status_has_every_field(void) {
 // so it is a 500. The Api refuses a label this long, but the job runner holds
 // whatever it is handed, and this is how a field too many would show up.
 void test_a_reply_too_large_for_its_room_is_a_failure_not_a_short_reply(void) {
-  CommandOptions options;
-  options.command = Command::TAG;
-  options.label = String(std::string(3000, 'A'));
-  machine->etkt.submit(options);
+  machine->etkt.submit(tagOptions(String(std::string(3000, 'A'))));
 
   const Reply reply = get("/api/status");
 
@@ -699,10 +696,7 @@ void test_a_reply_too_large_for_its_room_is_a_failure_not_a_short_reply(void) {
 // failed as the device being out of reach, and shows nothing of what the
 // reply said, so the log is where somebody at the bench finds out why.
 void test_a_failure_is_logged_as_well_as_answered(void) {
-  CommandOptions options;
-  options.command = Command::TAG;
-  options.label = String(std::string(3000, 'A'));
-  machine->etkt.submit(options);
+  machine->etkt.submit(tagOptions(String(std::string(3000, 'A'))));
 
   get("/api/status");
 
@@ -984,12 +978,8 @@ void test_a_run_is_estimated_from_the_body_that_would_send_it(void) {
                            "{\"tag\":\" HELLO \",\"copies\":3,\"cut\":false}");
 
   TEST_ASSERT_EQUAL_INT(200, reply.code);
-  CommandOptions options;
-  options.command = Command::TAG;
-  options.label = " HELLO ";
-  options.copies = 3;
-  options.cut = false;
-  const RunEstimate expected = machine->etkt.estimate(options);
+  const RunEstimate expected =
+      machine->etkt.estimate(tagOptions(" HELLO ", 3, false));
   TEST_ASSERT_TRUE(expected.labelMs > 0);
   TEST_ASSERT_EQUAL_UINT32(expected.labelMs,
                            json(reply)["label_ms"].as<uint32_t>());

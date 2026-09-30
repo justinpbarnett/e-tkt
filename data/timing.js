@@ -10,14 +10,14 @@ import { printingRun, printsRun } from "./status.js";
 // api/tag/estimate for it: how long one of its labels takes, and the run
 // in all. A single label is only the run, which is the one that counts the
 // tune and the home it waits for. Nothing without a reply it can read.
-export function estimateText(estimate, copies) {
-  if (estimate === null || !isTime(estimate.label_ms) || !isTime(estimate.run_ms)) {
+export function estimateText(reply, copies) {
+  if (reply === null || !isTime(reply.label_ms) || !isTime(reply.run_ms)) {
     return "";
   }
   if (copies === 1) {
-    return "Takes about " + duration(estimate.run_ms) + ".";
+    return "Takes about " + duration(reply.run_ms) + ".";
   }
-  return "About " + labelDuration(estimate.label_ms) + " a label, " + duration(estimate.run_ms) + " in all.";
+  return "About " + labelDuration(reply.label_ms) + " a label, " + duration(reply.run_ms) + " in all.";
 }
 
 // The estimates this page asks api/tag/estimate for: one for each run the
@@ -110,15 +110,15 @@ export function timeLeftText(running, device) {
 }
 
 // What the page says of the time under the print button: while a run
-// prints, how long it has left, and before then, estimate, which is what
-// Estimates.text() says of the run on the form. Nothing while the machine
-// does anything else. running is what the page knows of the command
-// running, as activity() in status.js takes it.
-export function timeText(running, device, estimate) {
+// prints, how long it has left, and before then, formEstimate, which is
+// what Estimates.text() says of the run on the form. Nothing while the
+// machine does anything else. running is what the page knows of the
+// command running, as activity() in status.js takes it.
+export function timeText(running, device, formEstimate) {
   if (printingRun(running.status, device) !== null) {
     return timeLeftText(running, device);
   }
-  return running.command === null || printsRun(running.command, device) ? estimate : "";
+  return running.command === null || printsRun(running.command, device) ? formEstimate : "";
 }
 
 // A time the device worked out, in milliseconds. It says 0 for one it has

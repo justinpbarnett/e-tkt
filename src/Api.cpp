@@ -15,8 +15,8 @@
 static const char* const JSON_TYPE = "application/json";
 static const char* const TEXT_TYPE = "text/plain";
 
-// Room for a reply of one field: an error, or a result.
-static const size_t ONE_FIELD_JSON_BYTES = 512;
+// Room for a reply of a field or two: an error, a result, or an estimate.
+static const size_t SHORT_REPLY_JSON_BYTES = 512;
 
 // Room for a command's body once parsed.
 static const size_t REQUEST_JSON_BYTES = 2048;
@@ -52,7 +52,7 @@ static Reply jsonReply(int code, const JsonDocument& doc) {
 
 // A refusal, which the panel shows the operator as it is.
 static Reply errorReply(int code, const String& message) {
-  DynamicJsonDocument doc(ONE_FIELD_JSON_BYTES);
+  DynamicJsonDocument doc(SHORT_REPLY_JSON_BYTES);
   doc["error"] = message;
   return jsonReply(code, doc);
 }
@@ -247,12 +247,12 @@ Reply Api::route(const Request& request) {
   // gets a second one below it, /api/<name>/estimate, which takes the same
   // body.
   static const char prefix[] = "/api/";
-  static const char estimate[] = "/estimate";
+  static const char estimateSuffix[] = "/estimate";
   if (request.path.startsWith(prefix)) {
     String name = request.path.substring(sizeof(prefix) - 1);
-    const bool estimating = name.endsWith(estimate);
+    const bool estimating = name.endsWith(estimateSuffix);
     if (estimating) {
-      name = name.substring(0, name.length() - (sizeof(estimate) - 1));
+      name = name.substring(0, name.length() - (sizeof(estimateSuffix) - 1));
     }
     const CommandSpec* spec = commandSpecByName(name);
     // Nothing to run means nothing to post to, or to estimate.
@@ -312,7 +312,7 @@ Reply Api::command(const CommandSpec* spec, const Request& request) {
     return errorReply(500, e.what());
   }
 
-  DynamicJsonDocument doc(ONE_FIELD_JSON_BYTES);
+  DynamicJsonDocument doc(SHORT_REPLY_JSON_BYTES);
   doc["result"] = "success";
   return jsonReply(200, doc);
 }
@@ -326,10 +326,10 @@ Reply Api::estimate(const CommandSpec* spec, const Request& request) {
   if (!readCommandRequest(spec, request, &options, &refused)) {
     return refused;
   }
-  const RunEstimate estimate = this->etkt->estimate(options);
-  DynamicJsonDocument doc(ONE_FIELD_JSON_BYTES);
-  doc["label_ms"] = estimate.labelMs;
-  doc["run_ms"] = estimate.runMs;
+  const RunEstimate expected = this->etkt->estimate(options);
+  DynamicJsonDocument doc(SHORT_REPLY_JSON_BYTES);
+  doc["label_ms"] = expected.labelMs;
+  doc["run_ms"] = expected.runMs;
   return jsonReply(200, doc);
 }
 
@@ -406,7 +406,7 @@ Reply Api::stop(const Request& request) {
                       "being pressed is finished, or leave it out to stop "
                       "now");
   }
-  DynamicJsonDocument doc(ONE_FIELD_JSON_BYTES);
+  DynamicJsonDocument doc(SHORT_REPLY_JSON_BYTES);
   switch (afterLabel ? this->etkt->stopAfterLabel() : this->etkt->stop()) {
     case StopResult::STOPPING:
       doc["result"] = "stopping";

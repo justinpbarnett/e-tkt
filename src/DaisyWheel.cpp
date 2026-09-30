@@ -83,7 +83,6 @@ Turn DaisyWheel::home(int align) {
     }
     this->stepper->run();
     this->background->keepGoing();
-    // TODO: less intrusive way to avoid triggering watchdog?
     delayMicroseconds(HOME_SWEEP_POLL_US);
 
     hallState = hall->triggered();
@@ -122,6 +121,13 @@ Turn DaisyWheel::home(int align) {
   return Turn::REACHED;
 }
 
+// How many slots on from the J the wheel turns to reach `slot`: every move
+// counts from there, where homing leaves it.
+static int slotsPastHome(int slot) {
+  const int slots = (slot - wheelSlot(CHAR_HOME_CHARACTER)) % WHEEL_SLOT_COUNT;
+  return slots < 0 ? slots + WHEEL_SLOT_COUNT : slots;
+}
+
 Turn DaisyWheel::move(String c, int alignFactor) {
   if (!ENABLE_DAISYWHEEL) {
     pause(500, this->background);
@@ -158,22 +164,17 @@ Turn DaisyWheel::move(String c, int alignFactor) {
     return homing;
   }
 
-  auto charDelta = charIndex - this->currentChar;
+  const int slots = slotsPastHome(charIndex);
   logger->log(String("New character index is ") + charIndex +
-              " and character delta is " + charDelta);
-  // matches the character to the list and gets delta steps from home
-  while (charDelta < 0) {
-    charDelta += WHEEL_SLOT_COUNT;
-  }
-
-  if (charDelta == 0) {
+              " and character delta is " + slots);
+  if (slots == 0) {
     // No need to move, we're already there
     logger->log("Already in position");
     return Turn::REACHED;
   }
 
-  const long position = this->slotPosition(charDelta);
-  logger->log(String("Moving ") + charDelta + " characters to position " +
+  const long position = this->slotPosition(slots);
+  logger->log(String("Moving ") + slots + " characters to position " +
               position);
   if (!runToNewPosition(this->stepper, position, this->stop,
                         this->background)) {
@@ -184,13 +185,6 @@ Turn DaisyWheel::move(String c, int alignFactor) {
 
   pause(TURN_SETTLE_MS, this->background);
   return Turn::REACHED;
-}
-
-// How many slots on from the J the wheel turns to reach `slot`, as move()
-// counts them.
-static int slotsPastHome(int slot) {
-  const int slots = (slot - wheelSlot(CHAR_HOME_CHARACTER)) % WHEEL_SLOT_COUNT;
-  return slots < 0 ? slots + WHEEL_SLOT_COUNT : slots;
 }
 
 unsigned long DaisyWheel::homeUs(const String& from, int align) const {
@@ -273,7 +267,7 @@ long DaisyWheel::alignPosition(int align) const {
 }
 
 long DaisyWheel::slotPosition(int slots) const {
-  // runs char stepper clockwise to reach the target position
+  // Slots count on the way homing searches, backwards for the stepper.
   return -this->stepsPerChar * slots;
 }
 

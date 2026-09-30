@@ -28,8 +28,8 @@
 static const int FINISH_BLINK_TIMES = 5;
 static const int FINISH_BLINK_MS = 100;
 static const int FINISH_FADE_MS = 3225;
-// Each blink is an off and an on.
-static const unsigned long FINISH_MS =
+// The whole celebration. Each blink is an off and an on.
+static const unsigned long CELEBRATION_MS =
     FINISH_BLINK_TIMES * 2 * FINISH_BLINK_MS + FINISH_FADE_MS;
 
 // How long a job gives the press to get clear of the wheel, once rest() has
@@ -148,12 +148,8 @@ ETKT::ETKT(Logger* logger, Settings* settings, Display* display,
 
   this->command = NULL;
   this->progress = 0;
-  this->copy = 0;
   this->printed = 0;
   this->stoppingAfterLabel = false;
-  this->runStartMs = 0;
-  this->secondLabelStartMs = 0;
-  this->labelStartMs = 0;
   // Nothing has fed yet, so there is nothing to charge.
   this->accountedFeeds = 0;
   this->feedsAtLabelStart = 0;
@@ -213,15 +209,16 @@ StatusUpdate ETKT::createStatus() {
     }
     const CommandSpec* spec = commandSpec(this->command->command);
     if (spec != NULL && spec->printsRun) {
-      status.copy = this->copy;
+      status.copy = this->runClock.copy();
       status.copies = this->command->copies;
       // Nothing to count down until the run has begun, and nothing but the
       // press finishing its stroke once it is stopping now.
-      if (this->copy > 0) {
-        status.labelMs = this->labelMs();
+      if (status.copy > 0) {
+        status.labelMs = this->runClock.labelMs();
         if (status.stop != PendingStop::NOW) {
           // By the difference, which holds as millis() wraps.
-          const long leftMs = (long)(this->runEndMs() - millis());
+          const long leftMs =
+              (long)(this->runClock.endMs(this->stoppingAfterLabel) - millis());
           status.remainingMs = leftMs > 0 ? (uint32_t)leftMs : 0;
         }
       }
@@ -383,13 +380,9 @@ void ETKT::loop() {
   delete this->command;
   this->command = NULL;
   this->progress = 0;
-  this->copy = 0;
   this->printed = 0;
   this->stoppingAfterLabel = false;
-  this->runEstimate = RunEstimate();
-  this->runStartMs = 0;
-  this->secondLabelStartMs = 0;
-  this->labelStartMs = 0;
+  this->runClock = RunClock();
   // Down again before the next command can be submitted, so no stop
   // outlives its command.
   this->stopSignal->clear();
@@ -511,9 +504,7 @@ void ETKT::tagCommandInternal() {
   // polls throughout, and "label 0 of 3" while the press settles is nothing
   // an operator can make sense of.
   this->lock.lock();
-  this->copy = 1;
-  this->runEstimate = expected;
-  this->runStartMs = millis();
+  this->runClock.start(expected, copies, millis());
   this->lock.unlock();
   // enables servo
   this->printhead->rest();
@@ -529,12 +520,8 @@ void ETKT::tagCommandInternal() {
 
   for (int copy = 1; copy <= copies; copy++) {
     this->lock.lock();
-    this->copy = copy;
+    this->runClock.labelStarted(copy, millis());
     this->progress = 0;
-    this->labelStartMs = millis();
-    if (copy == 2) {
-      this->secondLabelStartMs = this->labelStartMs;
-    }
     this->lock.unlock();
 
     this->display->renderProgress(0, label, copy, copies);
@@ -649,27 +636,42 @@ void ETKT::printLabel(const String& label, int copy, int copies) {
   this->feeder->finish();
 }
 
-uint32_t ETKT::labelMs() const {
+void ETKT::RunClock::start(const RunEstimate& expected, int copies,
+                           unsigned long nowMs) {
+  this->expected = expected;
+  this->copies = copies;
+  this->current = 1;
+  this->startMs = nowMs;
+}
+
+void ETKT::RunClock::labelStarted(int copy, unsigned long nowMs) {
+  this->current = copy;
+  this->labelStartMs = nowMs;
+  if (copy == 2) {
+    this->secondLabelStartMs = nowMs;
+  }
+}
+
+int ETKT::RunClock::copy() const { return this->current; }
+
+uint32_t ETKT::RunClock::labelMs() const {
   // The first label waits for the tune and the home, and turns the wheel
   // from where the home left it rather than from where the last label did,
   // so only the labels from the second on are timed.
-  if (this->copy < 3) {
-    return this->runEstimate.labelMs;
+  if (this->current < 3) {
+    return this->expected.labelMs;
   }
-  return (this->labelStartMs - this->secondLabelStartMs) / (this->copy - 2);
+  return (this->labelStartMs - this->secondLabelStartMs) / (this->current - 2);
 }
 
-unsigned long ETKT::runEndMs() const {
-  // A run asked to stop after its label ends with that one, and still plays
-  // the finish.
-  const int lastCopy =
-      this->stoppingAfterLabel ? this->copy : this->command->copies;
-  if (this->copy < 2) {
-    return this->runStartMs + this->runEstimate.runMs -
-           (this->command->copies - lastCopy) * this->runEstimate.labelMs;
+unsigned long ETKT::RunClock::endMs(bool endsWithThisLabel) const {
+  const int lastCopy = endsWithThisLabel ? this->current : this->copies;
+  if (this->current < 2) {
+    return this->startMs + this->expected.runMs -
+           (this->copies - lastCopy) * this->expected.labelMs;
   }
-  const int labelsLeft = lastCopy - this->copy + 1;
-  return this->labelStartMs + labelsLeft * this->labelMs() + FINISH_MS;
+  const int labelsLeft = lastCopy - this->current + 1;
+  return this->labelStartMs + labelsLeft * this->labelMs() + CELEBRATION_MS;
 }
 
 RunEstimate ETKT::estimate(const CommandOptions& options) const {
@@ -678,10 +680,10 @@ RunEstimate ETKT::estimate(const CommandOptions& options) const {
 
 RunEstimate ETKT::estimate(const CommandOptions& options,
                            const Calibration& calibration) const {
-  RunEstimate estimate;
+  RunEstimate expected;
   const CommandSpec* spec = commandSpec(options.command);
   if (spec == NULL || !spec->printsRun) {
-    return estimate;
+    return expected;
   }
   const String label = asPrinted(options.label);
   const std::vector<String> characters = Utility::characters(label);
@@ -691,16 +693,16 @@ RunEstimate ETKT::estimate(const CommandOptions& options,
   String wheel = CHAR_HOME_CHARACTER;
   const uint64_t firstUs =
       this->labelUs(characters, options.cut, calibration, &wheel);
-  const uint64_t labelUs =
+  const uint64_t nextUs =
       this->labelUs(characters, options.cut, calibration, &wheel);
-  const uint64_t after = options.copies > 1 ? options.copies - 1 : 0;
+  const uint64_t nextLabels = options.copies > 1 ? options.copies - 1 : 0;
   const uint64_t runUs = REST_SETTLE_MS * 1000 + this->sound->tuneUs(label) +
                          this->printhead->homeUs(calibration) + firstUs +
-                         after * labelUs + FINISH_MS * 1000;
+                         nextLabels * nextUs + CELEBRATION_MS * 1000;
 
-  estimate.labelMs = (uint32_t)((labelUs + 500) / 1000);
-  estimate.runMs = (uint32_t)((runUs + 500) / 1000);
-  return estimate;
+  expected.labelMs = (uint32_t)((nextUs + 500) / 1000);
+  expected.runMs = (uint32_t)((runUs + 500) / 1000);
+  return expected;
 }
 
 uint64_t ETKT::labelUs(const std::vector<String>& characters, bool cut,
@@ -711,12 +713,8 @@ uint64_t ETKT::labelUs(const std::vector<String>& characters, bool cut,
   uint64_t us = 0;
   int feeds = LEAD_FEEDS;
   for (const String& character : characters) {
-    us += this->printhead->stampUs(*wheel, character,
+    us += this->printhead->stampUs(wheel, character,
                                    this->feeder->feedUs(feeds), calibration);
-    // A space turns the wheel nowhere.
-    if (character != " ") {
-      *wheel = character;
-    }
     feeds = 1;
   }
   // The top-up runs on from the last character's feed, and the cut waits for
@@ -725,8 +723,6 @@ uint64_t ETKT::labelUs(const std::vector<String>& characters, bool cut,
   if (!cut) {
     return us + this->feeder->feedUs(feeds);
   }
-  us +=
-      this->printhead->cutUs(*wheel, this->feeder->feedUs(feeds), calibration);
-  *wheel = CUT_CHARACTER;
-  return us;
+  return us + this->printhead->cutUs(wheel, this->feeder->feedUs(feeds),
+                                     calibration);
 }

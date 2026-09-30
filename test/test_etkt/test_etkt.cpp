@@ -60,11 +60,7 @@ static void submit(Command command) {
 }
 
 static void submitTag(const String& label, int copies) {
-  CommandOptions options;
-  options.command = Command::TAG;
-  options.label = label;
-  options.copies = copies;
-  etkt->submit(options);
+  etkt->submit(tagOptions(label, copies));
 }
 
 static bool refused(Command command) {
@@ -186,12 +182,7 @@ void test_the_wheel_turns_while_the_tape_feeds_up_to_each_character(void) {
 // label still takes the same tape, so the scissors have the same margins to
 // cut between.
 void test_a_run_can_leave_out_the_cut(void) {
-  CommandOptions options;
-  options.command = Command::TAG;
-  options.label = "AB";
-  options.copies = 2;
-  options.cut = false;
-  etkt->submit(options);
+  etkt->submit(tagOptions("AB", 2, false));
 
   etkt->loop();
 
@@ -621,15 +612,6 @@ void test_the_next_job_clears_the_last_stop(void) {
 
 // --- how long it takes ---------------------------------------------------
 
-static CommandOptions tagOptions(const String& label, int copies, bool cut) {
-  CommandOptions options;
-  options.command = Command::TAG;
-  options.label = label;
-  options.copies = copies;
-  options.cut = cut;
-  return options;
-}
-
 // Where the estimate counts a job's home from: see Printhead::homeUs().
 static void parkAtTheJ(void) {
   CommandOptions options;
@@ -756,7 +738,7 @@ void test_a_run_counts_down_from_the_label_time_it_measures(void) {
 }
 
 // Asked to stop after its label, a run counts down to the end of that label
-// and the finish, not to the end of every label it was sent for.
+// and the celebration, not to the end of every label it was sent for.
 void test_a_run_stopping_after_its_label_counts_down_to_that_label(void) {
   for (int askedDuring = 1; askedDuring <= 2; askedDuring++) {
     parkAtTheJ();

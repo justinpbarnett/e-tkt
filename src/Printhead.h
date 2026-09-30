@@ -38,12 +38,12 @@ class Printhead {
   Turn stopIfLost(Turn turn);
 
   /**
-   * @brief Whether the press can come down now: the wheel reached the slot
-   * asked for, and no stop came. Waits for the tape to arrive and settle
-   * before it looks at the stop, so a stop that comes meanwhile keeps the
-   * press up too.
+   * @brief Waits for the tape to arrive and settle, and then says whether
+   * the press can come down: the wheel reached the slot asked for, and no
+   * stop came, so a stop that comes while the tape moves keeps the press up
+   * too. A turn that did not reach its slot waits for nothing.
    */
-  bool readyToPress(Turn turn);
+  bool waitToPress(Turn turn);
 
   /**
    * @brief How long a turn to `slot` and then a press take, with tapeUs of
@@ -137,9 +137,9 @@ class Printhead {
   /**
    * @brief How long home() takes for a parked wheel.
    *
-   * Every job homes one first. Parked, the wheel has lost its place, so
-   * this counts the longest search for the magnet there is: from the J,
-   * which sits just past it.
+   * A run homes the wheel before its first label, and the job before it
+   * parked the wheel, which lost its place. So this counts the longest
+   * search for the magnet there is: from the J, which sits just past it.
    *
    * This and the estimates below are worked out from the same ramps and
    * waits the motors run, not timed. See DaisyWheel::moveUs() and
@@ -149,22 +149,24 @@ class Printhead {
 
   /**
    * @brief How long a character takes as a label prints it: stamp() with
-   * the wheel at `from` and tapeUs of feeding started just before, and then
-   * the rest of the feeding.
+   * the wheel at `wheel` and tapeUs of feeding started just before, and
+   * then the rest of the feeding. Leaves `wheel` where stamp() leaves the
+   * wheel.
    *
    * That is the longer of the turn and the tape, and then the press. A
    * space, like a character the wheel lacks, is only the tape. A wheel at
-   * no slot counts as at the J.
+   * no slot, which is where one the wheel lacks lets go of it, counts as at
+   * the J.
    */
-  unsigned long stampUs(const String& from, const String& character,
+  unsigned long stampUs(String* wheel, const String& character,
                         unsigned long tapeUs,
                         const Calibration& calibration) const;
 
   /**
    * @brief How long the cut takes as a label ends with it: cut() with the
-   * wheel at `from` and tapeUs of feeding started just before, and then the
-   * rest of the feeding.
+   * wheel at `wheel` and tapeUs of feeding started just before, and then
+   * the rest of the feeding. Leaves `wheel` at the cut mark.
    */
-  unsigned long cutUs(const String& from, unsigned long tapeUs,
+  unsigned long cutUs(String* wheel, unsigned long tapeUs,
                       const Calibration& calibration) const;
 };
