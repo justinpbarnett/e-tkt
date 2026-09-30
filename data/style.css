@@ -137,6 +137,9 @@
   --tape-inset: 18px;
   --track-height: calc(var(--tape-height) + 2 * var(--tape-inset));
 
+  /* The widest the page's column gets, its side padding included. */
+  --page-width: calc(30rem + 32px);
+
   color-scheme: light;
 }
 
@@ -193,8 +196,11 @@ html {
      scrollbar takes on the right and the column stays centered. Keeping
      the room from the start, with scrollbar-gutter, left a strip down each
      side that a dialog's backdrop did not darken. Scrollbars that float
-     over the page, as on a phone, take no room, so this is nothing there. */
-  margin-left: calc(100vw - 100%);
+     over the page, as on a phone, take no room, so this is nothing there.
+     The left gives up only room the column does not need. In a window too
+     narrow for the whole column, the room came out of the column's left
+     gutter, which then stood wider than its right one and than a dialog's. */
+  margin-left: clamp(0px, 100% - var(--page-width), 100vw - 100%);
 }
 
 body {
@@ -272,7 +278,7 @@ a {
 
 .page {
   width: 100%;
-  max-width: calc(30rem + 32px);
+  max-width: var(--page-width);
   margin: 0 auto;
   padding: max(20px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right))
     max(24px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
