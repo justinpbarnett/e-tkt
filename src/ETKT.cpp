@@ -28,6 +28,20 @@
 static const int FINISH_BLINK_TIMES = 5;
 static const int FINISH_BLINK_MS = 100;
 static const int FINISH_FADE_MS = 3225;
+// Each blink is an off and an on.
+static const unsigned long FINISH_MS =
+    FINISH_BLINK_TIMES * 2 * FINISH_BLINK_MS + FINISH_FADE_MS;
+
+// How long a job gives the press to get clear of the wheel, once rest() has
+// sent it there, before anything moves.
+static const unsigned long REST_SETTLE_MS = 500;
+
+// The label as the wheel prints it, which has only capitals.
+static String asPrinted(const String& label) {
+  String printed = label;
+  printed.toUpperCase();
+  return printed;
+}
 
 // The one statement of what commands this device has. A row gives the
 // enumerator, the name it answers to on the wire and in /api/<name>, the
@@ -137,9 +151,12 @@ ETKT::ETKT(Logger* logger, Settings* settings, Display* display,
   this->copy = 0;
   this->printed = 0;
   this->stoppingAfterLabel = false;
+  this->runStartMs = 0;
+  this->secondLabelStartMs = 0;
+  this->labelStartMs = 0;
   // Nothing has fed yet, so there is nothing to charge.
   this->accountedFeeds = 0;
-  this->feedsAtLastCut = 0;
+  this->feedsAtLabelStart = 0;
   this->lastStopId = 0;
   this->calibration.align = 0;
   this->calibration.force = 0;
@@ -163,7 +180,7 @@ void ETKT::initialize() {
   this->lastStopId = (uint32_t)random(0, 1L << 30);
 }
 
-Calibration ETKT::savedCalibration() {
+Calibration ETKT::savedCalibration() const {
   Calibration saved;
   saved.align = (int)this->settings->getAlignFactor();
   saved.force = (int)this->settings->getForceFactor();
@@ -188,16 +205,26 @@ StatusUpdate ETKT::createStatus() {
     status.currentCommand = this->command->command;
     status.currentLabel = this->command->label;
     status.progress = this->progress;
-    const CommandSpec* spec = commandSpec(this->command->command);
-    if (spec != NULL && spec->printsRun) {
-      status.copy = this->copy;
-      status.copies = this->command->copies;
-    }
     // A stop now outranks a stop after the label, which it overtakes.
     if (this->stopSignal->raised()) {
       status.stop = PendingStop::NOW;
     } else if (this->stoppingAfterLabel) {
       status.stop = PendingStop::AFTER_LABEL;
+    }
+    const CommandSpec* spec = commandSpec(this->command->command);
+    if (spec != NULL && spec->printsRun) {
+      status.copy = this->copy;
+      status.copies = this->command->copies;
+      // Nothing to count down until the run has begun, and nothing but the
+      // press finishing its stroke once it is stopping now.
+      if (this->copy > 0) {
+        status.labelMs = this->labelMs();
+        if (status.stop != PendingStop::NOW) {
+          // By the difference, which holds as millis() wraps.
+          const long leftMs = (long)(this->runEndMs() - millis());
+          status.remainingMs = leftMs > 0 ? (uint32_t)leftMs : 0;
+        }
+      }
     }
   }
   status.stopped = this->lastStopped;
@@ -303,6 +330,8 @@ void ETKT::loop() {
   const Calibration saved = this->savedCalibration();
   this->calibration.align = trialsAlign ? this->command->align : saved.align;
   this->calibration.force = trialsForce ? this->command->force : saved.force;
+  // Tape fed before this command is not its label.
+  this->feedsAtLabelStart = this->feeder->feeds();
 
   // Do the task. The command's row says which handler to run. A command with
   // no row at all is a bug worth hearing about; a row with no handler is
@@ -313,10 +342,6 @@ void ETKT::loop() {
   } else if (spec->run != NULL) {
     (this->*(spec->run))();
   }
-
-  // Four commands feed, and every feed is tape off the roll. Charged before
-  // the command is let go, so the first idle status already shows it.
-  this->accountForTape();
 
   // Whether a stop cut this command short, as against arriving while it was
   // finishing anyway.
@@ -334,6 +359,11 @@ void ETKT::loop() {
   this->printhead->park();
   this->feeder->deenergize();
 
+  // Four commands feed, and every feed is tape off the roll. Charged once
+  // the feeder has let go, so a feed it halted partway is counted, and
+  // before the command is let go, so the first idle status already shows it.
+  this->accountForTape();
+
   this->lock.lock();
   if (stopped) {
     StoppedCommand record;
@@ -345,8 +375,8 @@ void ETKT::loop() {
       record.copies = this->command->copies;
     }
     if (spec != NULL && spec->pressesLabel) {
-      // Tape fed since the last cut is a label nothing has cut off.
-      record.unfinished = this->feeder->feeds() > this->feedsAtLastCut;
+      // Tape fed since the label began is a label left on the tape.
+      record.unfinished = this->feeder->feeds() > this->feedsAtLabelStart;
     }
     this->lastStopped = record;
   }
@@ -356,6 +386,10 @@ void ETKT::loop() {
   this->copy = 0;
   this->printed = 0;
   this->stoppingAfterLabel = false;
+  this->runEstimate = RunEstimate();
+  this->runStartMs = 0;
+  this->secondLabelStartMs = 0;
+  this->labelStartMs = 0;
   // Down again before the next command can be submitted, so no stop
   // outlives its command.
   this->stopSignal->clear();
@@ -372,7 +406,7 @@ void ETKT::feedCommandInternal() {
   this->display->render(Screen::FEEDING);
   this->ledFinish->on(LIGHT_FAINT);
   this->printhead->rest();
-  delay(500);
+  delay(REST_SETTLE_MS);
   this->feeder->feed();
   this->ledFinish->off();
   this->ledChar->off();
@@ -382,7 +416,7 @@ void ETKT::reelCommandInternal() {
   this->display->render(Screen::REELING);
   this->ledFinish->on(LIGHT_FAINT);
   this->printhead->rest();
-  delay(500);
+  delay(REST_SETTLE_MS);
 
   // A reel is a new roll going in. Anything fed before this came off the old
   // one, so it is charged there before the count starts again. The feeds
@@ -403,7 +437,7 @@ void ETKT::cutCommandInternal() {
   this->display->render(Screen::CUTTING);
   this->ledChar->on(LIGHT_DIM);
   this->printhead->rest();
-  delay(500);
+  delay(REST_SETTLE_MS);
 
   this->printhead->cut(this->calibration);
   ledChar->off();
@@ -445,51 +479,45 @@ void ETKT::testCommandInternal() {
 }
 
 void ETKT::testCommandFullInternal() {
-  this->feedsAtLastCut = this->feeder->feeds();
-  this->feeder->feed();
-  const std::vector<String> characters = Utility::characters("E-TKT");
-  for (size_t i = 0; i < characters.size(); i++) {
-    if (this->stopSignal->shouldStop()) {
-      return;
-    }
-    this->feeder->feed();
-    this->printhead->stamp(characters[i], this->calibration);
-  }
-  if (this->stopSignal->shouldStop()) {
-    return;
-  }
-  this->feeder->feed();
-  this->printhead->cut(this->calibration);
+  // The label " E-TKT", pressed and cut like any other: a blank feed and a
+  // space ahead of the text, so the E lands two feeds in, and no top-up.
+  const String label = " E-TKT";
+  this->display->renderProgress(0, label, 1, 1);
+  this->printLabel(label, 1, 1);
 }
 
 void ETKT::homeCommandInternal() {
   this->ledFinish->on(LIGHT_FULL);
   this->ledChar->on(LIGHT_FULL);
   this->printhead->rest();
-  delay(500);
+  delay(REST_SETTLE_MS);
   this->printhead->home(this->calibration);
   delay(1000);
 }
 
 void ETKT::moveCommandInternal() {
   this->printhead->rest();
-  delay(500);
+  delay(REST_SETTLE_MS);
   this->printhead->turnTo(this->command->label, this->calibration);
 }
 
 void ETKT::tagCommandInternal() {
-  auto label = this->command->label;
-  label.toUpperCase();
+  const String label = asPrinted(this->command->label);
   const int copies = this->command->copies;
+  // At the calibration the run presses at, before anything moves.
+  const RunEstimate expected =
+      this->estimate(*this->command, this->calibration);
   // On its first label from the start, not from its first feed. The panel
   // polls throughout, and "label 0 of 3" while the press settles is nothing
   // an operator can make sense of.
   this->lock.lock();
   this->copy = 1;
+  this->runEstimate = expected;
+  this->runStartMs = millis();
   this->lock.unlock();
   // enables servo
   this->printhead->rest();
-  delay(500);
+  delay(REST_SETTLE_MS);
 
   if (copies > 1) {
     this->logger->log(String("print ") + label + " x " + copies);
@@ -499,11 +527,14 @@ void ETKT::tagCommandInternal() {
 
   this->ledChar->on(LIGHT_DIM);
 
-  this->feedsAtLastCut = this->feeder->feeds();
   for (int copy = 1; copy <= copies; copy++) {
     this->lock.lock();
     this->copy = copy;
     this->progress = 0;
+    this->labelStartMs = millis();
+    if (copy == 2) {
+      this->secondLabelStartMs = this->labelStartMs;
+    }
     this->lock.unlock();
 
     this->display->renderProgress(0, label, copy, copies);
@@ -512,7 +543,12 @@ void ETKT::tagCommandInternal() {
     // the same few seconds of it before every label of a long run would be
     // most of a minute of music for nothing.
     if (copy == 1) {
-      this->playTune(label);
+      this->sound->playTune(label);
+      // Before any tape moves, so a wheel that cannot find its magnet stops
+      // the run with nothing on the tape to cut off. Every character homes
+      // again on its way to its slot, so this is the only home a run needs
+      // of its own.
+      this->printhead->home(this->calibration);
     }
 
     this->printLabel(label, copy, copies);
@@ -521,7 +557,7 @@ void ETKT::tagCommandInternal() {
       // Stopped partway through this label, which is left on the tape.
       break;
     }
-    this->feedsAtLastCut = this->feeder->feeds();
+    this->feedsAtLabelStart = this->feeder->feeds();
     this->lock.lock();
     this->printed = copy;
     this->lock.unlock();
@@ -529,9 +565,9 @@ void ETKT::tagCommandInternal() {
       break;
     }
 
-    // Between one cut and the next feed, where both kinds of stop can end a
-    // run without leaving anything on the tape. A stop now, obeyed here,
-    // still counts as cutting the run short.
+    // Between one label's end and the next one's first feed, where both
+    // kinds of stop can end a run without leaving anything unfinished on the
+    // tape. A stop now, obeyed here, still counts as cutting the run short.
     if (this->stopSignal->shouldStop()) {
       break;
     }
@@ -550,8 +586,8 @@ void ETKT::tagCommandInternal() {
     return;
   }
   this->logger->log("Printing Complete");
-  // A stop that came as the last label was being cut was too late to cut
-  // anything short. The operator still asked for the machine to stop, so it
+  // A stop that came as the last label was being finished was too late to
+  // cut anything short. The operator still asked for the machine to stop, so it
   // does, and skips the four seconds of celebration. One that comes during
   // them ends them; see Light.
   if (this->stopSignal->raised()) {
@@ -568,20 +604,6 @@ void ETKT::tagCommandInternal() {
   this->ledFinish->fadeOut(LIGHT_FULL, FINISH_FADE_MS);
 }
 
-void ETKT::playTune(const String& label) {
-  if (label == " TASCHENRECHNER " || label == " POCKET CALCULATOR " ||
-      label == " DENTAKU " || label == " CALCULADORA " ||
-      label == " MINI CALCULATEUR ") {
-    this->sound->playMelody(
-        "*4599845887*459984588764599845887*4599845887",
-        "88843888484888438884848884388848488843888484");  // ♪ I'm the operator
-                                                          // with my pocket
-                                                          // calculator ♪
-  } else {
-    this->sound->playLabel(label);
-  }
-}
-
 void ETKT::printLabel(const String& label, int copy, int copies) {
   // What a label may say is CHARACTERS in CharacterSet.h, less the cut
   // mark, plus the space. printableCharacters() is that list; the webapp
@@ -589,41 +611,122 @@ void ETKT::printLabel(const String& label, int copy, int copies) {
   const std::vector<String> characters = Utility::characters(label);
   const int labelLength = characters.size();
 
-  // home daisy wheel
-  this->printhead->home(this->calibration);
-
-  this->feeder->feed(LEAD_FEEDS);
-  if (this->stopSignal->shouldStop()) {
-    return;
-  }
+  // The tape runs one feed ahead of the press from here on. Each feed is
+  // started as the character before it is done, and the wheel turns to the
+  // next character while it runs. The press waits for both.
+  this->feeder->start(LEAD_FEEDS);
 
   for (int i = 0; i < labelLength; i++) {
     this->printhead->stamp(characters[i], this->calibration);
-
-    this->feeder->feed();
+    // A character that was pressed has waited for the tape already. A space
+    // is only its feed, so it waits here. The screen is drawn next, and a
+    // redraw stalls a feed that is still under way.
+    this->feeder->finish();
     if (this->stopSignal->shouldStop()) {
       return;
     }
-    delay(500);
 
     this->display->renderProgress(i + 1, label, copy, copies);
 
     this->lock.lock();
     this->progress = progressPercent(i + 1, labelLength);
     this->lock.unlock();
-  }
 
-  if (this->stopSignal->shouldStop()) {
-    return;
+    this->feeder->start(1);
   }
 
   // Top the tape up to something the user can take hold of. topUpFeeds()
   // says how far, and why a single letter is left short; the panel works out
-  // how many labels fit on the roll from the same rule.
-  const int topUp = topUpFeeds(labelLength);
-  if (topUp > 0) {
-    this->feeder->feed(topUp);
+  // how many labels fit on the roll from the same rule. The top-up follows
+  // the last character's feed, and the wheel turns to the cut mark while
+  // both run. A stop that is up by now asks for no more tape, and turns the
+  // wheel nowhere.
+  this->feeder->start(topUpFeeds(labelLength));
+  if (this->command->cut) {
+    this->printhead->cut(this->calibration);
   }
+  // Without the cut, the tape is still on its way to the end of the label.
+  this->feeder->finish();
+}
 
-  this->printhead->cut(this->calibration);
+uint32_t ETKT::labelMs() const {
+  // The first label waits for the tune and the home, and turns the wheel
+  // from where the home left it rather than from where the last label did,
+  // so only the labels from the second on are timed.
+  if (this->copy < 3) {
+    return this->runEstimate.labelMs;
+  }
+  return (this->labelStartMs - this->secondLabelStartMs) / (this->copy - 2);
+}
+
+unsigned long ETKT::runEndMs() const {
+  // A run asked to stop after its label ends with that one, and still plays
+  // the finish.
+  const int lastCopy =
+      this->stoppingAfterLabel ? this->copy : this->command->copies;
+  if (this->copy < 2) {
+    return this->runStartMs + this->runEstimate.runMs -
+           (this->command->copies - lastCopy) * this->runEstimate.labelMs;
+  }
+  const int labelsLeft = lastCopy - this->copy + 1;
+  return this->labelStartMs + labelsLeft * this->labelMs() + FINISH_MS;
+}
+
+RunEstimate ETKT::estimate(const CommandOptions& options) const {
+  return this->estimate(options, this->savedCalibration());
+}
+
+RunEstimate ETKT::estimate(const CommandOptions& options,
+                           const Calibration& calibration) const {
+  RunEstimate estimate;
+  const CommandSpec* spec = commandSpec(options.command);
+  if (spec == NULL || !spec->printsRun) {
+    return estimate;
+  }
+  const String label = asPrinted(options.label);
+  const std::vector<String> characters = Utility::characters(label);
+
+  // The first label starts from the home, and leaves the wheel where every
+  // label after it starts.
+  String wheel = CHAR_HOME_CHARACTER;
+  const uint64_t firstUs =
+      this->labelUs(characters, options.cut, calibration, &wheel);
+  const uint64_t labelUs =
+      this->labelUs(characters, options.cut, calibration, &wheel);
+  const uint64_t after = options.copies > 1 ? options.copies - 1 : 0;
+  const uint64_t runUs = REST_SETTLE_MS * 1000 + this->sound->tuneUs(label) +
+                         this->printhead->homeUs(calibration) + firstUs +
+                         after * labelUs + FINISH_MS * 1000;
+
+  estimate.labelMs = (uint32_t)((labelUs + 500) / 1000);
+  estimate.runMs = (uint32_t)((runUs + 500) / 1000);
+  return estimate;
+}
+
+uint64_t ETKT::labelUs(const std::vector<String>& characters, bool cut,
+                       const Calibration& calibration, String* wheel) const {
+  // As printLabel() runs them: the lead feeds up to the first character, and
+  // each character after it waits for the one feed started as the character
+  // before it was done.
+  uint64_t us = 0;
+  int feeds = LEAD_FEEDS;
+  for (const String& character : characters) {
+    us += this->printhead->stampUs(*wheel, character,
+                                   this->feeder->feedUs(feeds), calibration);
+    // A space turns the wheel nowhere.
+    if (character != " ") {
+      *wheel = character;
+    }
+    feeds = 1;
+  }
+  // The top-up runs on from the last character's feed, and the cut waits for
+  // both.
+  feeds += topUpFeeds(characters.size());
+  if (!cut) {
+    return us + this->feeder->feedUs(feeds);
+  }
+  us +=
+      this->printhead->cutUs(*wheel, this->feeder->feedUs(feeds), calibration);
+  *wheel = CUT_CHARACTER;
+  return us;
 }

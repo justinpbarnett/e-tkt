@@ -39,9 +39,8 @@
 // How long the ramp waits between one degree and the next.
 //
 // QUICK is the printing path: every degree still gets written, as fast as the
-// loop can issue them. STRONG eases through each one, which is what cutting
-// uses so its three repeated presses land the same way each time. SLOW is the
-// calibration crawl.
+// loop can issue them. STRONG eases through each one, and is what the cut
+// presses with. SLOW is the calibration crawl.
 //
 // These also decide the real time spent at the peak, which is longer than the
 // dwell above: the ramp in writes the peak and then waits a step before
@@ -95,12 +94,20 @@ class Press {
    * none at 1.
    *
    * strong and slow only change how quickly it gets there. strong=true eases
-   * through each degree, which is what cutting uses so its three repeated
-   * presses land the same way each time; slow=true is the calibration crawl,
-   * and is also what holds at the peak for PRESS_TEST_DWELL_MS. Neither one
-   * reaches any further in than force alone does.
+   * through each degree, and is what the cut presses with; slow=true is the
+   * calibration crawl, and is also what holds at the peak for
+   * PRESS_TEST_DWELL_MS. Neither one reaches any further in than force alone
+   * does.
    */
   void press(bool strong, int force, bool slow);
+
+  /**
+   * @brief How long a printing press, press(strong, force, false), takes:
+   * from the first degree out to the press settled back at rest.
+   *
+   * Worked out from the same ramps and dwells press() runs, not timed.
+   */
+  unsigned long pressUs(bool strong, int force) const;
 
   /**
    * @brief Moves the press to the rest position, away from the daisy wheel

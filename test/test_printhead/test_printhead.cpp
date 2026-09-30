@@ -2,10 +2,10 @@
 // press working together, through the calls a job makes on it.
 //
 // What comes out on the tape is which slot was under the press when it came
-// down, and how far in it went. So the wheel and the press here are the real
-// modules on fakes, with a FakeMagnet for the hall sensor to find and a
-// StrokeLog that says, for each stroke, where the wheel stood and how deep
-// the press went.
+// down, how far in it went, and whether the tape was still then. So the
+// wheel, the press and the feeder here are the real modules on fakes, with a
+// FakeMagnet for the hall sensor to find and a StrokeLog that says, for each
+// stroke, where the wheel stood and how deep the press went.
 //
 // Run with:  pio test -e native
 #include <unity.h>
@@ -16,6 +16,7 @@
 #include "DaisyWheel.h"
 #include "FakeDrivers.h"
 #include "FakeMagnet.h"
+#include "Feeder.h"
 #include "HallSwitch.h"
 #include "Light.h"
 #include "Logger.h"
@@ -27,6 +28,7 @@
 
 static FakeServo* pressServo;
 static FakeStepper* charStepper;
+static FakeStepper* feedStepper;
 static FakeMagnet* magnet;
 static StrokeLog* strokes;
 
@@ -35,6 +37,7 @@ static StopSignal* stopSignal;
 static Light* ledChar;
 static Press* press;
 static HallSwitch* hall;
+static Feeder* feeder;
 static DaisyWheel* daisywheel;
 static Printhead* printhead;
 
@@ -42,6 +45,7 @@ void setUp(void) {
   stubReset();
   pressServo = new FakeServo();
   charStepper = new FakeStepper();
+  feedStepper = new FakeStepper();
   // Anywhere but where the shaft starts, so the first home has to find it.
   magnet = new FakeMagnet(charStepper, 1000);
   magnet->install();
@@ -52,8 +56,10 @@ void setUp(void) {
   ledChar = new Light(CHARACTER_LED_PIN, stopSignal);
   press = new Press(logger, SERVO_PIN, ledChar, pressServo);
   hall = new HallSwitch(logger, HALL_PIN);
-  daisywheel = new DaisyWheel(logger, hall, charStepper, stopSignal);
-  printhead = new Printhead(logger, daisywheel, press, stopSignal);
+  feeder = new Feeder(logger, feedStepper, stopSignal);
+  daisywheel = new DaisyWheel(logger, hall, charStepper, stopSignal, feeder);
+  printhead = new Printhead(logger, daisywheel, press, stopSignal, feeder);
+  feeder->initialize();
   const Calibration saved = {5, 5};
   printhead->initialize(saved);
 }
@@ -61,6 +67,7 @@ void setUp(void) {
 void tearDown(void) {
   delete printhead;
   delete daisywheel;
+  delete feeder;
   delete hall;
   delete press;
   delete ledChar;
@@ -68,6 +75,7 @@ void tearDown(void) {
   delete logger;
   delete strokes;
   delete magnet;
+  delete feedStepper;
   delete charStepper;
   delete pressServo;
 }
@@ -262,21 +270,114 @@ void test_a_wheel_lost_at_boot_raises_no_stop(void) {
   TEST_ASSERT_FALSE(stopSignal->raised());
 }
 
+// --- the tape -------------------------------------------------------------
+
+// When the press first left rest, at or after servo call `from`, in
+// milliseconds. 0 if it never did.
+static unsigned long firstPressFrom(size_t from) {
+  for (size_t i = from; i < pressServo->calls.size(); i++) {
+    const ServoCall& call = pressServo->calls[i];
+    if (call.kind == ServoCall::WRITE && call.value != REST_ANGLE) {
+      return call.atMs;
+    }
+  }
+  return 0;
+}
+
+// When the feed motor let go of the tape, at or after stepper call `from`,
+// in milliseconds. 0 if it has not: the boot home alone takes longer than
+// that, so no test here lets go of anything at 0.
+static unsigned long letGoFrom(size_t from) {
+  for (size_t i = from; i < feedStepper->calls.size(); i++) {
+    const StepperCall& call = feedStepper->calls[i];
+    if (call.kind == StepperCall::DISABLE_OUTPUTS) {
+      return call.atMs;
+    }
+  }
+  return 0;
+}
+
+// Nothing comes down on tape that is moving, since that drags the character
+// along the label. Whatever presses waits for the feed under way to arrive
+// and for the tape to settle once the motor lets go, even with the wheel
+// already on the slot and nothing else to wait for.
+void test_nothing_comes_down_on_tape_that_is_still_moving(void) {
+  struct Pressing {
+    const char* slot;
+    void (*press)();
+  };
+  const Pressing pressings[] = {
+      {"A", [] { printhead->stamp("A", {5, 5}); }},
+      {CUT_CHARACTER, [] { printhead->cut({5, 5}); }},
+      {"M", [] { printhead->testPress({5, 5}); }},
+  };
+
+  for (const Pressing& pressing : pressings) {
+    printhead->turnTo(pressing.slot, {5, 5});
+    const long tapeWasAt = feedStepper->currentPosition();
+    const size_t feedFrom = feedStepper->calls.size();
+    const size_t pressFrom = pressServo->calls.size();
+
+    feeder->start(1);
+    pressing.press();
+
+    TEST_ASSERT_EQUAL_INT32_MESSAGE(
+        STEPS_PER_FEED, labs(feedStepper->currentPosition() - tapeWasAt),
+        pressing.slot);
+    const unsigned long letGo = letGoFrom(feedFrom);
+    const unsigned long pressed = firstPressFrom(pressFrom);
+    TEST_ASSERT_TRUE_MESSAGE(letGo > 0, pressing.slot);
+    TEST_ASSERT_TRUE_MESSAGE(pressed > 0, pressing.slot);
+    TEST_ASSERT_TRUE_MESSAGE(pressed >= letGo + FEED_SETTLE_OFF_MS,
+                             pressing.slot);
+  }
+}
+
+// The tape feeds up to the next character while the wheel turns to it, so a
+// character takes as long as the slower of the two rather than both.
+void test_the_wheel_turns_to_the_next_character_while_the_tape_feeds(void) {
+  const Calibration calibration = {5, 5};
+  printhead->stamp("A", calibration);
+  static bool together;
+  together = false;
+  charStepper->afterStep = [] {
+    const long fed = labs(feedStepper->currentPosition());
+    together = together || (fed > 0 && fed < STEPS_PER_FEED);
+  };
+
+  feeder->start(1);
+  printhead->stamp("B", calibration);
+
+  TEST_ASSERT_TRUE(together);
+  TEST_ASSERT_EQUAL_INT(2, (int)strokes->strokes.size());
+}
+
+// The stop can come while the press waits for the tape. The press stays up
+// then, as it does for a stop that comes while the wheel turns: it has not
+// started down, so nothing of the character is on the tape.
+void test_a_stop_while_the_press_waits_for_the_tape_keeps_it_up(void) {
+  const Calibration calibration = {5, 5};
+  printhead->turnTo("A", calibration);
+  feedStepper->afterStep = [] { stopSignal->raise(StopCause::OPERATOR); };
+
+  feeder->start(1);
+  printhead->stamp("A", calibration);
+
+  TEST_ASSERT_EQUAL_INT(0, (int)strokes->strokes.size());
+  TEST_ASSERT_TRUE(stopSignal->cutShort());
+}
+
 // --- the cut ------------------------------------------------------------
 
-// The cut is the cut mark pressed three times in a row, as hard as the job
-// presses its characters, with the wheel held still between them: a cut
-// that moved between presses would score the tape in two places and part it
-// in neither.
-void test_the_cut_presses_one_slot_three_times_at_the_jobs_force(void) {
+// The cut is the cut mark pressed once, as hard as the job presses its
+// characters. It used to press three times, and the tape still came out
+// joined, so the label came off with scissors either way. Two of the three
+// were time for nothing on every label.
+void test_the_cut_presses_the_cut_mark_once_at_the_jobs_force(void) {
   printhead->cut({5, 7});
 
-  TEST_ASSERT_EQUAL_INT(3, (int)strokes->strokes.size());
-  for (size_t i = 0; i < strokes->strokes.size(); i++) {
-    TEST_ASSERT_EQUAL_INT(depthAt(7), strokes->strokes[i].deepest);
-    TEST_ASSERT_EQUAL_INT32(strokes->strokes[0].bearing,
-                            strokes->strokes[i].bearing);
-  }
+  TEST_ASSERT_EQUAL_INT(1, (int)strokes->strokes.size());
+  TEST_ASSERT_EQUAL_INT(depthAt(7), strokes->strokes[0].deepest);
 }
 
 // The slot the cut comes down on is the cut mark, the blade on the wheel,
@@ -290,23 +391,6 @@ void test_the_cut_comes_down_on_the_cut_mark(void) {
   printhead->cut(calibration);
 
   TEST_ASSERT_EQUAL_INT32(cutMark, strokes->strokes[0].bearing);
-}
-
-// A stop is obeyed between the presses of a cut, not only before it. The
-// tape is then partly cut, which the operator can finish with scissors, and
-// a cut that goes on after a stop is two more presses of a blade into
-// something that went wrong.
-void test_a_stop_during_the_cut_ends_it_after_that_press(void) {
-  stubAfterDelay() = [] {
-    if (!strokes->strokes.empty()) {
-      stopSignal->raise(StopCause::OPERATOR);
-    }
-  };
-
-  printhead->cut({5, 5});
-
-  TEST_ASSERT_EQUAL_INT(1, (int)strokes->strokes.size());
-  TEST_ASSERT_TRUE(stopSignal->cutShort());
 }
 
 // --- the test press -----------------------------------------------------
@@ -332,6 +416,132 @@ void test_the_test_press_is_light_and_slow_on_the_m_whatever_the_force(void) {
                                       pressServo->longestHoldAt(light));
 }
 
+// --- how long it takes ----------------------------------------------------
+// A job's estimate is these added up, so each is held to what it estimates,
+// on the virtual clock.
+
+// How long a character takes as a label prints it: its feed started, then
+// the stamp, then whatever is left of the feed.
+static unsigned long timeCharacter(const String& character, int feeds,
+                                   const Calibration& calibration) {
+  const unsigned long start = micros();
+  feeder->start(feeds);
+  printhead->stamp(character, calibration);
+  feeder->finish();
+  return micros() - start;
+}
+
+// The same for the cut, as a label ends with it.
+static unsigned long timeCut(int feeds, const Calibration& calibration) {
+  const unsigned long start = micros();
+  feeder->start(feeds);
+  printhead->cut(calibration);
+  feeder->finish();
+  return micros() - start;
+}
+
+// Every job homes a parked wheel first, and a parked wheel has lost its
+// place. So the estimate counts the longest search there is: from the J,
+// which sits just past the magnet.
+void test_the_estimate_of_a_home_is_how_long_it_takes_from_the_j(void) {
+  const Calibration calibration = {5, 5};
+  printhead->turnTo(CHAR_HOME_CHARACTER, calibration);
+  printhead->park();
+  const unsigned long start = micros();
+  printhead->home(calibration);
+  TEST_ASSERT_EQUAL_UINT32(micros() - start, printhead->homeUs(calibration));
+}
+
+void test_no_parked_wheel_takes_longer_to_home_than_the_estimate(void) {
+  const Calibration calibration = {5, 5};
+  for (const auto& character : CHARACTERS) {
+    printhead->turnTo(character.first, calibration);
+    printhead->park();
+    const unsigned long start = micros();
+    printhead->home(calibration);
+    TEST_ASSERT_LESS_OR_EQUAL_UINT32_MESSAGE(printhead->homeUs(calibration),
+                                             micros() - start,
+                                             character.first.c_str());
+  }
+}
+
+// Where the wheel turns for longer than the tape feeds, and where it does
+// not turn at all.
+void test_the_estimate_of_a_character_is_how_long_it_takes(void) {
+  struct Stamping {
+    const char* from;
+    const char* character;
+    int feeds;
+  };
+  const Stamping stampings[] = {
+      {"A", " ", 1}, {"A", " ", 2}, {"A", "A", 1},
+      {"K", "I", 1}, {"J", "I", 1}, {"K", "@", 1},
+  };
+  const Calibration calibration = {5, 5};
+  for (const Stamping& stamping : stampings) {
+    printhead->turnTo(stamping.from, calibration);
+    const String name = String(stamping.from) + " to '" + stamping.character +
+                        "' over " + stamping.feeds;
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(
+        timeCharacter(stamping.character, stamping.feeds, calibration),
+        printhead->stampUs(stamping.from, stamping.character,
+                           feeder->feedUs(stamping.feeds), calibration),
+        name.c_str());
+  }
+}
+
+void test_the_estimate_of_a_cut_is_how_long_it_takes(void) {
+  const char* froms[] = {"K", CUT_CHARACTER};
+  const Calibration calibration = {5, 5};
+  for (size_t i = 0; i < sizeof(froms) / sizeof(froms[0]); i++) {
+    printhead->turnTo(froms[i], calibration);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(
+        timeCut(1, calibration),
+        printhead->cutUs(froms[i], feeder->feedUs(1), calibration), froms[i]);
+  }
+}
+
+// While the wheel searches for its magnet it looks only every
+// HOME_SWEEP_POLL_US, and so does the tape feeding meanwhile. Each step of
+// the feed can come that much late, which the estimate does not count. It
+// shows where the tape outlasts the turn.
+void test_a_feed_that_outlasts_the_turn_runs_a_little_over_the_estimate(void) {
+  struct Stamping {
+    const char* from;
+    const char* character;
+    int feeds;
+  };
+  const Stamping stampings[] = {
+      {"J", "A", 2},
+      {"I", "K", 1},
+      {"A", CUT_CHARACTER, 3},
+  };
+  const Calibration calibration = {5, 5};
+  for (const Stamping& stamping : stampings) {
+    const String name = String(stamping.from) + " to '" + stamping.character +
+                        "' over " + stamping.feeds;
+    const bool cutting = String(stamping.character) == CUT_CHARACTER;
+    auto estimate = [&](unsigned long tapeUs) {
+      return cutting ? printhead->cutUs(stamping.from, tapeUs, calibration)
+                     : printhead->stampUs(stamping.from, stamping.character,
+                                          tapeUs, calibration);
+    };
+    const unsigned long estimated = estimate(feeder->feedUs(stamping.feeds));
+    TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(estimate(0), estimated,
+                                            name.c_str());
+
+    printhead->turnTo(stamping.from, calibration);
+    const unsigned long taken =
+        cutting
+            ? timeCut(stamping.feeds, calibration)
+            : timeCharacter(stamping.character, stamping.feeds, calibration);
+    TEST_ASSERT_GREATER_OR_EQUAL_UINT32_MESSAGE(estimated, taken, name.c_str());
+    TEST_ASSERT_LESS_THAN_UINT32_MESSAGE(
+        estimated + stamping.feeds * STEPS_PER_FEED * HOME_SWEEP_POLL_US, taken,
+        name.c_str());
+  }
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_homing_leaves_the_home_character_under_the_press);
@@ -345,9 +555,16 @@ int main(int, char**) {
   RUN_TEST(test_a_lost_wheel_presses_nothing_and_stops_the_job);
   RUN_TEST(test_every_turn_of_a_lost_wheel_stops_the_job);
   RUN_TEST(test_a_wheel_lost_at_boot_raises_no_stop);
-  RUN_TEST(test_the_cut_presses_one_slot_three_times_at_the_jobs_force);
+  RUN_TEST(test_nothing_comes_down_on_tape_that_is_still_moving);
+  RUN_TEST(test_the_wheel_turns_to_the_next_character_while_the_tape_feeds);
+  RUN_TEST(test_a_stop_while_the_press_waits_for_the_tape_keeps_it_up);
+  RUN_TEST(test_the_cut_presses_the_cut_mark_once_at_the_jobs_force);
   RUN_TEST(test_the_cut_comes_down_on_the_cut_mark);
-  RUN_TEST(test_a_stop_during_the_cut_ends_it_after_that_press);
   RUN_TEST(test_the_test_press_is_light_and_slow_on_the_m_whatever_the_force);
+  RUN_TEST(test_the_estimate_of_a_home_is_how_long_it_takes_from_the_j);
+  RUN_TEST(test_no_parked_wheel_takes_longer_to_home_than_the_estimate);
+  RUN_TEST(test_the_estimate_of_a_character_is_how_long_it_takes);
+  RUN_TEST(test_the_estimate_of_a_cut_is_how_long_it_takes);
+  RUN_TEST(test_a_feed_that_outlasts_the_turn_runs_a_little_over_the_estimate);
   return UNITY_END();
 }

@@ -52,6 +52,22 @@ void Press::settle(int angle, int holdMs) {
   }
 }
 
+// How long sweep() and settle() take, for pressUs().
+static unsigned long sweepMs(int fromAngle, int toAngle, int stepMs) {
+  return (abs(toAngle - fromAngle) + 1) * stepMs;
+}
+
+static unsigned long settleMs(int holdMs) {
+  // Whole settle steps, until holdMs is covered.
+  const int steps = (holdMs + PRESS_SETTLE_STEP_MS - 1) / PRESS_SETTLE_STEP_MS;
+  return steps * PRESS_SETTLE_STEP_MS;
+}
+
+static int rampStepMs(bool strong, bool slow) {
+  return strong ? PRESS_STEP_STRONG_MS
+                : (slow ? PRESS_STEP_SLOW_MS : PRESS_STEP_QUICK_MS);
+}
+
 void Press::press(bool strong, int force, bool slow) {
   if (!ENABLE_PRESS) {
     delay(500);
@@ -60,8 +76,7 @@ void Press::press(bool strong, int force, bool slow) {
 
   this->logger->log("Pressing...");
 
-  const int stepMs = strong ? PRESS_STEP_STRONG_MS
-                            : (slow ? PRESS_STEP_SLOW_MS : PRESS_STEP_QUICK_MS);
+  const int stepMs = rampStepMs(strong, slow);
 
   // The press runs from REST_ANGLE to STAMP_ANGLE -- the measured
   // just-touching point -- and then further by an amount that scales with
@@ -89,6 +104,17 @@ void Press::press(bool strong, int force, bool slow) {
   this->settle(REST_ANGLE, PRESS_DWELL_MS);
 
   this->pressLed->on(LIGHT_DIM);  // dims the char led
+}
+
+unsigned long Press::pressUs(bool strong, int force) const {
+  const int stepMs = rampStepMs(strong, false);
+  const int peakAngle =
+      pressPeakAngle(REST_ANGLE, STAMP_ANGLE, PRESS_BITE_AT_MAX_FORCE, force);
+  // In to the peak and the dwell there, then out to rest and the dwell there.
+  const unsigned long ms =
+      sweepMs(REST_ANGLE, peakAngle, stepMs) + settleMs(PRESS_DWELL_MS) +
+      sweepMs(peakAngle, REST_ANGLE, stepMs) + settleMs(PRESS_DWELL_MS);
+  return ms * 1000UL;
 }
 
 void Press::rest() { this->servo->write(REST_ANGLE); }

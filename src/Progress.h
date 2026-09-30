@@ -7,9 +7,10 @@
 // them applied the same "not finished yet" correction, which is why the web
 // UI always read one point below the OLED next to it.
 
-// Printing is not done when the last character is pressed: the feed padding
-// and the cut still have to happen. Holding back the final point keeps the
-// user from reaching for tape the cutter has not reached yet.
+// Printing is not done when the last character is pressed: the feed padding,
+// and the cut on a label that is cut, still have to happen. Holding back the
+// final point keeps the user from reaching for tape that is still on its way
+// out.
 constexpr int PROGRESS_MAX_WHILE_PRINTING = 99;
 
 /**

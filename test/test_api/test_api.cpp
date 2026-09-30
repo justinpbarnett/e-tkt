@@ -315,6 +315,43 @@ void test_a_run_of_labels_is_submitted_with_its_length(void) {
   TEST_ASSERT_EQUAL_INT(3, machine->etkt.createStatus().copies);
 }
 
+// The cutter never goes all the way through the tape, so a run can leave the
+// cut out, and its labels come off with scissors. A body that says nothing
+// of it is cut, as every run was before it could leave it out.
+void test_a_run_is_cut_unless_the_body_leaves_the_cut_out(void) {
+  const char* bodies[] = {"{\"tag\":\"AB\",\"copies\":2}",
+                          "{\"tag\":\"AB\",\"copies\":2,\"cut\":true}",
+                          "{\"tag\":\"AB\",\"copies\":2,\"cut\":false}"};
+  // A and B, twice, and the cut mark after each label unless it is left out.
+  const int strokes[] = {6, 6, 4};
+  for (int i = 0; i < 3; i++) {
+    machine->strokes.strokes.clear();
+    TEST_ASSERT_EQUAL_INT_MESSAGE(200, post("/api/tag", bodies[i]).code,
+                                  bodies[i]);
+
+    machine->etkt.loop();
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(
+        strokes[i], (int)machine->strokes.strokes.size(), bodies[i]);
+  }
+}
+
+// Anything but a JSON true or false is refused rather than read as one or
+// the other: a run cut, or not, on a guess is a run to print again.
+void test_a_cut_that_is_not_true_or_false_is_refused(void) {
+  const char* bodies[] = {"{\"tag\":\"AB\",\"cut\":\"no\"}",
+                          "{\"tag\":\"AB\",\"cut\":0}",
+                          "{\"tag\":\"AB\",\"cut\":null}"};
+  for (const char* body : bodies) {
+    const Reply reply = post("/api/tag", body);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(400, reply.code, body);
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("Please provide cut as true or false",
+                                     errorOf(reply), body);
+    TEST_ASSERT_EQUAL_INT_MESSAGE((int)Command::IDLE, (int)running(), body);
+  }
+}
+
 // Copies mean nothing to a command that prints no run of labels, so they are
 // ignored there rather than checked: a stale page that sends them anyway
 // still gets its cut.
@@ -445,6 +482,7 @@ void test_an_idle_machine_says_it_is_idle(void) {
   TEST_ASSERT_EQUAL_INT(0, status["progress"].as<int>());
   TEST_ASSERT_FALSE(status.containsKey("stop"));
   TEST_ASSERT_FALSE(status.containsKey("stopped"));
+  TEST_ASSERT_FALSE(status.containsKey("remaining_ms"));
 }
 
 // The calibration the device presses at, whether or not it is pressing, so
@@ -484,6 +522,33 @@ void test_a_run_in_progress_says_which_label_it_is_on(void) {
   TEST_ASSERT_EQUAL_INT(50, status["progress"].as<int>());
 }
 
+// While a run prints, the status also says how long one of its labels takes
+// and how long the run has left, for the panel to count down from: what the
+// machine says, at the moment of the poll.
+void test_a_run_in_progress_says_how_long_it_has_left(void) {
+  post("/api/tag", "{\"tag\":\"AB\",\"copies\":3}");
+  static Reply during;
+  static StatusUpdate machineSaid;
+  during = Reply();
+  stubAfterDelay() = [] {
+    const StatusUpdate now = machine->etkt.createStatus();
+    if (during.code == 0 && now.copy == 2 && now.progress == 50) {
+      during = get("/api/status");
+      machineSaid = machine->etkt.createStatus();
+    }
+  };
+
+  machine->etkt.loop();
+
+  const JsonObject status = json(during);
+  TEST_ASSERT_TRUE(machineSaid.labelMs > 0);
+  TEST_ASSERT_TRUE(machineSaid.remainingMs > 0);
+  TEST_ASSERT_EQUAL_UINT32(machineSaid.labelMs,
+                           status["label_ms"].as<uint32_t>());
+  TEST_ASSERT_EQUAL_UINT32(machineSaid.remainingMs,
+                           status["remaining_ms"].as<uint32_t>());
+}
+
 // A command that prints no run of labels has no label or run to describe,
 // and says nothing about either rather than an empty label of 0 of 0.
 void test_a_command_that_prints_no_labels_says_nothing_of_them(void) {
@@ -495,6 +560,8 @@ void test_a_command_that_prints_no_labels_says_nothing_of_them(void) {
   TEST_ASSERT_FALSE(status.containsKey("current_label"));
   TEST_ASSERT_FALSE(status.containsKey("copy"));
   TEST_ASSERT_FALSE(status.containsKey("copies"));
+  TEST_ASSERT_FALSE(status.containsKey("label_ms"));
+  TEST_ASSERT_FALSE(status.containsKey("remaining_ms"));
 }
 
 // A stop asked for and not yet obeyed is reported, and which stop, so a
@@ -805,9 +872,9 @@ void test_a_stop_stops_what_is_running_now(void) {
   TEST_ASSERT_TRUE(machine->etkt.createStatus().stop == PendingStop::NOW);
 }
 
-// A run can instead stop once the label being pressed is cut, so it ends on
-// a whole label rather than on one left half pressed on the tape.
-void test_a_run_can_stop_once_the_label_being_pressed_is_cut(void) {
+// A run can instead stop once the label being pressed is finished, so it
+// ends on a whole label rather than on one left half pressed on the tape.
+void test_a_run_can_stop_once_the_label_being_pressed_is_finished(void) {
   post("/api/tag", "{\"tag\":\"AB\",\"copies\":3}");
 
   const Reply reply = postStop("label");
@@ -828,7 +895,7 @@ void test_a_stop_after_anything_but_a_label_is_refused(void) {
   TEST_ASSERT_EQUAL_INT(400, reply.code);
   TEST_ASSERT_EQUAL_STRING(
       "Please provide after=label to stop once the label being pressed is "
-      "cut, or leave it out to stop now",
+      "finished, or leave it out to stop now",
       errorOf(reply));
   TEST_ASSERT_TRUE(machine->etkt.createStatus().stop == PendingStop::NONE);
 }
@@ -907,6 +974,82 @@ void test_the_log_is_what_the_machine_logged_as_plain_text(void) {
   TEST_ASSERT_TRUE(endsWith(body, " INFO  print HELLO"));
 }
 
+// --- estimates --------------------------------------------------------------
+
+// How long a run would take, asked with the body that would send it: what
+// the panel shows for one label and for the whole set before it is sent.
+// Worked out by the machine, and nothing started.
+void test_a_run_is_estimated_from_the_body_that_would_send_it(void) {
+  const Reply reply = post("/api/tag/estimate",
+                           "{\"tag\":\" HELLO \",\"copies\":3,\"cut\":false}");
+
+  TEST_ASSERT_EQUAL_INT(200, reply.code);
+  CommandOptions options;
+  options.command = Command::TAG;
+  options.label = " HELLO ";
+  options.copies = 3;
+  options.cut = false;
+  const RunEstimate expected = machine->etkt.estimate(options);
+  TEST_ASSERT_TRUE(expected.labelMs > 0);
+  TEST_ASSERT_EQUAL_UINT32(expected.labelMs,
+                           json(reply)["label_ms"].as<uint32_t>());
+  TEST_ASSERT_EQUAL_UINT32(expected.runMs,
+                           json(reply)["run_ms"].as<uint32_t>());
+  TEST_ASSERT_EQUAL_INT((int)Command::IDLE, (int)running());
+}
+
+// The panel asks again as the operator types, whatever the machine is doing.
+void test_a_run_can_be_estimated_while_another_prints(void) {
+  TEST_ASSERT_EQUAL_INT(200, post("/api/tag", "{\"tag\":\"AB\"}").code);
+  TEST_ASSERT_EQUAL_INT((int)Command::TAG, (int)running());
+
+  const Reply reply = post("/api/tag/estimate", "{\"tag\":\"AB\"}");
+
+  TEST_ASSERT_EQUAL_INT(200, reply.code);
+  TEST_ASSERT_TRUE(json(reply)["run_ms"].as<uint32_t>() > 0);
+}
+
+// A body the run would refuse, its estimate refuses in the same words, so
+// the operator hears of a mistake as they make it rather than once they send.
+void test_an_estimate_refuses_what_the_run_would_refuse(void) {
+  const char* bodies[] = {"{\"copies\":2}", "{\"tag\":\"AB\",\"copies\":0}",
+                          "{\"tag\":\"AB\",\"cut\":1}", "[]", "{"};
+  for (const char* body : bodies) {
+    const Reply run = post("/api/tag", body);
+    const std::string refusal = errorOf(run);
+
+    const Reply estimate = post("/api/tag/estimate", body);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(400, estimate.code, body);
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(refusal.c_str(), errorOf(estimate), body);
+  }
+  const Reply untyped = postAs("", "/api/tag/estimate", "{\"tag\":\"AB\"}");
+  TEST_ASSERT_EQUAL_INT(415, untyped.code);
+  TEST_ASSERT_EQUAL_INT((int)Command::IDLE, (int)running());
+}
+
+void test_an_estimate_is_asked_for_with_a_post(void) {
+  const Reply reply = get("/api/tag/estimate");
+
+  TEST_ASSERT_EQUAL_INT(405, reply.code);
+  TEST_ASSERT_EQUAL_STRING("POST", reply.allow);
+  TEST_ASSERT_EQUAL_STRING("Please use POST for /api/tag/estimate",
+                           errorOf(reply));
+}
+
+// Only a run of labels takes long enough to be worth estimating, so only a
+// command whose row says it prints one has an estimate to ask for.
+void test_only_a_run_of_labels_can_be_estimated(void) {
+  const char* paths[] = {"/api/cut/estimate", "/api/idle/estimate",
+                         "/api/estimate", "/api/tag/estimate/estimate"};
+  for (const char* path : paths) {
+    const Reply reply = post(path, "{}");
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(404, reply.code, path);
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("Not found", errorOf(reply), path);
+  }
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_a_path_nothing_answers_is_not_found);
@@ -928,6 +1071,8 @@ int main(int, char**) {
   RUN_TEST(test_a_move_may_name_the_cut_mark);
   RUN_TEST(test_a_run_of_no_labels_is_refused);
   RUN_TEST(test_a_run_of_labels_is_submitted_with_its_length);
+  RUN_TEST(test_a_run_is_cut_unless_the_body_leaves_the_cut_out);
+  RUN_TEST(test_a_cut_that_is_not_true_or_false_is_refused);
   RUN_TEST(test_copies_are_ignored_by_a_command_that_prints_no_labels);
   RUN_TEST(test_a_roll_too_short_to_be_one_is_refused);
   RUN_TEST(test_a_new_roll_is_declared_at_its_length);
@@ -940,6 +1085,7 @@ int main(int, char**) {
   RUN_TEST(test_an_idle_machine_says_it_is_idle);
   RUN_TEST(test_the_status_carries_the_saved_calibration);
   RUN_TEST(test_a_run_in_progress_says_which_label_it_is_on);
+  RUN_TEST(test_a_run_in_progress_says_how_long_it_has_left);
   RUN_TEST(test_a_command_that_prints_no_labels_says_nothing_of_them);
   RUN_TEST(test_a_stop_asked_for_is_reported_until_it_is_obeyed);
   RUN_TEST(test_a_stop_reports_what_it_cut_short);
@@ -957,7 +1103,7 @@ int main(int, char**) {
   RUN_TEST(test_each_command_says_what_it_does);
   RUN_TEST(test_the_capabilities_posted_to_are_told_to_get);
   RUN_TEST(test_a_stop_stops_what_is_running_now);
-  RUN_TEST(test_a_run_can_stop_once_the_label_being_pressed_is_cut);
+  RUN_TEST(test_a_run_can_stop_once_the_label_being_pressed_is_finished);
   RUN_TEST(test_a_stop_after_anything_but_a_label_is_refused);
   RUN_TEST(test_a_stop_with_nothing_running_says_the_machine_is_idle);
   RUN_TEST(test_a_stop_of_what_cannot_be_stopped_is_refused_as_a_conflict);
@@ -965,5 +1111,10 @@ int main(int, char**) {
   RUN_TEST(test_a_stop_asked_for_with_get_is_told_to_post);
   RUN_TEST(test_the_log_is_what_the_machine_logged_as_plain_text);
   RUN_TEST(test_the_log_posted_to_is_told_to_get);
+  RUN_TEST(test_a_run_is_estimated_from_the_body_that_would_send_it);
+  RUN_TEST(test_a_run_can_be_estimated_while_another_prints);
+  RUN_TEST(test_an_estimate_refuses_what_the_run_would_refuse);
+  RUN_TEST(test_an_estimate_is_asked_for_with_a_post);
+  RUN_TEST(test_only_a_run_of_labels_can_be_estimated);
   return UNITY_END();
 }

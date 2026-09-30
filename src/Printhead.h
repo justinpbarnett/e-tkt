@@ -5,6 +5,7 @@
 #include "Calibration.h"
 #include "DaisyWheel.h"
 #include "Logger.h"
+#include "Motion.h"
 #include "Press.h"
 #include "StopSignal.h"
 
@@ -14,7 +15,9 @@
  *
  * A character, the cut and the test press are each a turn of the wheel and
  * then a press, unless a stop comes in between. The press never comes down
- * on a slot the wheel did not reach.
+ * on a slot the wheel did not reach, nor on tape that is still moving: the
+ * tape feeds up to the character while the wheel turns to it, and the press
+ * waits for both.
  */
 class Printhead {
  private:
@@ -22,6 +25,8 @@ class Printhead {
   DaisyWheel* daisywheel;
   Press* press;
   StopSignal* stop;
+  // The tape, which feeds in the background while the wheel turns.
+  Background* tape;
 
   /**
    * @brief What every turn of the wheel comes back through. A wheel that
@@ -32,9 +37,26 @@ class Printhead {
    */
   Turn stopIfLost(Turn turn);
 
+  /**
+   * @brief Whether the press can come down now: the wheel reached the slot
+   * asked for, and no stop came. Waits for the tape to arrive and settle
+   * before it looks at the stop, so a stop that comes meanwhile keeps the
+   * press up too.
+   */
+  bool readyToPress(Turn turn);
+
+  /**
+   * @brief How long a turn to `slot` and then a press take, with tapeUs of
+   * feeding under way. The wheel turns while the tape feeds, and the press
+   * waits for both.
+   */
+  unsigned long pressedUs(const String& from, const String& slot,
+                          unsigned long tapeUs, bool strong,
+                          const Calibration& calibration) const;
+
  public:
   Printhead(Logger* logger, DaisyWheel* daisywheel, Press* press,
-            StopSignal* stop);
+            StopSignal* stop, Background* tape);
 
   /**
    * @brief Starts the press, lifted clear, and then the wheel, which homes
@@ -72,18 +94,19 @@ class Printhead {
    * @brief Presses one character of a label into the tape.
    *
    * The wheel turns to the character's slot and the press comes down once,
-   * at the calibration's force. A stop that comes while the wheel turns, or
-   * as it gets there, keeps the press up. A space presses nothing and leaves
-   * the wheel where it was.
+   * at the calibration's force. A stop that comes while the wheel turns, as
+   * it gets there, or while the press waits for the tape, keeps the press
+   * up. A space presses nothing, leaves the wheel where it was, and does not
+   * wait for the tape.
    */
   void stamp(const String& character, const Calibration& calibration);
 
   /**
-   * @brief Cuts the tape: the cut mark, pressed three times as hard as the
+   * @brief Cuts the tape: the cut mark, pressed once as hard as the
    * calibration's force.
    *
-   * A stop is obeyed between the three presses, so it can leave the tape
-   * partly cut. If the wheel does not reach the cut mark nothing is
+   * The blade does not go all the way through, so the label still comes
+   * off with scissors. If the wheel does not reach the cut mark nothing is
    * pressed, and a wheel with no cut mark is logged.
    */
   void cut(const Calibration& calibration);
@@ -110,4 +133,38 @@ class Printhead {
    * before it counts from anywhere.
    */
   void park();
+
+  /**
+   * @brief How long home() takes for a parked wheel.
+   *
+   * Every job homes one first. Parked, the wheel has lost its place, so
+   * this counts the longest search for the magnet there is: from the J,
+   * which sits just past it.
+   *
+   * This and the estimates below are worked out from the same ramps and
+   * waits the motors run, not timed. See DaisyWheel::moveUs() and
+   * Feeder::feedUs() for the little they leave out.
+   */
+  unsigned long homeUs(const Calibration& calibration) const;
+
+  /**
+   * @brief How long a character takes as a label prints it: stamp() with
+   * the wheel at `from` and tapeUs of feeding started just before, and then
+   * the rest of the feeding.
+   *
+   * That is the longer of the turn and the tape, and then the press. A
+   * space, like a character the wheel lacks, is only the tape. A wheel at
+   * no slot counts as at the J.
+   */
+  unsigned long stampUs(const String& from, const String& character,
+                        unsigned long tapeUs,
+                        const Calibration& calibration) const;
+
+  /**
+   * @brief How long the cut takes as a label ends with it: cut() with the
+   * wheel at `from` and tapeUs of feeding started just before, and then the
+   * rest of the feeding.
+   */
+  unsigned long cutUs(const String& from, unsigned long tapeUs,
+                      const Calibration& calibration) const;
 };

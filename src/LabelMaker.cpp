@@ -92,9 +92,13 @@ Light* ledFinish = new Light(FINISH_LED_PIN, stopSignal);
 Light* ledChar = new Light(CHARACTER_LED_PIN, stopSignal);
 Press* press = new Press(logger, SERVO_PIN, ledChar, pressServo);
 HallSwitch* hall = new HallSwitch(logger, HALL_PIN);
-DaisyWheel* daisywheel = new DaisyWheel(logger, hall, charStepper, stopSignal);
-Printhead* printhead = new Printhead(logger, daisywheel, press, stopSignal);
+// Built before the wheel and the printhead: the tape feeds while the wheel
+// turns, and the press waits for it to stop.
 Feeder* feeder = new Feeder(logger, feedStepper, stopSignal);
+DaisyWheel* daisywheel =
+    new DaisyWheel(logger, hall, charStepper, stopSignal, feeder);
+Printhead* printhead =
+    new Printhead(logger, daisywheel, press, stopSignal, feeder);
 ETKT* etkt = new ETKT(logger, settings, display, printhead, feeder, roll, sound,
                       ledFinish, ledChar, stopSignal);
 // Everything the device answers under /api/, which the webserver hands every

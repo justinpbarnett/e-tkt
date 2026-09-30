@@ -52,9 +52,10 @@ class HostMachine {
   Light ledChar;
   Press press;
   HallSwitch hall;
+  // Before the wheel and the printhead, which both keep the tape going.
+  Feeder feeder;
   DaisyWheel daisywheel;
   Printhead printhead;
-  Feeder feeder;
   ETKT etkt;
 
   HostMachine()
@@ -68,9 +69,9 @@ class HostMachine {
         ledChar(CHARACTER_LED_PIN, &stopSignal),
         press(&logger, SERVO_PIN, &ledChar, &pressServo),
         hall(&logger, HALL_PIN),
-        daisywheel(&logger, &hall, &charStepper, &stopSignal),
-        printhead(&logger, &daisywheel, &press, &stopSignal),
         feeder(&logger, &feedStepper, &stopSignal),
+        daisywheel(&logger, &hall, &charStepper, &stopSignal, &feeder),
+        printhead(&logger, &daisywheel, &press, &stopSignal, &feeder),
         etkt(&logger, &settings, &display, &printhead, &feeder, &roll, &sound,
              &ledFinish, &ledChar, &stopSignal) {
     this->magnet.install();

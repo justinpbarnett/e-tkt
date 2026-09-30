@@ -12,6 +12,11 @@
 //     peak -- the stall-current question in Press.h that nothing could check
 //     before -- and the whole suite still finishes in milliseconds. A test can
 //     also hook it, to make something happen partway through a wait.
+//   - yield() and delayMicroseconds() move the same clock on, by what a turn
+//     of a loop costs on the board and by the wait. Every loop that drives a
+//     motor goes through one or the other each time round, and the fake
+//     steppers step on AccelStepper's schedule against this clock, so a move
+//     takes as long here as it does on the machine. See FakeStepper.
 //   - analogWrite() records every write, so the LED behaviour Press documents
 //     can be asserted rather than assumed.
 //   - analogRead() and digitalRead() answer whatever a test scripts, which is
@@ -28,7 +33,6 @@
 // Call stubReset() in setUp().
 
 #include <stdint.h>
-#include <stdio.h>
 #include <stdlib.h>
 
 #include <algorithm>
@@ -68,14 +72,18 @@ inline std::function<void()>& stubAfterDelay() {
   return hook;
 }
 
-inline void delay(unsigned long ms) {
-  stubClockMs() += ms;
-  if (stubAfterDelay()) {
-    stubAfterDelay()();
-  }
+// Called whenever the clock reaches a new millisecond, whatever moved it
+// there, and once for each: a delay(500) is 500 calls. A move is a loop of
+// yield()s with no delay() in it, so this is the hook that sees time pass
+// while a motor turns: the simulator keeps the machine in step with the
+// wall clock from here, and answers a request that arrives partway through
+// a wait at the time it arrives. See src/simulator.
+inline std::function<void()>& stubAfterTick() {
+  static std::function<void()> hook;
+  return hook;
 }
 
-// What delayMicroseconds() has waited that does not yet add up to a whole
+// What the clock has counted that does not yet add up to a whole
 // millisecond. Homing waits 100 us a step, and dropping the remainder would
 // make a full sweep of the wheel take no time at all.
 inline unsigned long& stubClockUs() {
@@ -83,15 +91,39 @@ inline unsigned long& stubClockUs() {
   return us;
 }
 
-// A busy wait on the board, not a place the scheduler runs anything else, so
-// unlike delay() it does not call the hook.
-inline void delayMicroseconds(unsigned int us) {
-  stubClockUs() += us;
-  stubClockMs() += stubClockUs() / 1000;
-  stubClockUs() %= 1000;
+// Moves the clock on by `us`, and calls the tick hook at each new
+// millisecond on the way.
+inline void stubAdvanceUs(unsigned long us) {
+  const unsigned long total = stubClockUs() + us;
+  stubClockUs() = total % 1000;
+  for (unsigned long ms = total / 1000; ms > 0; ms--) {
+    stubClockMs()++;
+    if (stubAfterTick()) {
+      stubAfterTick()();
+    }
+  }
 }
 
-inline void yield() {}
+inline void delay(unsigned long ms) {
+  stubAdvanceUs(ms * 1000UL);
+  if (stubAfterDelay()) {
+    stubAfterDelay()();
+  }
+}
+
+// A busy wait on the board, not a place the scheduler runs anything else, so
+// unlike delay() it does not call the delay hook.
+inline void delayMicroseconds(unsigned int us) { stubAdvanceUs(us); }
+
+// What one turn of a loop that drives a motor costs on the board: the stop
+// check, the run() that decides whether a step is due, and the yield() that
+// lets the webserver's task in. A few microseconds; this is the estimate.
+static const unsigned long STUB_YIELD_US = 5;
+
+// On the board this hands the core to any other task that is ready. Here
+// nothing else is running, so all it does is let the time a loop takes pass.
+inline void yield() { stubAdvanceUs(STUB_YIELD_US); }
+
 inline unsigned long millis() { return stubClockMs(); }
 inline unsigned long micros() { return stubClockMs() * 1000UL + stubClockUs(); }
 
@@ -193,6 +225,7 @@ inline void stubReset() {
   stubClockMs() = 0;
   stubClockUs() = 0;
   stubAfterDelay() = nullptr;
+  stubAfterTick() = nullptr;
   stubRandom() = nullptr;
   stubAnalogWrites().clear();
   stubDigitalWrites().clear();
@@ -220,18 +253,13 @@ inline int analogRead(uint8_t pin) {
 
 // --- String ----------------------------------------------------------------
 // Arduino's String, narrowed to what the modules under test actually call.
+// None makes one of a float. The core writes a float to two places, where
+// std::to_string() writes six, so one added here has to as well, or the
+// simulator's log reads differently from the device's.
 
 class String {
  private:
   std::string value;
-
-  // A number with `places` decimals, padded to the width the core's dtostrf()
-  // is given, so a float logs here as it does on the device.
-  static std::string fixed(double v, unsigned char places) {
-    char text[33];
-    snprintf(text, sizeof text, "%*.*f", places + 2, places, v);
-    return text;
-  }
 
  public:
   String() {}
@@ -242,8 +270,6 @@ class String {
   String(long v) : value(std::to_string(v)) {}
   String(unsigned int v) : value(std::to_string(v)) {}
   String(unsigned long v) : value(std::to_string(v)) {}
-  String(float v, unsigned char places = 2) : value(fixed(v, places)) {}
-  String(double v, unsigned char places = 2) : value(fixed(v, places)) {}
 
   const char* c_str() const { return this->value.c_str(); }
   const std::string& str() const { return this->value; }
@@ -296,6 +322,12 @@ class String {
 
   bool startsWith(const String& prefix) const {
     return this->value.compare(0, prefix.value.length(), prefix.value) == 0;
+  }
+
+  bool endsWith(const String& suffix) const {
+    return this->value.length() >= suffix.value.length() &&
+           this->value.compare(this->value.length() - suffix.value.length(),
+                               suffix.value.length(), suffix.value) == 0;
   }
 };
 

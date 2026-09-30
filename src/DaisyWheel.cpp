@@ -10,24 +10,28 @@
 #include "StopSignal.h"
 
 DaisyWheel::DaisyWheel(Logger* logger, HallSwitch* hall, StepperDriver* stepper,
-                       StopSignal* stop) {
+                       StopSignal* stop, Background* background) {
   this->logger = logger;
   this->hall = hall;
   this->stepper = stepper;
   this->stop = stop;
+  this->background = background;
 }
 
 DaisyWheel::~DaisyWheel() {
   // The stepper is handed in, not built here, so it is not ours to delete.
 }
 
+// The motor as initialize() sets it up, and as the estimates count it.
+static const StepperTiming TIMING = {CHARACTER_STEPPER_MAX_SPEED,
+                                     CHARACTER_STEPPER_MAX_ACCELERATION};
+
 void DaisyWheel::initialize() {
   // The wheel's sensor, so nothing else has to know the wheel has one.
   this->hall->initialize();
-  this->stepsPerChar = (float)this->stepsPerRevolution / WHEEL_SLOT_COUNT;
   digitalWrite(PIN_STEPPER_CHAR_ENABLE, HIGH);
-  this->stepper->setMaxSpeed(CHARACTER_STEPPER_MAX_SPEED);
-  this->stepper->setAcceleration(CHARACTER_STEPPER_MAX_ACCELERATION);
+  this->stepper->setMaxSpeed(TIMING.maxSpeed);
+  this->stepper->setAcceleration(TIMING.acceleration);
   this->stepper->setPinsInverted(true, false, true);
   this->stepper->setEnablePin(PIN_STEPPER_CHAR_ENABLE);
 }
@@ -42,9 +46,10 @@ Turn DaisyWheel::home(int align) {
   this->stepper->enableOutputs();
   // runs the char stepper clockwise until triggering the hall sensor, then call
   // it home at char 21
-  auto a = (align - 5.0f) / 10.0f;
+  const long alignedAt = this->alignPosition(align);
 
-  logger->log(String("Homing with align: ") + align + " and a: " + a);
+  logger->log(String("Homing with align: ") + align + ", to " + alignedAt +
+              " steps from the magnet");
 
   // Check to see if the hall sensor on the stepper is already trigerred
   // and if so, move it a little bit to get the sensor into an un-trigerred
@@ -53,7 +58,8 @@ Turn DaisyWheel::home(int align) {
     long position = -this->stepsPerChar * 4;
     logger->log(String("Moving to position: ") + position +
                 " because the hall sensor is already triggered.");
-    if (!runToNewPosition(this->stepper, position, this->stop)) {
+    if (!runToNewPosition(this->stepper, position, this->stop,
+                          this->background)) {
       this->lose();
       return Turn::STOPPED;
     }
@@ -64,7 +70,7 @@ Turn DaisyWheel::home(int align) {
 
   // Move the daisy wheel until the hall sensor triggers, and then treat
   // wherever that is as the new home position.
-  this->stepper->move(-this->stepsPerRevolution * 1.5f);
+  this->stepper->move(-this->searchSteps);
   auto hallState = hall->triggered();
   // Give up once the 1.5-revolution sweep is exhausted rather than spinning
   // here forever: the stepper has stopped by then, so the hall reading can no
@@ -76,8 +82,9 @@ Turn DaisyWheel::home(int align) {
       return Turn::STOPPED;
     }
     this->stepper->run();
+    this->background->keepGoing();
     // TODO: less intrusive way to avoid triggering watchdog?
-    delayMicroseconds(100);
+    delayMicroseconds(HOME_SWEEP_POLL_US);
 
     hallState = hall->triggered();
   }
@@ -93,10 +100,8 @@ Turn DaisyWheel::home(int align) {
 
   this->stepper->setCurrentPosition(0);
 
-  if (!runToNewPosition(this->stepper,
-                        -stepsPerChar + (stepsPerChar * a) +
-                            (ASSEMBLY_CALIBRATION_ALIGN * stepsPerChar),
-                        this->stop)) {
+  if (!runToNewPosition(this->stepper, alignedAt, this->stop,
+                        this->background)) {
     this->lose();
     return Turn::STOPPED;
   }
@@ -113,13 +118,13 @@ Turn DaisyWheel::home(int align) {
   }
   this->currentChar = homeChar;
 
-  delay(100);
+  pause(HOME_SETTLE_MS, this->background);
   return Turn::REACHED;
 }
 
 Turn DaisyWheel::move(String c, int alignFactor) {
   if (!ENABLE_DAISYWHEEL) {
-    delay(500);
+    pause(500, this->background);
     return Turn::REACHED;
   }
   // Before the coils are powered, so a stop that is already up leaves the
@@ -167,18 +172,109 @@ Turn DaisyWheel::move(String c, int alignFactor) {
     return Turn::REACHED;
   }
 
-  // runs char stepper clockwise to reach the target position
-  long position = -this->stepsPerChar * charDelta;
+  const long position = this->slotPosition(charDelta);
   logger->log(String("Moving ") + charDelta + " characters to position " +
               position);
-  if (!runToNewPosition(this->stepper, position, this->stop)) {
+  if (!runToNewPosition(this->stepper, position, this->stop,
+                        this->background)) {
     this->lose();
     return Turn::STOPPED;
   }
   this->currentChar = charIndex;
 
-  delay(25);
+  pause(TURN_SETTLE_MS, this->background);
   return Turn::REACHED;
+}
+
+// How many slots on from the J the wheel turns to reach `slot`, as move()
+// counts them.
+static int slotsPastHome(int slot) {
+  const int slots = (slot - wheelSlot(CHAR_HOME_CHARACTER)) % WHEEL_SLOT_COUNT;
+  return slots < 0 ? slots + WHEEL_SLOT_COUNT : slots;
+}
+
+unsigned long DaisyWheel::homeUs(const String& from, int align) const {
+  const int slot = wheelSlot(from);
+  std::lock_guard<std::mutex> guard(this->estimateLock);
+  return this->homeFromUs(slot < 0 ? wheelSlot(CHAR_HOME_CHARACTER) : slot,
+                          align);
+}
+
+unsigned long DaisyWheel::moveUs(const String& from, const String& to,
+                                 int align) const {
+  const int fromSlot = wheelSlot(from);
+  const int toSlot = wheelSlot(to);
+  if (toSlot < 0 || toSlot == fromSlot) {
+    return 0;
+  }
+  std::lock_guard<std::mutex> guard(this->estimateLock);
+  const int homedFrom =
+      fromSlot < 0 ? wheelSlot(CHAR_HOME_CHARACTER) : fromSlot;
+  return this->homeFromUs(homedFrom, align) + this->turnToUs(toSlot);
+}
+
+unsigned long DaisyWheel::homeFromUs(int slot, int align) const {
+  if (align != this->estimatedAlign) {
+    for (int i = 0; i < WHEEL_SLOT_COUNT; i++) {
+      this->homeFromSlotUs[i] = 0;
+    }
+    this->estimatedAlign = align;
+  }
+  unsigned long& known = this->homeFromSlotUs[slot];
+  if (known != 0) {
+    return known;
+  }
+
+  const long alignedAt = this->alignPosition(align);
+  // Homing turns the way the slots count, and the magnet is found where it
+  // comes in front of the sensor. The J is alignedAt steps on from there,
+  // and the slot its own steps on from the J, so that is how far round the
+  // search has to go to come back to it.
+  const long start = alignedAt + this->slotPosition(slotsPastHome(slot));
+  long steps = start % this->stepsPerRevolution;
+  if (steps < 0) {
+    steps += this->stepsPerRevolution;
+  }
+  unsigned long us =
+      TIMING.stepsUs(-this->searchSteps, steps, HOME_SWEEP_POLL_US);
+  // The look that sees the magnet.
+  us += HOME_SWEEP_POLL_US;
+  if (alignedAt != 0) {
+    // The align starts from rest, so its first step comes a whole first
+    // interval after the search's last.
+    us += waitedUs(TIMING.firstStepUs() - HOME_SWEEP_POLL_US, MOTOR_LOOP_US);
+    us += TIMING.moveUs(alignedAt, MOTOR_LOOP_US);
+  }
+  us += HOME_SETTLE_MS * 1000UL;
+  known = us;
+  return us;
+}
+
+unsigned long DaisyWheel::turnToUs(int slot) const {
+  const int slots = slotsPastHome(slot);
+  if (slots == 0) {
+    // Homing has put it there.
+    return 0;
+  }
+  unsigned long& known = this->turnToSlotUs[slot];
+  if (known == 0) {
+    // From the J, where homing left the wheel at rest, so the first step
+    // comes at once.
+    known = TIMING.moveUs(this->slotPosition(slots), MOTOR_LOOP_US) +
+            TURN_SETTLE_MS * 1000UL;
+  }
+  return known;
+}
+
+long DaisyWheel::alignPosition(int align) const {
+  const float a = (align - 5.0f) / 10.0f;
+  return -this->stepsPerChar + (this->stepsPerChar * a) +
+         (ASSEMBLY_CALIBRATION_ALIGN * this->stepsPerChar);
+}
+
+long DaisyWheel::slotPosition(int slots) const {
+  // runs char stepper clockwise to reach the target position
+  return -this->stepsPerChar * slots;
 }
 
 void DaisyWheel::lose() { this->currentChar = -1; }

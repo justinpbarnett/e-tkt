@@ -150,6 +150,56 @@ void test_a_run_reports_which_label_it_is_on_and_how_far_into_it(void) {
   }
 }
 
+// Most of a label is tape moving, and the wheel used to wait for it. Now it
+// turns to each character, and to the cut mark, while the tape feeds up to
+// it, and the press waits for both.
+void test_the_wheel_turns_while_the_tape_feeds_up_to_each_character(void) {
+  submitTag("AB", 1);
+  // Whether any step of the wheel on its way to each stroke was taken while
+  // the tape was moving, by the stroke it was on its way to.
+  static std::vector<bool> turnedWhileFeeding;
+  turnedWhileFeeding.clear();
+  charStepper->afterStep = [] {
+    const size_t stroke = strokes->strokes.size();
+    if (turnedWhileFeeding.size() <= stroke) {
+      turnedWhileFeeding.resize(stroke + 1, false);
+    }
+    if (feedStepper->distanceToGo() != 0) {
+      turnedWhileFeeding[stroke] = true;
+    }
+  };
+
+  etkt->loop();
+
+  // A, B and the cut.
+  TEST_ASSERT_EQUAL_INT(3, (int)strokes->strokes.size());
+  TEST_ASSERT_EQUAL_INT(3, (int)turnedWhileFeeding.size());
+  for (size_t i = 0; i < turnedWhileFeeding.size(); i++) {
+    TEST_ASSERT_TRUE_MESSAGE(turnedWhileFeeding[i], "the wheel waited");
+  }
+  // The same tape as ever.
+  TEST_ASSERT_EQUAL_UINT32(7, etkt->createStatus().roll.feedsUsed);
+}
+
+// The cutter never goes all the way through the tape, so the labels of a
+// run come off with scissors anyway, and a run can leave the cut out. Each
+// label still takes the same tape, so the scissors have the same margins to
+// cut between.
+void test_a_run_can_leave_out_the_cut(void) {
+  CommandOptions options;
+  options.command = Command::TAG;
+  options.label = "AB";
+  options.copies = 2;
+  options.cut = false;
+  etkt->submit(options);
+
+  etkt->loop();
+
+  // A and B, twice, and nothing at the cut mark.
+  TEST_ASSERT_EQUAL_INT(4, (int)strokes->strokes.size());
+  TEST_ASSERT_EQUAL_UINT32(14, etkt->createStatus().roll.feedsUsed);
+}
+
 // A new roll is declared as it goes in, and threading it through to the
 // cutter is the first tape off it.
 void test_a_reel_loads_a_roll_of_the_declared_length(void) {
@@ -387,10 +437,10 @@ void test_only_a_run_of_labels_can_stop_after_a_label(void) {
 // cut off before the next.
 void test_a_run_stopped_partway_through_a_label_leaves_it_on_the_tape(void) {
   submitTag("AB", 3);
-  // After the lead feed, so the tape has moved: the wheel is on its way to
-  // the first character.
+  // While the lead feed moves the tape, so the label has begun: the wheel is
+  // on its way to the first character.
   charStepper->afterStep = [] {
-    if (feeder->feeds() > 0) {
+    if (feedStepper->distanceToGo() != 0) {
       etkt->stop();
     }
   };
@@ -569,11 +619,197 @@ void test_the_next_job_clears_the_last_stop(void) {
   etkt->loop();
 }
 
+// --- how long it takes ---------------------------------------------------
+
+static CommandOptions tagOptions(const String& label, int copies, bool cut) {
+  CommandOptions options;
+  options.command = Command::TAG;
+  options.label = label;
+  options.copies = copies;
+  options.cut = cut;
+  return options;
+}
+
+// Where the estimate counts a job's home from: see Printhead::homeUs().
+static void parkAtTheJ(void) {
+  CommandOptions options;
+  options.command = Command::MOVE;
+  options.label = "J";
+  etkt->submit(options);
+  etkt->loop();
+}
+
+// A status a run reported, and when.
+struct TimedStatus {
+  unsigned long atMs;
+  StatusUpdate status;
+};
+
+// A run as the machine printed it, by the virtual clock from the moment
+// loop() took it: when each label began, from what the run reported, what
+// it reported a tenth of a second or more apart, and when the machine went
+// idle.
+struct TimedRun {
+  std::vector<unsigned long> labelStartMs;
+  std::vector<TimedStatus> statuses;
+  unsigned long runMs;
+};
+
+static TimedRun timeRun(const CommandOptions& options) {
+  static TimedRun timed;
+  static unsigned long startMs;
+  timed = TimedRun();
+  startMs = millis();
+  stubAfterTick() = [] {
+    const StatusUpdate status = etkt->createStatus();
+    const unsigned long atMs = millis() - startMs;
+    if (status.copy > (int)timed.labelStartMs.size()) {
+      timed.labelStartMs.push_back(atMs);
+    }
+    if (status.currentCommand == Command::TAG &&
+        (timed.statuses.empty() || atMs - timed.statuses.back().atMs >= 100)) {
+      timed.statuses.push_back({atMs, status});
+    }
+  };
+  etkt->submit(options);
+  etkt->loop();
+  stubAfterTick() = nullptr;
+  timed.runMs = millis() - startMs;
+  return timed;
+}
+
+// What the panel shows before a run is sent: how long a label takes, and
+// the whole run. Worked out, not timed, and within a hundredth of the run
+// as the machine prints it. A label is start to start once the run is
+// under way, since the first comes after the tune and the home.
+void test_the_estimate_of_a_run_is_how_long_it_takes(void) {
+  const char* labels[] = {" HELLO ", "♡ €5.00 ☆"};
+  for (const char* label : labels) {
+    for (const bool cut : {true, false}) {
+      parkAtTheJ();
+      const CommandOptions options = tagOptions(label, 3, cut);
+
+      const RunEstimate estimate = etkt->estimate(options);
+      const TimedRun timed = timeRun(options);
+
+      const String name = String(label) + (cut ? ", cut" : ", not cut");
+      TEST_ASSERT_EQUAL_INT_MESSAGE(3, (int)timed.labelStartMs.size(),
+                                    name.c_str());
+      const unsigned long labelMs =
+          timed.labelStartMs[2] - timed.labelStartMs[1];
+      TEST_ASSERT_UINT32_WITHIN_MESSAGE(labelMs / 100, labelMs,
+                                        estimate.labelMs, name.c_str());
+      TEST_ASSERT_UINT32_WITHIN_MESSAGE(timed.runMs / 100, timed.runMs,
+                                        estimate.runMs, name.c_str());
+    }
+  }
+}
+
+// While a run prints, the panel shows how long the run has left, the
+// finish included. Every status the run reports is within a hundredth of
+// the run of what was in fact left.
+void test_a_run_reports_how_long_it_has_left(void) {
+  const CommandOptions options = tagOptions(" HELLO ", 3, true);
+
+  const TimedRun timed = timeRun(options);
+
+  TEST_ASSERT_GREATER_THAN_INT(400, (int)timed.statuses.size());
+  for (const TimedStatus& timedStatus : timed.statuses) {
+    TEST_ASSERT_UINT32_WITHIN(timed.runMs / 100, timed.runMs - timedStatus.atMs,
+                              timedStatus.status.remainingMs);
+  }
+  const StatusUpdate idle = etkt->createStatus();
+  TEST_ASSERT_EQUAL_UINT32(0, idle.labelMs);
+  TEST_ASSERT_EQUAL_UINT32(0, idle.remainingMs);
+}
+
+// The estimate leaves out what the board adds to every label, such as the
+// OLED taking a few tens of milliseconds to draw each frame. From its third
+// label on, a run reports the label time it measured over the labels before,
+// and counts down from that.
+void test_a_run_counts_down_from_the_label_time_it_measures(void) {
+  display->onCall = [](const DisplayCall& call) {
+    if (call.kind == DisplayCall::RENDER_PROGRESS) {
+      delay(30);
+    }
+  };
+  const CommandOptions options = tagOptions(" HELLO ", 5, true);
+  const RunEstimate estimate = etkt->estimate(options);
+
+  const TimedRun timed = timeRun(options);
+
+  TEST_ASSERT_EQUAL(5, timed.labelStartMs.size());
+  const unsigned long labelMs = timed.labelStartMs[2] - timed.labelStartMs[1];
+  // Seven characters and the start of the label, each a frame.
+  TEST_ASSERT_UINT32_WITHIN(estimate.labelMs / 100, estimate.labelMs + 8 * 30,
+                            labelMs);
+  for (const TimedStatus& timedStatus : timed.statuses) {
+    const StatusUpdate& status = timedStatus.status;
+    if (status.copy < 3) {
+      TEST_ASSERT_EQUAL_UINT32(estimate.labelMs, status.labelMs);
+      continue;
+    }
+    TEST_ASSERT_UINT32_WITHIN(1, labelMs, status.labelMs);
+    TEST_ASSERT_UINT32_WITHIN(20, timed.runMs - timedStatus.atMs,
+                              status.remainingMs);
+  }
+}
+
+// Asked to stop after its label, a run counts down to the end of that label
+// and the finish, not to the end of every label it was sent for.
+void test_a_run_stopping_after_its_label_counts_down_to_that_label(void) {
+  for (int askedDuring = 1; askedDuring <= 2; askedDuring++) {
+    parkAtTheJ();
+    display->onCall = [askedDuring](const DisplayCall& call) {
+      if (call.kind == DisplayCall::RENDER_PROGRESS &&
+          call.copy == askedDuring && call.charactersDone == 3) {
+        etkt->stopAfterLabel();
+      }
+    };
+
+    const TimedRun timed = timeRun(tagOptions(" HELLO ", 5, true));
+
+    TEST_ASSERT_EQUAL(askedDuring, timed.labelStartMs.size());
+    int asked = 0;
+    for (const TimedStatus& timedStatus : timed.statuses) {
+      if (timedStatus.status.stop != PendingStop::AFTER_LABEL) {
+        continue;
+      }
+      asked++;
+      TEST_ASSERT_UINT32_WITHIN(timed.runMs / 100,
+                                timed.runMs - timedStatus.atMs,
+                                timedStatus.status.remainingMs);
+    }
+    TEST_ASSERT_GREATER_THAN_INT(50, asked);
+  }
+}
+
+// A run stopping now has nothing left to count down but the press finishing
+// its stroke.
+void test_a_run_stopping_now_has_no_time_left(void) {
+  static StatusUpdate stopping;
+  display->onCall = [](const DisplayCall& call) {
+    if (call.kind == DisplayCall::RENDER_PROGRESS && call.copy == 2 &&
+        call.charactersDone == 3) {
+      etkt->stop();
+      stopping = etkt->createStatus();
+    }
+  };
+  etkt->submit(tagOptions(" HELLO ", 5, true));
+
+  etkt->loop();
+
+  TEST_ASSERT_EQUAL(PendingStop::NOW, stopping.stop);
+  TEST_ASSERT_EQUAL_UINT32(0, stopping.remainingMs);
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_a_submitted_feed_runs_and_the_machine_goes_idle);
   RUN_TEST(test_a_finished_run_shows_finished_and_records_no_stop);
   RUN_TEST(test_a_run_reports_which_label_it_is_on_and_how_far_into_it);
+  RUN_TEST(test_the_wheel_turns_while_the_tape_feeds_up_to_each_character);
+  RUN_TEST(test_a_run_can_leave_out_the_cut);
   RUN_TEST(test_a_reel_loads_a_roll_of_the_declared_length);
   RUN_TEST(test_a_reel_without_a_length_takes_the_last_roll_length);
   RUN_TEST(test_saving_stores_the_calibration_and_reboots);
@@ -593,5 +829,10 @@ int main(int, char**) {
   RUN_TEST(test_a_run_stopped_after_a_label_finishes_that_label_only);
   RUN_TEST(test_a_stop_during_the_finish_ends_the_celebration);
   RUN_TEST(test_the_next_job_clears_the_last_stop);
+  RUN_TEST(test_the_estimate_of_a_run_is_how_long_it_takes);
+  RUN_TEST(test_a_run_reports_how_long_it_has_left);
+  RUN_TEST(test_a_run_counts_down_from_the_label_time_it_measures);
+  RUN_TEST(test_a_run_stopping_after_its_label_counts_down_to_that_label);
+  RUN_TEST(test_a_run_stopping_now_has_no_time_left);
   return UNITY_END();
 }

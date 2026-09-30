@@ -4,6 +4,7 @@
 
 #include <condition_variable>
 #include <mutex>
+#include <vector>
 
 #include "Configuration.h"
 #include "Display.h"
@@ -132,11 +133,12 @@ struct CommandSpec {
   bool textIsLabel;
 
   // Whether this command prints a run of labels: the same label pressed
-  // "copies" times, each cut before the next. The body may say how many.
-  // Unlike the fields above that one is optional: a body without it prints
-  // one label, which is all a body could ask for before the field existed.
-  // Only a run reports which of its labels it is on, has a label to stop
-  // after, and says how many it finished when it is stopped.
+  // "copies" times, one after another. The body may say how many, and in
+  // "cut" whether each label is cut off as it finishes. Unlike the fields
+  // above those are optional: a body without them prints one label and cuts
+  // it, which is all a body could ask for before the fields existed. Only a
+  // run reports which of its labels it is on and how long it has left, has
+  // a label to stop after, and says how many it finished when it is stopped.
   bool printsRun;
 
   // Whether the body may declare how long a newly loaded roll is, in
@@ -152,7 +154,7 @@ struct CommandSpec {
   bool stoppable;
 
   // Whether this command presses a label into the tape, which a stop can
-  // leave there unfinished: fed and pressed, and not yet cut off. A tag and
+  // leave there unfinished: fed and pressed only as far as it got. A tag and
   // the full test press one. A reel and a feed move tape with nothing pressed
   // into it, so stopping one of them leaves nothing to cut off.
   bool pressesLabel;
@@ -192,6 +194,10 @@ struct CommandOptions {
   int force = 0;
   // How many of the label to print, one after another, 1 to MAX_COPIES.
   int copies = 1;
+  // Whether each label of the run is cut off the tape as it finishes. The
+  // blade never goes all the way through, so the labels come off with
+  // scissors either way, and a run can leave the cut out to save the time.
+  bool cut = true;
   // How long the roll being loaded is, in millimetres, or 0 for "as long as
   // the last one".
   int rollLengthMm = 0;
@@ -202,7 +208,7 @@ struct CommandOptions {
  */
 enum class PendingStop {
   NONE,
-  // Once the label being pressed is cut. See ETKT::stopAfterLabel().
+  // Once the label being pressed is finished. See ETKT::stopAfterLabel().
   AFTER_LABEL,
   // Now. See ETKT::stop().
   NOW,
@@ -223,8 +229,8 @@ struct StoppedCommand {
   // been stopped. Counts up from a random start at every boot, so a stop
   // after a reboot is not taken for one dismissed before it.
   uint32_t id = 0;
-  // For a run of labels, how many were finished and cut before the stop, and
-  // how many the run was. Both 0 for anything but a tag.
+  // For a run of labels, how many were finished before the stop, and how
+  // many the run was. Both 0 for anything but a tag.
   int printed = 0;
   int copies = 0;
   // Whether the stop left a label on the tape: pressed as far as it got, or
@@ -263,6 +269,11 @@ struct StatusUpdate {
   // be waiting for a label's worth of time; a stop now for as long as the
   // press takes to finish its stroke.
   PendingStop stop = PendingStop::NONE;
+  // For a run of labels: how long one of its labels takes, from its start to
+  // the start of the next, and how long the run has left, the finish
+  // included. Both 0 unless a tag is running.
+  uint32_t labelMs = 0;
+  uint32_t remainingMs = 0;
   // What the last stop cut short. Filled in whether or not anything is
   // running, and kept until the next command is accepted, so a panel that
   // was not watching when a job was stopped can still say it was.
@@ -284,6 +295,19 @@ enum class StopResult {
   // says whether it can be stopped at all, and whether it prints a run of
   // labels, which is the only thing with a label to stop after.
   UNSTOPPABLE,
+};
+
+/**
+ * @brief How long a run of labels takes, worked out rather than timed. See
+ * ETKT::estimate().
+ */
+struct RunEstimate {
+  // One label once the run is under way, from its start to the start of the
+  // next. The first label waits for the tune and the home as well.
+  uint32_t labelMs = 0;
+  // The whole run, from the job being taken to the machine going idle: the
+  // press settling, the tune, the home, every label and the finish.
+  uint32_t runMs = 0;
 };
 
 class PrinterBusyException : public std::exception {
@@ -310,9 +334,15 @@ class ETKT {
   CommandOptions* command = NULL;
   int progress;  // percent, 0 to 99. See Progress.h.
   int copy;      // which label of a run, from 1; 0 when no tag is running
-  int printed;   // labels of the run finished and cut; 0 when no tag is
-                 // running
-  bool stoppingAfterLabel;     // see stopAfterLabel()
+  int printed;   // labels of the run finished; 0 when no tag is running
+  bool stoppingAfterLabel;  // see stopAfterLabel()
+  // What the running run was estimated to take, and when it began, its
+  // second label began, and the label being pressed began. What
+  // StatusUpdate::labelMs and remainingMs are worked out from.
+  RunEstimate runEstimate;
+  unsigned long runStartMs;
+  unsigned long secondLabelStartMs;
+  unsigned long labelStartMs;
   StoppedCommand lastStopped;  // see StatusUpdate::stopped
   uint32_t lastStopId;         // see StoppedCommand::id
   std::mutex lock;
@@ -330,12 +360,12 @@ class ETKT {
   // command loop reads or writes it, so it is not behind the lock.
   long accountedFeeds;
 
-  // The feeder's count at the last cut, which is how a stop tells whether it
-  // left a label on the tape: see StoppedCommand::unfinished. The two
-  // commands that press labels also set it as they begin, so tape fed before
-  // them is not taken for theirs. Like accountedFeeds, only ever touched by
-  // the command loop.
-  long feedsAtLastCut;
+  // The feeder's count as the label being pressed began, which is how a stop
+  // tells whether it left one on the tape: see StoppedCommand::unfinished.
+  // loop() sets it as every command begins, so tape fed before a command is
+  // not taken for its label, and a run moves it on as each label finishes.
+  // Like accountedFeeds, only ever touched by the command loop.
+  long feedsAtLabelStart;
 
   // What every press of the running job is made at, from its first
   // character to its cut. loop() picks it as the job begins: the align and
@@ -348,7 +378,7 @@ class ETKT {
    * @brief The align and force saved in the settings. A job that is not
    * trialling a calibration of its own presses at these.
    */
-  Calibration savedCalibration();
+  Calibration savedCalibration() const;
 
   /**
    * @brief Charges the roll for every feed since the last time this ran.
@@ -361,8 +391,13 @@ class ETKT {
   void accountForTape();
 
   /**
-   * @brief Presses one label, start to cut: homes the wheel, feeds the lead,
-   * presses and feeds past each character, tops the tape up and cuts.
+   * @brief Presses one label, start to finish: feeds the lead, presses and
+   * feeds past each character, tops the tape up, and cuts the label off if
+   * the job cuts.
+   *
+   * The tape feeds in the background, one feed ahead of the press, and the
+   * wheel turns to each character while the tape moves up to it. Each
+   * character's wheel turn homes first, so a label needs no home of its own.
    *
    * `copy` of `copies`, counting from 1, is only there to be shown on the
    * OLED beside the label.
@@ -373,10 +408,31 @@ class ETKT {
   void printLabel(const String& label, int copy, int copies);
 
   /**
-   * @brief Plays the tune that says a label has started: the label's own
-   * notes, or for a few labels a melody everyone of a certain age knows.
+   * @brief How long a label of the running run takes: the estimate until
+   * the run has timed one, and then what it timed. Under the lock.
    */
-  void playTune(const String& label);
+  uint32_t labelMs() const;
+
+  /**
+   * @brief When the running run will be done, by millis(): the estimate
+   * until its first label is done, and then counted on from the label being
+   * pressed. Under the lock.
+   */
+  unsigned long runEndMs() const;
+
+  /**
+   * @brief estimate(), at a calibration of its own.
+   */
+  RunEstimate estimate(const CommandOptions& options,
+                       const Calibration& calibration) const;
+
+  /**
+   * @brief How long printLabel() takes to press `characters`, with or
+   * without the cut, from the wheel at `wheel`. Leaves `wheel` where the
+   * label leaves it.
+   */
+  uint64_t labelUs(const std::vector<String>& characters, bool cut,
+                   const Calibration& calibration, String* wheel) const;
 
   /**
    * Interanl handlers for each type of command the device can do.
@@ -441,15 +497,33 @@ class ETKT {
   StopResult stop();
 
   /**
-   * @brief Asks a run of labels to stop once the label being pressed is cut.
+   * @brief Asks a run of labels to stop once the label being pressed is
+   * finished.
    *
    * For a run that is going fine and is longer than it needs to be: no tape
-   * is spent on a label nobody finishes, and the cut is what separates the
-   * last label from the next. Only a command whose row says it prints a run
-   * of labels has a label to stop after. Safe to call from the webserver's task
-   * while the command loop prints -- the loop reads the request between labels.
+   * is spent on a label nobody finishes, and the last label comes out whole,
+   * topped up and, if the run cuts, cut off. Only a command whose row says it
+   * prints a run of labels has a label to stop after. Safe to call from the
+   * webserver's task while the command loop prints -- the loop reads the
+   * request between labels.
    */
   StopResult stopAfterLabel();
+
+  /**
+   * @brief How long submit(options) would take, for a run of labels: worked
+   * out from the ramps and waits the machine runs, not timed, so it can be
+   * asked for before the run is sent, and while another one prints.
+   *
+   * At the saved calibration, which is what a run presses at. The home that
+   * opens the run is counted as the longest search there is, so a run can
+   * finish up to a second sooner; a feed that the wheel's search for its
+   * magnet holds back can make it a little later. For a machine with every
+   * part switched on under Debugging in Configuration.h. Anything but a run
+   * of labels is estimated at 0.
+   *
+   * Safe to call from the webserver's task while the command loop runs.
+   */
+  RunEstimate estimate(const CommandOptions& options) const;
 
   /**
    * @brief One row per Command: the firmware's only list of what exists.

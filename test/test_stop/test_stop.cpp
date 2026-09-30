@@ -8,12 +8,27 @@
 #include <unity.h>
 
 #include "Arduino.h"
+#include "Configuration.h"
 #include "FakeDrivers.h"
 #include "Motion.h"
 #include "StopSignal.h"
 
 static FakeStepper* stepper;
 static StopSignal* stop;
+
+// What runs while the motor turns, as the tape does while the wheel turns.
+// This one only notes when it got a turn, and where the motor was then.
+class Watching : public Background {
+ public:
+  std::vector<long> positions;
+  std::vector<unsigned long> atMs;
+  void keepGoing() override {
+    this->positions.push_back(stepper->currentPosition());
+    this->atMs.push_back(millis());
+  }
+  void finish() override {}
+};
+static Watching* background;
 
 static long stepsTaken;
 static long stopAtStep;
@@ -28,13 +43,20 @@ static void countStep() {
 void setUp(void) {
   stubReset();
   stepper = new FakeStepper();
+  // The daisy wheel's, as DaisyWheel::initialize() sets them. Left at
+  // AccelStepper's defaults, a step a second, a move of 42 steps would take
+  // 42 seconds of the virtual clock.
+  stepper->setMaxSpeed(CHARACTER_STEPPER_MAX_SPEED);
+  stepper->setAcceleration(CHARACTER_STEPPER_MAX_ACCELERATION);
   stop = new StopSignal();
+  background = new Watching();
   stepsTaken = 0;
   stopAtStep = 0;
   stepper->afterStep = countStep;
 }
 
 void tearDown(void) {
+  delete background;
   delete stop;
   delete stepper;
 }
@@ -99,29 +121,29 @@ void test_clearing_forgets_the_cause(void) {
 // --- moving --------------------------------------------------------------
 
 void test_a_move_nobody_stops_arrives(void) {
-  TEST_ASSERT_TRUE(runToNewPosition(stepper, 42, stop));
+  TEST_ASSERT_TRUE(runToNewPosition(stepper, 42, stop, background));
   TEST_ASSERT_EQUAL_INT32(42, stepper->currentPosition());
   TEST_ASSERT_EQUAL_INT32(42, stepsTaken);
   TEST_ASSERT_FALSE(stop->cutShort());
 }
 
 void test_a_move_goes_to_a_position_rather_than_by_a_distance(void) {
-  runToNewPosition(stepper, 10, stop);
-  TEST_ASSERT_TRUE(runToNewPosition(stepper, -5, stop));
+  runToNewPosition(stepper, 10, stop, background);
+  TEST_ASSERT_TRUE(runToNewPosition(stepper, -5, stop, background));
   TEST_ASSERT_EQUAL_INT32(-5, stepper->currentPosition());
   TEST_ASSERT_EQUAL_INT32(25, stepsTaken);
 }
 
 void test_a_move_to_where_the_motor_is_takes_no_steps(void) {
-  runToNewPosition(stepper, 7, stop);
+  runToNewPosition(stepper, 7, stop, background);
   stepsTaken = 0;
-  TEST_ASSERT_TRUE(runToNewPosition(stepper, 7, stop));
+  TEST_ASSERT_TRUE(runToNewPosition(stepper, 7, stop, background));
   TEST_ASSERT_EQUAL_INT32(0, stepsTaken);
 }
 
 void test_a_stop_already_up_takes_no_steps(void) {
   stop->raise(StopCause::OPERATOR);
-  TEST_ASSERT_FALSE(runToNewPosition(stepper, 42, stop));
+  TEST_ASSERT_FALSE(runToNewPosition(stepper, 42, stop, background));
   TEST_ASSERT_EQUAL_INT32(0, stepsTaken);
   TEST_ASSERT_EQUAL_INT32(0, stepper->currentPosition());
   TEST_ASSERT_TRUE(stop->cutShort());
@@ -129,7 +151,7 @@ void test_a_stop_already_up_takes_no_steps(void) {
 
 void test_a_stop_halts_the_motor_within_a_step(void) {
   stopAtStep = 10;
-  TEST_ASSERT_FALSE(runToNewPosition(stepper, 42, stop));
+  TEST_ASSERT_FALSE(runToNewPosition(stepper, 42, stop, background));
   TEST_ASSERT_EQUAL_INT32(10, stepsTaken);
   TEST_ASSERT_EQUAL_INT32(10, stepper->currentPosition());
   // Halted rather than slowed: where it is is now where it is going.
@@ -141,7 +163,7 @@ void test_a_stop_on_the_last_step_is_too_late_to_cut_anything_short(void) {
   // The motor arrived, the way AccelStepper reports it: run() says so on the
   // call that takes the last step, and the loop is over before it looks.
   stopAtStep = 42;
-  TEST_ASSERT_TRUE(runToNewPosition(stepper, 42, stop));
+  TEST_ASSERT_TRUE(runToNewPosition(stepper, 42, stop, background));
   TEST_ASSERT_EQUAL_INT32(42, stepper->currentPosition());
   TEST_ASSERT_FALSE(stop->cutShort());
 }
@@ -152,8 +174,41 @@ void test_a_halted_motor_is_left_holding(void) {
   // when the command is over.
   stepper->enableOutputs();
   stopAtStep = 3;
-  runToNewPosition(stepper, 42, stop);
+  runToNewPosition(stepper, 42, stop, background);
   TEST_ASSERT_TRUE(stepper->energized);
+}
+
+// --- in the background ---------------------------------------------------
+// Nothing turns a motor for you. Whatever runs beside a move gets its turns
+// from the loop that makes it, so the move must never keep it waiting.
+
+// The longest the background went without a turn, in milliseconds.
+static unsigned long longestWait() {
+  unsigned long longest = 0;
+  for (size_t i = 1; i < background->atMs.size(); i++) {
+    longest = max(longest, background->atMs[i] - background->atMs[i - 1]);
+  }
+  return longest;
+}
+
+void test_a_move_keeps_the_background_going_as_it_turns(void) {
+  TEST_ASSERT_TRUE(runToNewPosition(stepper, 42, stop, background));
+  bool partway = false;
+  for (long position : background->positions) {
+    partway = partway || (position > 0 && position < 42);
+  }
+  TEST_ASSERT_TRUE_MESSAGE(partway, "a turn partway, not only either end");
+  TEST_ASSERT_TRUE(longestWait() <= 1);
+}
+
+void test_a_pause_keeps_the_background_going_for_as_long_as_it_lasts(void) {
+  const unsigned long start = millis();
+  pause(100, background);
+  TEST_ASSERT_TRUE(millis() - start >= 100);
+  TEST_ASSERT_FALSE(background->atMs.empty());
+  TEST_ASSERT_TRUE(background->atMs.front() - start <= 1);
+  TEST_ASSERT_TRUE(background->atMs.back() - start >= 99);
+  TEST_ASSERT_TRUE(longestWait() <= 1);
 }
 
 int main(int, char**) {
@@ -172,5 +227,7 @@ int main(int, char**) {
   RUN_TEST(test_a_stop_halts_the_motor_within_a_step);
   RUN_TEST(test_a_stop_on_the_last_step_is_too_late_to_cut_anything_short);
   RUN_TEST(test_a_halted_motor_is_left_holding);
+  RUN_TEST(test_a_move_keeps_the_background_going_as_it_turns);
+  RUN_TEST(test_a_pause_keeps_the_background_going_for_as_long_as_it_lasts);
   return UNITY_END();
 }

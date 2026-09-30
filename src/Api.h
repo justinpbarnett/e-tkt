@@ -72,6 +72,7 @@ class Api {
   // already matched. The routes that are not commands are a table in route(),
   // so each takes the request whether it reads it or not.
   Reply command(const CommandSpec* spec, const Request& request);
+  Reply estimate(const CommandSpec* spec, const Request& request);
   Reply status(const Request& request);
   Reply stop(const Request& request);
   Reply capabilities(const Request& request);

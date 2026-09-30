@@ -162,6 +162,14 @@ static bool readCommandOptions(const CommandSpec* spec,
     }
     options->copies = copies;
   }
+  if (spec->printsRun && body.containsKey("cut")) {
+    // Read strictly. ArduinoJson reads any value as a bool, "no" as true.
+    if (!body["cut"].is<bool>()) {
+      *refusal = "Please provide cut as true or false";
+      return false;
+    }
+    options->cut = body["cut"].as<bool>();
+  }
   if (spec->usesRollLength && body.containsKey("length_mm")) {
     const int length = body["length_mm"].as<int>();
     if (!isValidRollLength(length)) {
@@ -171,6 +179,44 @@ static bool readCommandOptions(const CommandSpec* spec,
       return false;
     }
     options->rollLengthMm = length;
+  }
+  return true;
+}
+
+// Reads what a request for this command asks for: a JSON body that the
+// device can read whole, with the fields the command needs. Returns false
+// with the reply that refuses it written otherwise.
+static bool readCommandRequest(const CommandSpec* spec, const Request& request,
+                               CommandOptions* options, Reply* refused) {
+  if (!isJson(request.contentType)) {
+    *refused = errorReply(415, "Please send the body as application/json");
+    return false;
+  }
+  if (request.body.length() > Api::MAX_BODY_BYTES) {
+    *refused = errorReply(413, String("The body may be at most ") +
+                                   Api::MAX_BODY_BYTES + " bytes");
+    return false;
+  }
+
+  DynamicJsonDocument parsed(REQUEST_JSON_BYTES);
+  const DeserializationError error =
+      deserializeJson(parsed, request.body.c_str(), request.body.length());
+  if (error == DeserializationError::NoMemory) {
+    *refused =
+        errorReply(413, "The body has more fields than the device can read");
+    return false;
+  }
+  if (error || !parsed.is<JsonObject>()) {
+    *refused = errorReply(400, "The body must be a JSON object");
+    return false;
+  }
+
+  options->command = spec->command;
+  String refusal;
+  if (!readCommandOptions(spec, parsed.as<JsonObjectConst>(), options,
+                          &refusal)) {
+    *refused = errorReply(400, refusal);
+    return false;
   }
   return true;
 }
@@ -197,16 +243,25 @@ Reply Api::handle(const Request& request) {
 Reply Api::route(const Request& request) {
   // One route per command, straight off the table in ETKT.cpp. A command
   // added there gets its endpoint here for free, and cannot get one whose
-  // name disagrees with the name /api/status reports for it.
+  // name disagrees with the name /api/status reports for it. A run of labels
+  // gets a second one below it, /api/<name>/estimate, which takes the same
+  // body.
   static const char prefix[] = "/api/";
+  static const char estimate[] = "/estimate";
   if (request.path.startsWith(prefix)) {
-    const CommandSpec* spec =
-        commandSpecByName(request.path.substring(sizeof(prefix) - 1));
-    // Nothing to run means nothing to post to.
-    if (spec != NULL && spec->run != NULL) {
-      return request.method == Method::POST
-                 ? this->command(spec, request)
-                 : wrongMethod(request, Method::POST);
+    String name = request.path.substring(sizeof(prefix) - 1);
+    const bool estimating = name.endsWith(estimate);
+    if (estimating) {
+      name = name.substring(0, name.length() - (sizeof(estimate) - 1));
+    }
+    const CommandSpec* spec = commandSpecByName(name);
+    // Nothing to run means nothing to post to, or to estimate.
+    if (spec != NULL && spec->run != NULL && (!estimating || spec->printsRun)) {
+      if (request.method != Method::POST) {
+        return wrongMethod(request, Method::POST);
+      }
+      return estimating ? this->estimate(spec, request)
+                        : this->command(spec, request);
     }
   }
 
@@ -237,30 +292,10 @@ Reply Api::route(const Request& request) {
 // must carry -- were buried in the sameness. The table in ETKT.cpp holds
 // those differences now and this reads them.
 Reply Api::command(const CommandSpec* spec, const Request& request) {
-  if (!isJson(request.contentType)) {
-    return errorReply(415, "Please send the body as application/json");
-  }
-  if (request.body.length() > MAX_BODY_BYTES) {
-    return errorReply(
-        413, String("The body may be at most ") + MAX_BODY_BYTES + " bytes");
-  }
-
-  DynamicJsonDocument parsed(REQUEST_JSON_BYTES);
-  const DeserializationError error =
-      deserializeJson(parsed, request.body.c_str(), request.body.length());
-  if (error == DeserializationError::NoMemory) {
-    return errorReply(413, "The body has more fields than the device can read");
-  }
-  if (error || !parsed.is<JsonObject>()) {
-    return errorReply(400, "The body must be a JSON object");
-  }
-  const JsonObjectConst body = parsed.as<JsonObjectConst>();
-
   CommandOptions options;
-  options.command = spec->command;
-  String refusal;
-  if (!readCommandOptions(spec, body, &options, &refusal)) {
-    return errorReply(400, refusal);
+  Reply refused;
+  if (!readCommandRequest(spec, request, &options, &refused)) {
+    return refused;
   }
 
   try {
@@ -282,6 +317,22 @@ Reply Api::command(const CommandSpec* spec, const Request& request) {
   return jsonReply(200, doc);
 }
 
+// How long a run of labels would take, asked with the body that would send
+// it, so the panel can say before the run is sent. Worked out rather than
+// run, so it is answered whatever the machine is doing.
+Reply Api::estimate(const CommandSpec* spec, const Request& request) {
+  CommandOptions options;
+  Reply refused;
+  if (!readCommandRequest(spec, request, &options, &refused)) {
+    return refused;
+  }
+  const RunEstimate estimate = this->etkt->estimate(options);
+  DynamicJsonDocument doc(ONE_FIELD_JSON_BYTES);
+  doc["label_ms"] = estimate.labelMs;
+  doc["run_ms"] = estimate.runMs;
+  return jsonReply(200, doc);
+}
+
 // What the device is doing, which the panel polls once a second.
 Reply Api::status(const Request& /*request*/) {
   DynamicJsonDocument doc(STATUS_JSON_BYTES);
@@ -293,12 +344,15 @@ Reply Api::status(const Request& /*request*/) {
   doc["align"] = status.align;
   doc["force"] = status.force;
 
-  // The label being pressed, and where the run of them is.
+  // The label being pressed, where the run of them is, and how long it has
+  // left: 0 until the run has begun, and once it is stopping now.
   const CommandSpec* running = commandSpec(status.currentCommand);
   if (running != NULL && running->printsRun) {
     doc["current_label"] = status.currentLabel;
     doc["copy"] = status.copy;
     doc["copies"] = status.copies;
+    doc["label_ms"] = status.labelMs;
+    doc["remaining_ms"] = status.remainingMs;
   }
 
   // A stop that has been asked for and not yet obeyed, so a panel opened
@@ -349,7 +403,8 @@ Reply Api::stop(const Request& request) {
   if (afterLabel && after->second != "label") {
     return errorReply(400,
                       "Please provide after=label to stop once the label "
-                      "being pressed is cut, or leave it out to stop now");
+                      "being pressed is finished, or leave it out to stop "
+                      "now");
   }
   DynamicJsonDocument doc(ONE_FIELD_JSON_BYTES);
   switch (afterLabel ? this->etkt->stopAfterLabel() : this->etkt->stop()) {

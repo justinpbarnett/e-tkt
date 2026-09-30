@@ -2,6 +2,8 @@
 
 #include <Arduino.h>
 
+#include <vector>
+
 #include "Configuration.h"
 #include "StopSignal.h"
 
@@ -10,12 +12,25 @@
 #define NOTE_DURATION_DECREASE 2
 
 /**
- * @brief Controls the buzzer to play single notes, melodies, and
- * songs based on a label.
+ * @brief Controls the buzzer to play single notes, and the tune a job opens
+ * with.
  */
 class Sound {
  private:
   StopSignal* stop;
+
+  // One note of a tune, and the silence after it. A note with no frequency
+  // is only the silence.
+  struct Note {
+    int frequency;
+    int ms;
+    int restMs;
+  };
+
+  /**
+   * @brief The notes playTune(label) plays, in order.
+   */
+  std::vector<Note> tune(const String& label) const;
 
  public:
   Sound(StopSignal* stop);
@@ -37,18 +52,18 @@ class Sound {
   void play(String character, int duration = 1000);
 
   /**
-   * @brief Plays a tune on the buzzer based on the label text.
+   * @brief Plays the tune a job opens with, from the label text: each
+   * character's note, the notes shorter one by one on a long label.
    *
-   * A stop ends it after the note that is sounding.
+   * The labels that name the pocket calculator play the melody of
+   * Kraftwerk's song about one instead. A stop ends the tune after the note
+   * that is sounding.
    */
-  void playLabel(String label);
+  void playTune(const String& label);
 
   /**
-   * @brief Plays a melody on the buzzer.
-   * @details ♪ By pressing down a special key ♪
-   *          ♪ It plays a little melody ♪
-   *
-   * A stop ends it after the note that is sounding.
+   * @brief How long playTune(label) takes, from the same notes: worked out,
+   * not timed.
    */
-  void playMelody(String notes, String durations);
+  unsigned long tuneUs(const String& label) const;
 };

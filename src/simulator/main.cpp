@@ -14,14 +14,15 @@
 // panel gets from the simulator is the firmware's own, and there is no second
 // copy of any of it to drift.
 //
-// Time. The stubs' delay() does not sleep: it moves a virtual clock on. Here
-// each delay() also waits for the wall clock, sped up --speed times, to catch
-// up with the virtual one. So a label takes as long as it does on the
-// machine, or a thousandth of that, and a request that arrives while it
-// prints is answered between two of its waits, which is where the board's
-// webserver task would answer it. Only the firmware's waits take time: the
-// fake steppers take their steps at once, so the wheel and the feed move
-// faster than they do on the machine.
+// Time. The stubs' delay() does not sleep: it moves a virtual clock on, as
+// yield() does by what a turn of a motor's loop costs, and the fake steppers
+// step on AccelStepper's schedule against that clock. Here each millisecond
+// the virtual clock reaches also waits for the wall clock, sped up --speed
+// times, to catch up with it. So a label takes as long as it does on the
+// machine, or a tenth of that at --speed 10, wheel and feed and all, and a
+// request that arrives while it prints is answered in between, where the
+// board's webserver task would answer it. A host that cannot keep up with
+// --speed runs the machine slower than asked, and never bends its time.
 //
 // Reboots. A save ends in ESP.restart(), which the stubs count and return
 // from. The simulator then builds the machine again, and keeps the flash,
@@ -235,8 +236,9 @@ class Simulator {
   /**
    * @brief Moves the virtual clock up to the wall clock, when it is behind.
    *
-   * It falls behind while the machine is idle, since nothing waits then, and
-   * while it computes rather than waits. Ahead is what pace() is for.
+   * Between jobs only. Nothing waits while the machine is idle, so the
+   * virtual clock stands still while the device's would run on. In a job
+   * the clock is the machine's own, and pace() only ever holds it back.
    */
   void keepTime() {
     const unsigned long due = (unsigned long)this->dueMs();
@@ -246,8 +248,16 @@ class Simulator {
   }
 
   /**
-   * @brief Called after every delay(). Holds the machine until the wall
-   * clock catches up with the wait, and answers requests meanwhile.
+   * @brief Called each time the virtual clock reaches a new millisecond,
+   * waiting or moving a motor. Holds the machine until the wall clock
+   * catches up, and answers requests meanwhile.
+   *
+   * A host that wakes late, or cannot keep up with --speed, leaves the
+   * machine behind the wall clock, and it waits again once it is ahead. Its
+   * clock is never moved on to make up the difference, which would bend
+   * every move under way, so a label takes the machine's own time. A
+   * request is answered all the same, as the board's webserver task
+   * answers one whatever the job runner is doing.
    */
   void pace() {
     if (stubRestarts() > 0) {
@@ -259,11 +269,12 @@ class Simulator {
     }
     while (true) {
       const double aheadMs = (double)stubClockMs() - this->dueMs();
-      if (aheadMs <= 0) {
-        break;
-      }
-      const long waitUs = (long)std::ceil(aheadMs * 1000.0 / this->speed);
+      const long waitUs =
+          aheadMs > 0 ? (long)std::ceil(aheadMs * 1000.0 / this->speed) : 0;
       if (this->api == NULL) {
+        if (waitUs == 0) {
+          break;
+        }
         std::this_thread::sleep_for(std::chrono::microseconds(waitUs));
         continue;
       }
@@ -274,9 +285,10 @@ class Simulator {
         // The relay has gone, and there is nobody left to answer. Mid-job,
         // so nothing is put away: this is the machine's plug coming out.
         std::_Exit(0);
+      } else if (waitUs == 0) {
+        break;
       }
     }
-    this->keepTime();
     this->forget();
     this->drainSerial();
   }
@@ -285,7 +297,6 @@ class Simulator {
    * @brief Answers one request line.
    */
   void answer(std::string& line) {
-    this->keepTime();
     Request request;
     if (!readRequest(line, request)) {
       Reply refused = {500, "application/json",
@@ -382,7 +393,7 @@ class Simulator {
       std::uniform_int_distribution<long> between(low, high - 1);
       return between(this->generator);
     };
-    stubAfterDelay() = [this] { this->pace(); };
+    stubAfterTick() = [this] { this->pace(); };
   }
 
   /**
@@ -401,6 +412,7 @@ class Simulator {
       if (!this->requests.next(line, -1)) {
         return 0;
       }
+      this->keepTime();
       this->answer(line);
     }
   }

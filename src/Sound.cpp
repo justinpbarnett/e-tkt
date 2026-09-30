@@ -34,16 +34,38 @@ void Sound::play(String character, int duration) {
   this->play(frequency, duration);
 }
 
-void Sound::playLabel(String label) {
-  // plays a music according to the label letters
+// The melody the pocket calculator labels play, from Kraftwerk's song about
+// one, and the length of each of its notes: see melodyNoteMs(). The cut mark
+// has no note, and is skipped.
+static const char* const CALCULATOR_NOTES =
+    "*4599845887*459984588764599845887*4599845887";
+static const char* const CALCULATOR_DURATIONS =
+    "88843888484888438884848884388848488843888484";
 
+static bool namesThePocketCalculator(const String& label) {
+  return label == " TASCHENRECHNER " || label == " POCKET CALCULATOR " ||
+         label == " DENTAKU " || label == " CALCULADORA " ||
+         label == " MINI CALCULATEUR ";
+}
+
+std::vector<Sound::Note> Sound::tune(const String& label) const {
+  std::vector<Note> notes;
+  if (namesThePocketCalculator(label)) {
+    const std::vector<String> characters =
+        Utility::characters(CALCULATOR_NOTES);
+    for (size_t i = 0; i < characters.size(); i++) {
+      const int frequency = characterNote(characters[i]);
+      if (frequency != 0) {
+        notes.push_back({frequency, melodyNoteMs(CALCULATOR_DURATIONS, i), 0});
+      }
+    }
+    return notes;
+  }
+
+  // plays a music according to the label letters
   const std::vector<String> characters = Utility::characters(label);
   const int length = characters.size();
-
   for (int i = 0; i < length; i++) {
-    if (this->stop->shouldStop()) {
-      return;
-    }
     int duration;
     // If the label is over 16 characters, decrease the note duration every
     // character starting at character 5.
@@ -53,23 +75,30 @@ void Sound::playLabel(String label) {
     } else {
       duration = NOTE_DURATION_MAX;
     }
-
-    this->play(characters[i], duration);
-    delay(duration / 2);
+    // A character that is not on the wheel has no note, only the silence.
+    notes.push_back({characterNote(characters[i]), duration, duration / 2});
   }
+  return notes;
 }
 
-void Sound::playMelody(String notes, String durations) {
-  const std::vector<String> characters = Utility::characters(notes);
-
-  for (size_t i = 0; i < characters.size(); i++) {
+void Sound::playTune(const String& label) {
+  for (const Note& note : this->tune(label)) {
     if (this->stop->shouldStop()) {
       return;
     }
-    auto frequency = characterNote(characters[i]);
-    if (frequency == 0) {
-      continue;
+    if (note.frequency != 0) {
+      this->play(note.frequency, note.ms);
     }
-    this->play(frequency, melodyNoteMs(durations.c_str(), i));
+    if (note.restMs > 0) {
+      delay(note.restMs);
+    }
   }
+}
+
+unsigned long Sound::tuneUs(const String& label) const {
+  unsigned long ms = 0;
+  for (const Note& note : this->tune(label)) {
+    ms += (note.frequency != 0 ? note.ms : 0) + note.restMs;
+  }
+  return ms * 1000UL;
 }

@@ -11,11 +11,12 @@
 #include "StopSignal.h"
 
 Printhead::Printhead(Logger* logger, DaisyWheel* daisywheel, Press* press,
-                     StopSignal* stop) {
+                     StopSignal* stop, Background* tape) {
   this->logger = logger;
   this->daisywheel = daisywheel;
   this->press = press;
   this->stop = stop;
+  this->tape = tape;
 }
 
 void Printhead::initialize(const Calibration& calibration) {
@@ -33,6 +34,14 @@ Turn Printhead::stopIfLost(Turn turn) {
     this->stop->shouldStop();
   }
   return turn;
+}
+
+bool Printhead::readyToPress(Turn turn) {
+  if (turn != Turn::REACHED) {
+    return false;
+  }
+  this->tape->finish();
+  return !this->stop->shouldStop();
 }
 
 void Printhead::home(const Calibration& calibration) {
@@ -55,40 +64,33 @@ void Printhead::stamp(const String& character, const Calibration& calibration) {
   }
   const Turn turn =
       this->stopIfLost(this->daisywheel->move(character, calibration.align));
-  if (turn == Turn::REACHED && !this->stop->shouldStop()) {
+  if (this->readyToPress(turn)) {
     this->press->press(false, calibration.force, false);
   }
 }
 
 void Printhead::cut(const Calibration& calibration) {
   if (!ENABLE_CUT) {
-    delay(500);
+    pause(500, this->tape);
     return;
   }
   const Turn turn = this->stopIfLost(
       this->daisywheel->move(CUT_CHARACTER, calibration.align));
-  if (turn != Turn::REACHED) {
-    // Pressing three times at full force into whatever slot the wheel
-    // stopped at would emboss a letter where the cut mark belongs, and leave
-    // the tape uncut anyway. Only a wheel with no cut mark is news: a stop
-    // was asked for, and a lost wheel has said so already.
-    if (turn == Turn::NO_SLOT) {
-      this->logger->warn("Skipped the cut: the wheel would not reach the mark");
-    }
-    return;
+  // Pressing into whatever slot the wheel stopped at would emboss a letter
+  // where the cut mark belongs, and leave the tape uncut anyway. Only a
+  // wheel with no cut mark is news: a stop was asked for, and a lost wheel
+  // has said so already.
+  if (turn == Turn::NO_SLOT) {
+    this->logger->warn("Skipped the cut: the wheel would not reach the mark");
   }
-  for (int i = 0; i < 3; i++) {
-    if (this->stop->shouldStop()) {
-      return;
-    }
+  if (this->readyToPress(turn)) {
     this->press->press(true, calibration.force, false);
   }
 }
 
 void Printhead::testPress(const Calibration& calibration) {
-  if (this->stopIfLost(this->daisywheel->move("M", calibration.align)) !=
-          Turn::REACHED ||
-      this->stop->shouldStop()) {
+  if (!this->readyToPress(
+          this->stopIfLost(this->daisywheel->move("M", calibration.align)))) {
     return;
   }
   // Deliberately the minimum force, matching docs/diy/calibration.md: this
@@ -111,4 +113,31 @@ void Printhead::rest() { this->press->rest(); }
 void Printhead::park() {
   this->daisywheel->deenergize();
   this->press->rest();
+}
+
+unsigned long Printhead::homeUs(const Calibration& calibration) const {
+  return this->daisywheel->homeUs(CHAR_HOME_CHARACTER, calibration.align);
+}
+
+unsigned long Printhead::stampUs(const String& from, const String& character,
+                                 unsigned long tapeUs,
+                                 const Calibration& calibration) const {
+  // Nothing to turn to or press, and stamp() does not wait for the tape.
+  if (wheelSlot(character) < 0) {
+    return tapeUs;
+  }
+  return this->pressedUs(from, character, tapeUs, false, calibration);
+}
+
+unsigned long Printhead::cutUs(const String& from, unsigned long tapeUs,
+                               const Calibration& calibration) const {
+  return this->pressedUs(from, CUT_CHARACTER, tapeUs, true, calibration);
+}
+
+unsigned long Printhead::pressedUs(const String& from, const String& slot,
+                                   unsigned long tapeUs, bool strong,
+                                   const Calibration& calibration) const {
+  const unsigned long turnUs =
+      this->daisywheel->moveUs(from, slot, calibration.align);
+  return max(turnUs, tapeUs) + this->press->pressUs(strong, calibration.force);
 }

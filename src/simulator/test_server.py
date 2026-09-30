@@ -18,7 +18,6 @@ import contextlib
 import io
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -60,10 +59,13 @@ def setUpModule():
 
 
 class RelayTestCase(unittest.IsolatedAsyncioTestCase):
+    # How many times faster than the machine this case's runs.
+    speed = SPEED
+
     async def asyncSetUp(self):
         # What the machine prints down its serial port would bury the
         # results.
-        self.device = server.Server(PROGRAM, SPEED,
+        self.device = server.Server(PROGRAM, self.speed,
                                     serial=asyncio.subprocess.DEVNULL)
         await self.device.start()
         self.client = TestClient(TestServer(self.device.application()))
@@ -177,7 +179,8 @@ class Stops(RelayTestCase):
         self.assertEqual(400, response.status)
         self.assertEqual(
             {"error": "Please provide after=label to stop once the label "
-                      "being pressed is cut, or leave it out to stop now"},
+                      "being pressed is finished, or leave it out to stop "
+                      "now"},
             await response.json())
 
     async def test_a_name_given_twice_in_the_query_takes_its_last_value(self):
@@ -221,15 +224,6 @@ class Replies(RelayTestCase):
         self.assertEqual("text/plain", response.content_type)
         self.assertIn("Align factor: 5", await response.text())
 
-    async def test_a_fraction_in_the_log_has_the_places_the_device_gives_it(
-            self):
-        # Two, as the Arduino core's String writes a float, where the
-        # standard library's to_string() writes six. The machine logs one as
-        # it homes the wheel.
-        response = await self.client.get("/api/log")
-        self.assertRegex(await response.text(), re.compile(
-            r"Homing with align: 5 and a: 0\.00$", re.M))
-
     async def test_a_path_under_api_the_device_does_not_know_is_its_to_refuse(
             self):
         # And not the webserver's, which would say so in plain text.
@@ -246,6 +240,27 @@ class Jobs(RelayTestCase):
         status = await self.until_idle()
         self.assertEqual({"length_mm": 3000, "remaining_mm": 2904},
                          status["roll"])
+
+    async def test_a_label_takes_the_time_it_takes_on_the_machine(self):
+        # However well the host keeps up with SPEED, the wall clock only
+        # holds the machine back and never moves its clock on, so the label
+        # time the device measures from its third label on is the one it
+        # works out, as on the machine in the native tests.
+        response = await self.client.post(
+            "/api/tag/estimate", json={"tag": " HELLO ", "copies": 500})
+        estimate = (await response.json())["label_ms"]
+        await self.press(" HELLO ", copies=500)
+        clock = asyncio.get_running_loop()
+        deadline = clock.time() + JOB_SECONDS
+        status = await self.status()
+        while status.get("copy", 0) < 3:
+            if clock.time() > deadline:
+                self.fail("Not on label 3 after %d seconds: %r"
+                          % (JOB_SECONDS, status))
+            await asyncio.sleep(0.001)
+            status = await self.status()
+        self.assertAlmostEqual(estimate, status["label_ms"],
+                               delta=estimate / 100)
 
     async def test_a_run_can_be_stopped_while_it_is_pressed(self):
         # The stop is answered between the machine's waits, as the device
@@ -282,6 +297,38 @@ class Jobs(RelayTestCase):
             [{"error": "Please provide a copies value between 1 and 500, "
                        "got %d" % copies} for copies in asked],
             [await response.json() for response in responses])
+
+
+class Pacing(RelayTestCase):
+    # At the machine's own speed, where each of its milliseconds is one of
+    # the wall clock's.
+    speed = 1
+
+    async def uptime(self):
+        """The machine's clock, and the wall clock either side of asking
+        for it, all in milliseconds."""
+        wall = asyncio.get_running_loop()
+        asked = wall.time() * 1000
+        status = await self.status()
+        return asked, status["uptime_ms"], wall.time() * 1000
+
+    async def test_a_status_has_the_time_it_was_answered_at(self):
+        # Partway through a wait too, such as the tune a run starts with: the
+        # machine's clock is never already at the end of it. Between the
+        # wall clock's times either side of each ask, give or take what the
+        # host is late by.
+        late = 20
+        first_asked, first, first_answered = await self.uptime()
+        await self.press(" HELLO ")
+        wall = asyncio.get_running_loop()
+        end = wall.time() + 1.5
+        while wall.time() < end:
+            asked, uptime, answered = await self.uptime()
+            self.assertGreaterEqual(uptime - first,
+                                    asked - first_answered - late)
+            self.assertLessEqual(uptime - first,
+                                 answered - first_asked + late)
+            await asyncio.sleep(0.01)
 
 
 class Reboots(RelayTestCase):

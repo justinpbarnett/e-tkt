@@ -203,8 +203,8 @@ void test_slow_and_strong_change_timing_not_travel(void) {
 }
 
 void test_a_strong_press_eases_through_each_degree(void) {
-  // Cutting presses three times and needs each one to land the same way, so
-  // it pays for the slower ramp.
+  // What the cut presses with. Easing through each degree costs time, which is
+  // how it shows from outside.
   initializeAndClear();
   press->press(false, 5, false);
   const unsigned long quick = millis();
@@ -217,6 +217,33 @@ void test_a_strong_press_eases_through_each_degree(void) {
 
   TEST_ASSERT_TRUE_MESSAGE(strong > quick,
                            "a strong press must take longer than a quick one");
+}
+
+// --- how long it takes ---------------------------------------------------
+// A job's estimate adds up presses, so the press's own estimate is held to
+// the press it estimates, on the virtual clock.
+
+void test_the_estimate_of_a_press_is_how_long_it_takes(void) {
+  // Past both ends of 1-9 too, which the press clamps.
+  for (int force = 0; force <= 10; force++) {
+    for (int strong = 0; strong <= 1; strong++) {
+      tearDown();
+      setUp();
+      initializeAndClear();
+      const unsigned long start = micros();
+      press->press(strong == 1, force, false);
+      TEST_ASSERT_EQUAL_UINT32(micros() - start,
+                               press->pressUs(strong == 1, force));
+    }
+  }
+}
+
+void test_a_quick_press_takes_half_a_second_and_a_strong_one_longer(void) {
+  // By hand, at force 5 on these angles: the peak is 11 degrees, 39 from
+  // rest. Quick is the dwell at the peak and the dwell at rest, 250ms each.
+  // Strong adds both ramps, 40 writes each 4ms apart.
+  TEST_ASSERT_EQUAL_UINT32(500000UL, press->pressUs(false, 5));
+  TEST_ASSERT_EQUAL_UINT32(820000UL, press->pressUs(true, 5));
 }
 
 // --- the character LED ---------------------------------------------------
@@ -284,6 +311,8 @@ int main(int, char**) {
   RUN_TEST(test_the_long_dwell_is_eight_times_the_short_one);
   RUN_TEST(test_slow_and_strong_change_timing_not_travel);
   RUN_TEST(test_a_strong_press_eases_through_each_degree);
+  RUN_TEST(test_the_estimate_of_a_press_is_how_long_it_takes);
+  RUN_TEST(test_a_quick_press_takes_half_a_second_and_a_strong_one_longer);
   RUN_TEST(test_the_char_led_goes_bright_for_the_press_and_dim_after);
   RUN_TEST(test_hold_writes_a_raw_angle_the_geometry_would_refuse);
   RUN_TEST(test_release_stops_driving_the_servo);
