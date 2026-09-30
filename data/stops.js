@@ -5,7 +5,8 @@
 // A stop is "now" or "after_label". Now is at the next press or turn of a
 // motor: a press already on its way down always finishes, so the wheel is
 // never left jammed in the tape. After the label is once the label being
-// pressed has been cut, so nothing is cut short.
+// pressed is finished, and cut if the run cuts its labels, so none is left
+// half done.
 
 import { stoppedText } from "./status.js";
 

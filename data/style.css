@@ -941,6 +941,95 @@ body[data-printing="true"] .tape-tip.visible {
 }
 
 /*-------------*/
+/*  tick box   */
+/*-------------*/
+
+/* The whole line takes the tap, not only the box. */
+.check {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/* As in a segmented bar: the real checkbox stays where it is and takes the
+   taps, invisibly, so the keyboard and screen readers get a real one. */
+.check input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: inherit;
+}
+
+.check-box {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 1.5px solid var(--line);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--card);
+  transition:
+    background-color var(--fast) var(--ease),
+    border-color var(--fast) var(--ease),
+    opacity var(--fast) var(--ease);
+}
+
+.icon-check {
+  width: 14px;
+  height: 14px;
+  stroke-width: 2;
+  opacity: 0;
+  transition: opacity var(--fast) var(--ease);
+}
+
+@media (hover: hover) {
+  .check:hover input:not(:disabled):not(:checked) + .check-box {
+    border-color: var(--ink);
+  }
+}
+
+.check input:checked + .check-box {
+  border-color: var(--ink);
+  background: var(--ink);
+}
+
+.check input:checked + .check-box .icon-check {
+  opacity: 1;
+}
+
+.check input:focus-visible + .check-box {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.check-text {
+  color: var(--ink);
+  font-size: 15px;
+  line-height: 1.3;
+  transition: opacity var(--fast) var(--ease);
+}
+
+.check:has(input:disabled) {
+  cursor: not-allowed;
+}
+
+.check input:disabled ~ * {
+  opacity: 0.35;
+}
+
+/*-------------*/
 /*  steppers   */
 /*-------------*/
 
@@ -1034,6 +1123,19 @@ input.stepper-value,
 
 .action > * {
   min-height: 48px;
+}
+
+/* Under the slot, how long a run takes. Its figures are all one width, so
+   the line stays put while the time left counts down. */
+.time-note {
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+/* A line kept for it while it has something to say or soon will. See
+   renderPrintView() in script.js. */
+.time-note[data-held] {
+  min-height: 1lh;
 }
 
 .activity {

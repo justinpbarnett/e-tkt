@@ -150,7 +150,7 @@ function commandFacts(command, device) {
 
 // Whether the command prints a run of labels, which is the only kind that
 // counts its labels, and so the only kind a stop can let finish a label.
-function printsRun(command, device) {
+export function printsRun(command, device) {
   const facts = commandFacts(command, device);
   return facts !== null && facts.prints_run;
 }
@@ -190,7 +190,7 @@ export function activity(running, device) {
       const count = ["label", run.copy, "of", run.copies].join(" ");
       text = (running.stop === "after_label" ? "Stopping after " : "Printing ") + count;
       // The whole run, not the label it is on: the tape above already shows
-      // how far into this label it is, and a bar that emptied at every cut
+      // how far into this label it is, and a bar that emptied at every label
       // would say nothing about when the run ends.
       percentage = Math.floor(((clamp(run.copy, 1, run.copies) - 1) * 100 + percentage) / run.copies);
     }
@@ -202,7 +202,7 @@ export function activity(running, device) {
 }
 
 // How far through the current label the device is. The device already holds
-// the last point back while it finishes feeding and cutting (see Progress.h).
+// the last point back while it finishes the label off (see Progress.h).
 // Subtracting another one here is what made the browser read a point below
 // the OLED beside it.
 export function printPercentage(status) {

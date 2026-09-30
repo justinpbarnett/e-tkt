@@ -205,6 +205,21 @@
               <p class="note" id="quantity-note"></p>
             </div>
 
+            <!-- Unticked, a run comes out as one strip to cut apart by hand,
+                 and each label takes a little less time. This browser keeps
+                 the choice, as it does the theme. -->
+            <div class="field">
+              <label class="check">
+                <input type="checkbox" id="cut-input" name="cut" checked />
+                <span class="check-box" aria-hidden="true">
+                  <svg class="icon icon-check" viewBox="0 0 14 14" aria-hidden="true" focusable="false">
+                    <path d="M2.5 7.5l3 3 6-7" />
+                  </svg>
+                </span>
+                <span class="check-text">Cut after each label</span>
+              </label>
+            </div>
+
             <!-- One slot, two things in it: the print button, or while the
                  machine is working, what it is doing. Same place and same
                  height, so nothing moves under a finger that is still on
@@ -214,17 +229,21 @@
                 type="submit"
                 class="btn btn-primary btn-block"
                 id="print-button"
-                aria-describedby="quantity-note"
+                aria-describedby="quantity-note time-note"
                 disabled
               >
                 Print label
               </button>
-              <div class="activity" id="activity" tabindex="-1" hidden>
+              <div class="activity" id="activity" tabindex="-1" aria-describedby="time-note" hidden>
                 <div class="activity-fill" id="activity-fill"></div>
                 <span class="activity-text" id="activity-text" role="status"></span>
                 <span class="activity-percent" id="activity-percent" aria-hidden="true"></span>
               </div>
             </div>
+            <!-- How long the run on the form would take, or while one prints,
+                 how long it has left. Under the slot, not over it, so the
+                 button never moves when this comes and goes. -->
+            <p class="note time-note" id="time-note"></p>
 
             <!-- What the last stop left behind, until the next command. One
                  in each view, like the problem box, for whichever is open. -->

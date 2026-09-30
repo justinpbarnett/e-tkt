@@ -222,8 +222,8 @@ test("a save is offered no stop", () => {
 
 test("anything the device can stop is offered the red stop, however quick it is", () => {
   // What can be stopped is the device's to say, and it can stop everything
-  // that moves. A cut turns the wheel to the cut mark and presses three
-  // times, which is long enough to want it stopped.
+  // that moves. A cut turns the wheel to the cut mark and presses the blade
+  // in, which takes long enough to want it stopped.
   const device = labelMaker();
   assert.deepEqual(stopOffer(running(), device), { now: { text: "Stop cutting", stopping: false }, afterLabel: null });
   const feeding = running({ command: "feed", status: { busy: true, command: "feed" } });

@@ -59,6 +59,7 @@ import {
   tapeLeftMm,
   typedRoll,
 } from "./tape.js";
+import { Estimates, timeText } from "./timing.js";
 
 // How often /api/status is asked, and how often while the page is in the
 // background: still often enough that a run finishing is noticed on the way
@@ -83,6 +84,15 @@ const SCROLL_ROOM = 16;
 // Where this browser keeps a theme picked with the button in the header.
 // index.html reads the same key before the page is drawn.
 const THEME_KEY = "e-tkt-theme";
+
+// Where this browser keeps whether labels are cut as they come out, so each
+// run is cut or not as the last one was.
+const CUT_KEY = "e-tkt-cut";
+
+// How long the form stays on one run before the page asks the device how
+// long it would take, so a count being typed is not asked about digit by
+// digit.
+const ESTIMATE_DELAY_MS = 300;
 
 // How close the caret may come to either end of the track before the tape
 // scrolls to follow it: clear of the fades that mark more tape past the edge.
@@ -121,6 +131,8 @@ const state = {
   // The copies this page last asked the device for, so the stops are laid
   // out for a run of labels from the tap rather than from the first poll.
   sentCopies: null,
+  // How long the device says the run on the form would take.
+  estimates: new Estimates(),
   // The stops this page has asked for, and what the last one came to.
   stops: new Stops(),
   // From a tap on a stop until what it came to is brought into view: the
@@ -161,11 +173,13 @@ const el = {
   copiesLess: $("copies-less"),
   copiesMore: $("copies-more"),
   quantityNote: $("quantity-note"),
+  cutInput: $("cut-input"),
   printButton: $("print-button"),
   activity: $("activity"),
   activityFill: $("activity-fill"),
   activityText: $("activity-text"),
   activityPercent: $("activity-percent"),
+  timeNote: $("time-note"),
   machineActions: $("machine-actions"),
   runActions: $("run-actions"),
   feedButton: $("feed-button"),
@@ -209,6 +223,7 @@ const el = {
 async function startup() {
   document.body.dataset.printing = "false";
   applyTheme(document.documentElement.dataset.theme === "dark" ? "dark" : "light");
+  el.cutInput.checked = storedCut();
   wireEvents();
   drawTape();
   render();
@@ -275,6 +290,7 @@ function wireEvents() {
   });
   el.copiesLess.addEventListener("click", () => stepCopies(-1));
   el.copiesMore.addEventListener("click", () => stepCopies(1));
+  el.cutInput.addEventListener("change", cutChanged);
 
   el.feedButton.addEventListener("click", () => send("feed"));
   el.cutButton.addEventListener("click", () => send("cut"));
@@ -651,6 +667,70 @@ function stepCopies(step) {
   render();
 }
 
+//---------//
+//   cut   //
+//---------//
+
+// Whether this browser last had labels cut as they come out. Cut, as every
+// label was before there was a choice, unless it was unticked here.
+function storedCut() {
+  try {
+    return localStorage.getItem(CUT_KEY) !== "false";
+  } catch (error) {
+    // Storage can be refused outright, as index.html says. Cut, then.
+    return true;
+  }
+}
+
+function cutChanged() {
+  try {
+    localStorage.setItem(CUT_KEY, String(el.cutInput.checked));
+  } catch (error) {
+    // Not kept, then. It still counts for as long as the page is open.
+  }
+  render();
+}
+
+//---------------//
+//   estimates   //
+//---------------//
+
+let estimateTimer = null;
+
+// Asks the device how long the run on the form would take, once the form
+// has stayed on it for ESTIMATE_DELAY_MS.
+function scheduleEstimate() {
+  clearTimeout(estimateTimer);
+  estimateTimer = setTimeout(askEstimate, ESTIMATE_DELAY_MS);
+}
+
+// Only while the run could be printed: the time is under the print button,
+// and says how long pressing it would take.
+async function askEstimate() {
+  const run = formRun();
+  if (run === null || runningCommand() !== null || state.missedPolls >= OFFLINE_AFTER_MISSES) {
+    return;
+  }
+  const request = state.estimates.ask(run);
+  if (request === null) {
+    return;
+  }
+  try {
+    const response = await postJson("api/tag/estimate", run, { timeout: 5000 });
+    const reply = await readJson(response);
+    if (!response.ok) {
+      console.warn("Unable to estimate the run");
+      console.warn(reply !== null && typeof reply.error === "string" ? reply.error : response.status);
+    }
+    state.estimates.answered(request, reply);
+  } catch (error) {
+    console.warn("Unable to estimate the run");
+    console.warn(error);
+    state.estimates.unreachable(request);
+  }
+  render();
+}
+
 //--------------//
 //   commands   //
 //--------------//
@@ -701,13 +781,18 @@ async function send(name, data = {}) {
   return accepted;
 }
 
+// The run of labels on the form, as it is posted to api/tag, or null while
+// the form has none the device would take.
+function formRun() {
+  const copies = quantityChosen().copies;
+  if (!isValidLabelText(el.input.value, device) || copies === null) {
+    return null;
+  }
+  return { tag: buildTreatedLabel().toLowerCase(), copies: copies, cut: el.cutInput.checked };
+}
+
 function canPrint() {
-  return (
-    runningCommand() === null &&
-    state.missedPolls < OFFLINE_AFTER_MISSES &&
-    isValidLabelText(el.input.value, device) &&
-    quantityChosen().copies !== null
-  );
+  return runningCommand() === null && state.missedPolls < OFFLINE_AFTER_MISSES && formRun() !== null;
 }
 
 // sends the label to the device
@@ -715,11 +800,11 @@ async function printLabels() {
   if (!canPrint()) {
     return;
   }
-  const copies = quantityChosen().copies;
+  const run = formRun();
   // Puts a phone's keyboard away, so the label printing is what is on screen.
   el.input.blur();
-  state.sentCopies = copies;
-  if (await send("tag", { tag: buildTreatedLabel().toLowerCase(), copies: copies })) {
+  state.sentCopies = run.copies;
+  if (await send("tag", run)) {
     scrollStopsIntoPlace(el.runActions, el.activity);
   }
 }
@@ -1117,12 +1202,12 @@ function render() {
 function renderPrintView(running, offer, focused) {
   const { command, offline } = running;
   const busy = command !== null;
-  const run = printingRun(state.status, device);
+  const printing = printingRun(state.status, device);
 
   const wasPrinting = document.body.dataset.printing === "true";
-  document.body.dataset.printing = run !== null ? "true" : "false";
-  if (run !== null) {
-    drawPrinting(run);
+  document.body.dataset.printing = printing !== null ? "true" : "false";
+  if (printing !== null) {
+    drawPrinting(printing);
   } else if (wasPrinting) {
     // The input is back, and it was not measured while it was hidden.
     drawTape();
@@ -1165,10 +1250,12 @@ function renderPrintView(running, offer, focused) {
   el.copiesMore.disabled = busy || !chosen.moreAvailable;
   setText(el.quantityNote, chosen.note.text);
   setTone(el.quantityNote, chosen.note.tone);
+  el.cutInput.disabled = busy;
 
   // print, or what the machine is doing instead
+  const run = formRun();
   setText(el.printButton, chosen.printText);
-  el.printButton.disabled = busy || offline || !valid || chosen.copies === null;
+  el.printButton.disabled = busy || offline || run === null;
   el.printButton.hidden = busy;
   el.activity.hidden = !busy;
   if (busy) {
@@ -1181,6 +1268,15 @@ function renderPrintView(running, offer, focused) {
   } else if (!busy && focused === el.activity) {
     el.printButton.focus({ preventScroll: true });
   }
+
+  // and how long it takes
+  if (!busy && !offline && run !== null && !state.estimates.askedLast(run)) {
+    scheduleEstimate();
+  }
+  setText(el.timeNote, timeText(running, device, state.estimates.text(run)));
+  // Holds its line while it has something to say or soon will, so what is
+  // under it does not move each time it has nothing to say for a moment.
+  el.timeNote.toggleAttribute("data-held", busy || run !== null);
 
   // under the card, or while something that can be stopped runs, the stops
   el.machineActions.hidden = offer !== null;

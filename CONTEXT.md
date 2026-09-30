@@ -24,6 +24,7 @@ Everything else is counted from there, so every turn to a slot homes first.
 A wheel that turns a turn and a half without the sensor seeing the magnet is **lost**: nothing counted from where the search gave up lands on the slot it was meant for.
 A job that finds the wheel lost presses nothing more and is stopped, with the wheel as the cause.
 Only the home at boot is let off, because every character homes again before it counts.
+A run homes once more before its first label, so a lost wheel stops it before any tape moves, and no label homes of its own.
 `HallSwitch`, and `DaisyWheel::home()`, which answers with how the turn ended.
 
 **Press** - the servo-driven arm that drives the tape into the daisy wheel.
@@ -46,9 +47,15 @@ Both are 1 to 9, both are refused outside that range at the HTTP boundary and cl
 **Cut mark** - the wheel slot the machine drives to in order to cut, rather than a character a label can contain.
 `CUT_CHARACTER`.
 
+**Cut** - the cut mark pressed once, as hard as the calibration's force, easing in a degree at a time.
+A label that is cut ends with one, and the `cut` command is one on its own.
+The blade does not go all the way through, so a label still comes off with scissors.
+It used to press three times, and did not get through then either.
+`Printhead::cut()`.
+
 **Printhead** - the daisy wheel and the press worked together: everything that comes down on the tape.
 A character, the cut and the align test's press are each a turn of the wheel and then a press, unless a stop comes in between.
-The press never comes down on a slot the wheel did not reach.
+The press never comes down on a slot the wheel did not reach, nor on tape that is still moving: the tape feeds up to the character while the wheel turns to it, and the press waits for both.
 `Printhead`, which the job runner drives in place of the wheel and the press.
 
 **Calibration** - an align and a force together, the pair one job presses at from its first character to its cut.
@@ -87,7 +94,7 @@ One table in `OledDisplay.cpp` says what each one draws, rather than one method 
 A display draws and returns: how long a screen stays up is for its caller to say, and the screen is started once, at boot.
 
 **Progress** - how far through a label the machine is, 0 to 99.
-It stops at 99 rather than 100 because feeding the tail and cutting still have to happen after the last character is pressed.
+It stops at 99 rather than 100 because feeding the tail, and the cut on a label that is cut, still have to happen after the last character is pressed.
 `Progress.h`.
 
 ## The roll
@@ -95,6 +102,12 @@ It stops at 99 rather than 100 because feeding the tail and cutting still have t
 **Feed** - one step of the tape: an eighth of a turn of the feed motor, which pulls `FEED_LENGTH_UM` of tape through.
 What a job uses is counted in feeds, and turned into millimetres only to be shown or taken off a roll's length.
 `Feeder::feed()`, and `Feeder::feeds()` for the count so far.
+
+**Feeding in the background** - how a label moves its tape: `Feeder::start()` asks for feeds and returns at once, and the tape moves while the daisy wheel turns, because every loop and wait of the wheel's keeps it going.
+So the wheel turns to the next character while the tape moves up to it, and the press waits for both.
+Before, each waited for the other, and the machine waited another half second after every character.
+Nothing on the board turns a motor by itself, so anything that holds the command loop up stalls a feed under way, and the screen is drawn only once the tape has stopped.
+`Background` in `Motion.h`, which `Feeder` is.
 
 **Roll** - the tape in the machine, and the two things known about it: the length it was declared at when it went in, and the feeds taken from it since.
 Neither is measured, because the machine cannot see the tape.
@@ -154,13 +167,30 @@ It builds and runs on a host against fakes, so `test/test_etkt` checks those rul
 **Busy** - a command is running.
 The machine runs one at a time, and a second request is refused with a 409: the request was fine, the machine was not.
 
-**Run** - one `tag` request for more than one label: the same label pressed `copies` times, one after another, each cut before the next begins.
+**Run** - one `tag` request for more than one label: the same label pressed `copies` times, one after another.
 Whether a command prints one is a **command fact**, and `tag` is the only command it holds for.
 `copies` is 1 to `MAX_COPIES`, and a request without it prints one.
+`cut` says whether each label is cut off as it finishes, and a request without it cuts.
+Uncut, a run comes out as one strip to cut apart by hand, and a little sooner.
+The panel's "Cut after each label" box is `cut`, and the browser keeps the choice.
 `/api/status` reports the label being pressed as `copy` of `copies`, and the roll is charged after each one, so the tape left moves label by label.
 
 **Quantity** - the panel's way of asking for a run: one, multiple (2 up to `MAX_COPIES`), or max.
 Max is the labels that fit, capped at `MAX_COPIES`, worked out in the panel and sent as a number; the device has no idea of the end of the roll.
+
+**Estimate** - how long a run takes, worked out before it is sent: `POST /api/tag/estimate`, with the body the `tag` would be sent with.
+It answers with how long one label takes once the run is under way, `label_ms`, and how long the whole run takes, `run_ms`.
+The whole run also counts the press settling, the tune, the home before the first label and the celebration after the last.
+It is worked out from the ramps and waits the machine runs rather than timed, so it is answered whatever the machine is doing, even while another run prints.
+AccelStepper has no formula for how long a move takes, so `StepperTiming` in `Motion.h` runs the library's own recurrence and adds the steps up.
+What it leaves out, such as the time the board spends drawing its screen, is why a run times its own labels once it is under way.
+`ETKT::estimate()`.
+
+**Time left** - how long a run that is printing has left, which `/api/status` reports as `remaining_ms`, with how long its labels take as `label_ms`.
+Both start from the **estimate**.
+From the third label on, the label time is what the run's own labels have taken from the second on, since the first also waits for the tune and the home.
+A run asked to stop after its label has only that label left, and one stopping now reports nothing left.
+The panel says the estimate under the print button, and the time left while the run prints.
 
 **Stop** - `POST /api/stop`, for when something has gone wrong: it stops what the machine is doing, now.
 The motors halt within a step and a tune within a note.
@@ -176,7 +206,8 @@ The first cause stands, so pressing stop while a lost wheel parks does not hide 
 `ETKT::stop()`, and `StopSignal`, which carries it from the web server's task to the command loop and keeps its cause.
 
 **Stop after this label** - `POST /api/stop?after=label`, for a run that is going fine and is longer than it needs to be.
-The run ends once the label being pressed is cut, so no tape is spent on a label nobody finishes.
+The run ends once the label being pressed is finished: topped up and, if the run cuts, cut off.
+So no tape is spent on a label nobody finishes.
 Only a run of labels has a label to stop after, and anything else is refused with a 409.
 Nothing is cut short, so it leaves no stopped record, and the run ends with the usual celebration.
 `ETKT::stopAfterLabel()`.
@@ -186,7 +217,8 @@ It also says what stopped it, the operator or a lost wheel, and carries an id of
 The ids count up from a random start at every boot, so a stop after a reboot is not taken for one dismissed before it.
 An unfinished label is still joined to the roll and would come out on the front of the next one, so the panel offers to cut it off.
 `/api/status` reports it as `stopped` until the next command is accepted, so a panel that was not watching when a job was stopped can still say it was.
-A stop that arrived as the job was finishing anyway, on the last press of the last cut or during the celebration after it, cut nothing short and leaves no record; the machine still skips what is left of the celebration, because a stop was asked for.
+A stop that arrived as the job was finishing anyway cut nothing short and leaves no record: once the press was on its way down on the last cut, once the last feed of a run that does not cut had arrived, or during the celebration after either.
+The machine still skips what is left of the celebration, because a stop was asked for.
 The OLED says stopped where it would say ready.
 `StoppedCommand`.
 
@@ -219,7 +251,9 @@ Flash `serial-upload` afterwards to put the label maker back.
 `server.py` serves `data/` and relays each request under `/api/` to that program, and its reply back.
 So every command, refusal and status field the firmware has, the simulator has too, with nothing written down twice.
 It used to be a Python copy of the firmware, which drifted until every button returned a 404.
-A wait takes its time on the machine divided by `--speed`, and a move of the wheel or the tape takes no time.
+The fake steppers step on AccelStepper's schedule against the stubs' clock, and every millisecond of that clock waits for the wall clock, sped up `--speed` times.
+So a label takes as long in the simulator as on the machine, wheel and tape and all, or a tenth of that at `--speed 10`.
+A host that cannot keep up runs the machine slower than asked, and never bends its time.
 
 ## Reading the machine
 
