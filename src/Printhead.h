@@ -13,10 +13,11 @@
  * @brief The daisy wheel and the press, worked together: everything that
  * comes down on the tape.
  *
- * A character, the cut and the test press are each a turn of the wheel and
- * then a press, unless a stop comes in between. The press never comes down
- * on a slot the wheel did not reach, nor on tape that is still moving: the
- * tape feeds up to the character while the wheel turns to it, and the press
+ * A character and the test press are each a turn of the wheel and then a
+ * press, and the cut is a turn and then as many presses as it is asked
+ * for, unless a stop comes in between. The press never comes down on a
+ * slot the wheel did not reach, nor on tape that is still moving: the tape
+ * feeds up to the character while the wheel turns to it, and the press
  * waits for both.
  */
 class Printhead {
@@ -46,12 +47,13 @@ class Printhead {
   bool waitToPress(Turn turn);
 
   /**
-   * @brief How long a turn to `slot` and then a press take, with tapeUs of
-   * feeding under way. The wheel turns while the tape feeds, and the press
-   * waits for both.
+   * @brief How long a turn to `slot` and then `presses` presses take, with
+   * tapeUs of feeding under way. The wheel turns while the tape feeds, and
+   * the press waits for both. Each press follows the one before straight
+   * away.
    */
   unsigned long pressedUs(const String& from, const String& slot,
-                          unsigned long tapeUs, bool strong,
+                          unsigned long tapeUs, bool strong, int presses,
                           const Calibration& calibration) const;
 
  public:
@@ -102,14 +104,18 @@ class Printhead {
   void stamp(const String& character, const Calibration& calibration);
 
   /**
-   * @brief Cuts the tape: the cut mark, pressed once as hard as the
-   * calibration's force.
+   * @brief Cuts the tape: the cut mark, pressed `presses` times, each as
+   * hard as the calibration's force.
    *
    * The blade does not go all the way through, so the label still comes
    * off with scissors. If the wheel does not reach the cut mark nothing is
    * pressed, and a wheel with no cut mark is logged.
+   *
+   * A stop keeps the press up, as for a character. One that comes during a
+   * stroke lets it finish and presses no more, and leaves the tape as far
+   * cut as it got.
    */
-  void cut(const Calibration& calibration);
+  void cut(const Calibration& calibration, int presses);
 
   /**
    * @brief The align test: one slow, light press of the M, held so the
@@ -163,10 +169,10 @@ class Printhead {
                         const Calibration& calibration) const;
 
   /**
-   * @brief How long the cut takes as a label ends with it: cut() with the
-   * wheel at `wheel` and tapeUs of feeding started just before, and then
-   * the rest of the feeding. Leaves `wheel` at the cut mark.
+   * @brief How long cut() takes with `presses`, the wheel at `wheel`, and
+   * tapeUs of feeding started just before, and then the rest of the
+   * feeding. Leaves `wheel` at the cut mark.
    */
   unsigned long cutUs(String* wheel, unsigned long tapeUs,
-                      const Calibration& calibration) const;
+                      const Calibration& calibration, int presses) const;
 };

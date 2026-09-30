@@ -47,14 +47,15 @@ Both are 1 to 9, both are refused outside that range at the HTTP boundary and cl
 **Cut mark** - the wheel slot the machine drives to in order to cut, rather than a character a label can contain.
 `CUT_CHARACTER`.
 
-**Cut** - the cut mark pressed once, as hard as the calibration's force, easing in a degree at a time.
-A label that is cut ends with one, and the `cut` command is one on its own.
-The blade does not go all the way through, so a label still comes off with scissors.
-It used to press three times, and did not get through then either.
+**Cut** - the cut mark pressed as hard as the calibration's force, easing in a degree at a time.
+The cut that ends a label is one press, and so is the one that ends the full test.
+The `cut` command, which is the Cut button, presses three times, as the machine always did: it is one cut, not one a label, so it can take the time.
+The blade does not go all the way through either way, so a label still comes off with scissors.
+A stop that comes during a press lets that press finish and presses no more.
 `Printhead::cut()`.
 
 **Printhead** - the daisy wheel and the press worked together: everything that comes down on the tape.
-A character, the cut and the align test's press are each a turn of the wheel and then a press, unless a stop comes in between.
+A character and the align test's press are each a turn of the wheel and then a press, and the cut is a turn and then as many presses as it is asked for, unless a stop comes in between.
 The press never comes down on a slot the wheel did not reach, nor on tape that is still moving: the tape feeds up to the character while the wheel turns to it, and the press waits for both.
 `Printhead`, which the job runner drives in place of the wheel and the press.
 
@@ -217,7 +218,7 @@ It also says what stopped it, the operator or a lost wheel, and carries an id of
 The ids count up from a random start at every boot, so a stop after a reboot is not taken for one dismissed before it.
 An unfinished label is still joined to the roll and would come out on the front of the next one, so the panel offers to cut it off.
 `/api/status` reports it as `stopped` until the next command is accepted, so a panel that was not watching when a job was stopped can still say it was.
-A stop that arrived as the job was finishing anyway cut nothing short and leaves no record: once the press was on its way down on the last cut, once the last feed of a run that does not cut had arrived, or during the celebration after either.
+A stop that arrived as the job was finishing anyway cut nothing short and leaves no record: once the last press of the last cut was on its way down, once the last feed of a run that does not cut had arrived, or during the celebration after either.
 The machine still skips what is left of the celebration, because a stop was asked for.
 The OLED says stopped where it would say ready.
 `StoppedCommand`.

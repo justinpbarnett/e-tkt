@@ -191,6 +191,27 @@ void test_a_run_can_leave_out_the_cut(void) {
   TEST_ASSERT_EQUAL_UINT32(14, etkt->createStatus().roll.feedsUsed);
 }
 
+// The cut that ends a label is one press: the blade does not go all the way
+// through the tape either way, so the labels of a run come off with
+// scissors. The Cut button cuts once, not once a label, so it can take its
+// time, and presses the cut mark three times, as the machine always did.
+void test_the_cut_button_presses_three_times_and_a_label_once(void) {
+  submitTag("AB", 2);
+  etkt->loop();
+  // A, B and the cut, twice.
+  TEST_ASSERT_EQUAL_INT(6, (int)strokes->strokes.size());
+  const long cutMark = strokes->strokes.back().bearing;
+  strokes->strokes.clear();
+
+  submit(Command::CUT);
+  etkt->loop();
+
+  TEST_ASSERT_EQUAL_INT(3, (int)strokes->strokes.size());
+  for (const Stroke& stroke : strokes->strokes) {
+    TEST_ASSERT_EQUAL_INT32(cutMark, stroke.bearing);
+  }
+}
+
 // A new roll is declared as it goes in, and threading it through to the
 // cutter is the first tape off it.
 void test_a_reel_loads_a_roll_of_the_declared_length(void) {
@@ -792,6 +813,7 @@ int main(int, char**) {
   RUN_TEST(test_a_run_reports_which_label_it_is_on_and_how_far_into_it);
   RUN_TEST(test_the_wheel_turns_while_the_tape_feeds_up_to_each_character);
   RUN_TEST(test_a_run_can_leave_out_the_cut);
+  RUN_TEST(test_the_cut_button_presses_three_times_and_a_label_once);
   RUN_TEST(test_a_reel_loads_a_roll_of_the_declared_length);
   RUN_TEST(test_a_reel_without_a_length_takes_the_last_roll_length);
   RUN_TEST(test_saving_stores_the_calibration_and_reboots);

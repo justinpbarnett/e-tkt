@@ -245,7 +245,7 @@ void test_every_turn_of_a_lost_wheel_stops_the_job(void) {
   const Turning turnings[] = {
       {"home", [] { printhead->home({5, 5}); }},
       {"turn to a slot", [] { printhead->turnTo("A", {5, 5}); }},
-      {"cut", [] { printhead->cut({5, 5}); }},
+      {"cut", [] { printhead->cut({5, 5}, 1); }},
       {"test press", [] { printhead->testPress({5, 5}); }},
   };
 
@@ -308,7 +308,7 @@ void test_nothing_comes_down_on_tape_that_is_still_moving(void) {
   };
   const Pressing pressings[] = {
       {"A", [] { printhead->stamp("A", {5, 5}); }},
-      {CUT_CHARACTER, [] { printhead->cut({5, 5}); }},
+      {CUT_CHARACTER, [] { printhead->cut({5, 5}, 1); }},
       {"M", [] { printhead->testPress({5, 5}); }},
   };
 
@@ -369,15 +369,37 @@ void test_a_stop_while_the_press_waits_for_the_tape_keeps_it_up(void) {
 
 // --- the cut ------------------------------------------------------------
 
-// The cut is the cut mark pressed once, as hard as the job presses its
-// characters. It used to press three times, and the tape still came out
-// joined, so the label came off with scissors either way. Two of the three
-// were time for nothing on every label.
-void test_the_cut_presses_the_cut_mark_once_at_the_jobs_force(void) {
-  printhead->cut({5, 7});
+// The cut is the cut mark pressed as many times as the job asks, each
+// stroke as hard as the job presses its characters.
+void test_the_cut_presses_the_cut_mark_as_often_as_asked_at_the_jobs_force(
+    void) {
+  for (const int presses : {1, 3}) {
+    strokes->strokes.clear();
+
+    printhead->cut({5, 7}, presses);
+
+    TEST_ASSERT_EQUAL_INT(presses, (int)strokes->strokes.size());
+    for (const Stroke& stroke : strokes->strokes) {
+      TEST_ASSERT_EQUAL_INT(depthAt(7), stroke.deepest);
+    }
+  }
+}
+
+// A stop that comes while the cut presses is obeyed before the next press,
+// and leaves the tape as far cut as it got. The press under way finishes
+// its stroke first, so the press is not left down in the wheel.
+void test_a_stop_during_a_cut_is_obeyed_before_the_next_press(void) {
+  stubAfterDelay() = [] {
+    if (!strokes->strokes.empty()) {
+      stopSignal->raise(StopCause::OPERATOR);
+    }
+  };
+
+  printhead->cut({5, 5}, 3);
 
   TEST_ASSERT_EQUAL_INT(1, (int)strokes->strokes.size());
-  TEST_ASSERT_EQUAL_INT(depthAt(7), strokes->strokes[0].deepest);
+  TEST_ASSERT_EQUAL_INT(REST_ANGLE, pressServo->angles().back());
+  TEST_ASSERT_TRUE(stopSignal->cutShort());
 }
 
 // The slot the cut comes down on is the cut mark, the blade on the wheel,
@@ -388,7 +410,7 @@ void test_the_cut_comes_down_on_the_cut_mark(void) {
   const long cutMark = magnet->bearing();
   printhead->turnTo("A", calibration);
 
-  printhead->cut(calibration);
+  printhead->cut(calibration, 1);
 
   TEST_ASSERT_EQUAL_INT32(cutMark, strokes->strokes[0].bearing);
 }
@@ -432,10 +454,11 @@ static unsigned long timeCharacter(const String& character, int feeds,
 }
 
 // The same for the cut, as a label ends with it.
-static unsigned long timeCut(int feeds, const Calibration& calibration) {
+static unsigned long timeCut(int feeds, int presses,
+                             const Calibration& calibration) {
   const unsigned long start = micros();
   feeder->start(feeds);
-  printhead->cut(calibration);
+  printhead->cut(calibration, presses);
   feeder->finish();
   return micros() - start;
 }
@@ -446,12 +469,16 @@ struct Stamping {
   const char* from;
   const char* character;
   int feeds;
+  // For the cut, how many times it presses the cut mark. A character
+  // presses once, and leaves this out.
+  int presses;
 
   bool cutting() const { return String(this->character) == CUT_CHARACTER; }
 
   String name() const {
-    return String(this->from) + " to '" + this->character + "' over " +
-           this->feeds;
+    const String name = String(this->from) + " to '" + this->character +
+                        "' over " + this->feeds;
+    return this->cutting() ? name + " x" + this->presses : name;
   }
 };
 
@@ -459,9 +486,10 @@ struct Stamping {
 static unsigned long estimateOf(const Stamping& stamping, unsigned long tapeUs,
                                 const Calibration& calibration) {
   String wheel = stamping.from;
-  return stamping.cutting() ? printhead->cutUs(&wheel, tapeUs, calibration)
-                            : printhead->stampUs(&wheel, stamping.character,
-                                                 tapeUs, calibration);
+  return stamping.cutting()
+             ? printhead->cutUs(&wheel, tapeUs, calibration, stamping.presses)
+             : printhead->stampUs(&wheel, stamping.character, tapeUs,
+                                  calibration);
 }
 
 // And how long it takes, from the wheel at rest at `from`.
@@ -469,7 +497,7 @@ static unsigned long timeOf(const Stamping& stamping,
                             const Calibration& calibration) {
   printhead->turnTo(stamping.from, calibration);
   return stamping.cutting()
-             ? timeCut(stamping.feeds, calibration)
+             ? timeCut(stamping.feeds, stamping.presses, calibration)
              : timeCharacter(stamping.character, stamping.feeds, calibration);
 }
 
@@ -514,10 +542,13 @@ void test_the_estimate_of_a_character_is_how_long_it_takes(void) {
   }
 }
 
+// With the one press of a label's cut, and the three of the Cut button.
 void test_the_estimate_of_a_cut_is_how_long_it_takes(void) {
   const Stamping stampings[] = {
-      {"K", CUT_CHARACTER, 1},
-      {CUT_CHARACTER, CUT_CHARACTER, 1},
+      {"K", CUT_CHARACTER, 1, 1},
+      {CUT_CHARACTER, CUT_CHARACTER, 1, 1},
+      {"K", CUT_CHARACTER, 1, 3},
+      {CUT_CHARACTER, CUT_CHARACTER, 1, 3},
   };
   const Calibration calibration = {5, 5};
   for (const Stamping& stamping : stampings) {
@@ -536,7 +567,7 @@ void test_a_feed_that_outlasts_the_turn_runs_a_little_over_the_estimate(void) {
   const Stamping stampings[] = {
       {"J", "A", 2},
       {"I", "K", 1},
-      {"A", CUT_CHARACTER, 3},
+      {"A", CUT_CHARACTER, 3, 1},
   };
   const Calibration calibration = {5, 5};
   for (const Stamping& stamping : stampings) {
@@ -570,7 +601,9 @@ int main(int, char**) {
   RUN_TEST(test_nothing_comes_down_on_tape_that_is_still_moving);
   RUN_TEST(test_the_wheel_turns_to_the_next_character_while_the_tape_feeds);
   RUN_TEST(test_a_stop_while_the_press_waits_for_the_tape_keeps_it_up);
-  RUN_TEST(test_the_cut_presses_the_cut_mark_once_at_the_jobs_force);
+  RUN_TEST(
+      test_the_cut_presses_the_cut_mark_as_often_as_asked_at_the_jobs_force);
+  RUN_TEST(test_a_stop_during_a_cut_is_obeyed_before_the_next_press);
   RUN_TEST(test_the_cut_comes_down_on_the_cut_mark);
   RUN_TEST(test_the_test_press_is_light_and_slow_on_the_m_whatever_the_force);
   RUN_TEST(test_the_estimate_of_a_home_is_how_long_it_takes_from_the_j);

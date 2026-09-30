@@ -33,8 +33,8 @@ void test_the_cut_mark_is_not_printable(void) {
 }
 
 void test_the_cut_mark_is_still_on_the_wheel(void) {
-  // ETKT::cut() moves to it by name, so dropping it from CHARACTERS would
-  // stop the machine cutting rather than just stop it being typeable.
+  // Printhead::cut() turns to it by name, so dropping it from CHARACTERS
+  // would stop the machine cutting rather than just stop it being typeable.
   TEST_ASSERT_TRUE(CHARACTERS.find(CUT_CHARACTER) != CHARACTERS.end());
 }
 

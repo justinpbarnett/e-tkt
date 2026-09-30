@@ -69,7 +69,7 @@ void Printhead::stamp(const String& character, const Calibration& calibration) {
   }
 }
 
-void Printhead::cut(const Calibration& calibration) {
+void Printhead::cut(const Calibration& calibration, int presses) {
   if (!ENABLE_CUT) {
     pause(500, this->tape);
     return;
@@ -83,7 +83,15 @@ void Printhead::cut(const Calibration& calibration) {
   if (turn == Turn::NO_SLOT) {
     this->logger->warn("Skipped the cut: the wheel would not reach the mark");
   }
-  if (this->waitToPress(turn)) {
+  if (!this->waitToPress(turn)) {
+    return;
+  }
+  for (int i = 0; i < presses; i++) {
+    // waitToPress() has asked about a stop before the first press. One that
+    // comes after it leaves the tape as far cut as it got.
+    if (i > 0 && this->stop->shouldStop()) {
+      return;
+    }
     this->press->press(true, calibration.force, false);
   }
 }
@@ -131,23 +139,26 @@ unsigned long Printhead::stampUs(String* wheel, const String& character,
     return tapeUs;
   }
   const unsigned long us =
-      this->pressedUs(*wheel, character, tapeUs, false, calibration);
+      this->pressedUs(*wheel, character, tapeUs, false, 1, calibration);
   *wheel = character;
   return us;
 }
 
 unsigned long Printhead::cutUs(String* wheel, unsigned long tapeUs,
-                               const Calibration& calibration) const {
-  const unsigned long us =
-      this->pressedUs(*wheel, CUT_CHARACTER, tapeUs, true, calibration);
+                               const Calibration& calibration,
+                               int presses) const {
+  const unsigned long us = this->pressedUs(*wheel, CUT_CHARACTER, tapeUs, true,
+                                           presses, calibration);
   *wheel = CUT_CHARACTER;
   return us;
 }
 
 unsigned long Printhead::pressedUs(const String& from, const String& slot,
                                    unsigned long tapeUs, bool strong,
+                                   int presses,
                                    const Calibration& calibration) const {
   const unsigned long turnUs =
       this->daisywheel->moveUs(from, slot, calibration.align);
-  return max(turnUs, tapeUs) + this->press->pressUs(strong, calibration.force);
+  return max(turnUs, tapeUs) +
+         presses * this->press->pressUs(strong, calibration.force);
 }

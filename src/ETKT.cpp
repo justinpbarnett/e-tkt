@@ -36,6 +36,15 @@ static const unsigned long CELEBRATION_MS =
 // sent it there, before anything moves.
 static const unsigned long REST_SETTLE_MS = 500;
 
+// How many times a cut presses the cut mark. The blade does not go all the
+// way through the tape either way, so a label comes off with scissors, and
+// the cut that ends each label of a run is one press: two more on every
+// label were time for nothing. The Cut button cuts once, not once a label,
+// so it can take its time, and presses three times, as the machine always
+// did.
+static const int LABEL_CUT_PRESSES = 1;
+static const int CUT_COMMAND_PRESSES = 3;
+
 // The label as the wheel prints it, which has only capitals.
 static String asPrinted(const String& label) {
   String printed = label;
@@ -432,7 +441,7 @@ void ETKT::cutCommandInternal() {
   this->printhead->rest();
   delay(REST_SETTLE_MS);
 
-  this->printhead->cut(this->calibration);
+  this->printhead->cut(this->calibration, CUT_COMMAND_PRESSES);
   ledChar->off();
 }
 
@@ -630,7 +639,7 @@ void ETKT::printLabel(const String& label, int copy, int copies) {
   // wheel nowhere.
   this->feeder->start(topUpFeeds(labelLength));
   if (this->command->cut) {
-    this->printhead->cut(this->calibration);
+    this->printhead->cut(this->calibration, LABEL_CUT_PRESSES);
   }
   // Without the cut, the tape is still on its way to the end of the label.
   this->feeder->finish();
@@ -724,5 +733,5 @@ uint64_t ETKT::labelUs(const std::vector<String>& characters, bool cut,
     return us + this->feeder->feedUs(feeds);
   }
   return us + this->printhead->cutUs(wheel, this->feeder->feedUs(feeds),
-                                     calibration);
+                                     calibration, LABEL_CUT_PRESSES);
 }
