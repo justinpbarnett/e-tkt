@@ -98,11 +98,10 @@
 // shorter is topped up with blank feeds after the last character is pressed,
 // so there is something to take hold of when the tape is cut.
 //
-// Served to the panel in api/capabilities. The panel pads short labels too,
-// with spaces on both sides so the text stays centred, and it used to carry
-// its own copy of this number written as 7 -- one past the minimum, because
-// a label that only just reaches the minimum leaves the device adding
-// trailing feeds, which pushes the text off centre.
+// Served to the panel in api/capabilities. The panel pads short labels up
+// to it with spaces on both sides, because the trailing feeds of a top-up
+// would push the text off centre, and a label that reaches the minimum gets
+// none.
 constexpr int MIN_LABEL_CHARACTERS = 6;
 
 // The longest label the device will print, so a label POSTed straight at
@@ -171,8 +170,8 @@ constexpr int ROLL_LENGTH_MIN_MM = 500;
 constexpr int ROLL_LENGTH_MAX_MM = 10000;
 
 // The most labels one request may ask for. Not a limit anyone should meet --
-// the panel's shortest label takes 32 mm of tape, so even the longest roll
-// above holds about 310 -- but without one, a number POSTed straight at
+// the panel's shortest label takes 28 mm of tape, so even the longest roll
+// above holds only 357 -- but without one, a number POSTed straight at
 // /api/tag could keep the machine pressing air for days after the tape ran
 // out.
 constexpr int MAX_COPIES = 500;

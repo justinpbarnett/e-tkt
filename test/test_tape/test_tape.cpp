@@ -121,10 +121,10 @@ void test_an_overrun_roll_reads_empty_not_negative(void) {
 
 void test_the_copy_limit_never_cuts_a_roll_short(void) {
   // The cap exists to stop a request running for days, not to shorten a
-  // print-to-the-end. The longest roll of the panel's shortest label has to
-  // come in under it.
-  TEST_ASSERT_TRUE(labelsThatFit(ROLL_LENGTH_MAX_MM,
-                                 MIN_LABEL_CHARACTERS + 1) <= MAX_COPIES);
+  // print-to-the-end. The longest roll of the panel's shortest label, which
+  // is the minimum, has to come in under it.
+  TEST_ASSERT_TRUE(labelsThatFit(ROLL_LENGTH_MAX_MM, MIN_LABEL_CHARACTERS) <=
+                   MAX_COPIES);
 }
 
 // --- what a request may say -------------------------------------------------

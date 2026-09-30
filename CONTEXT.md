@@ -74,9 +74,9 @@ A label is counted and walked in characters, not bytes, because the wheel's symb
 `printableCharacters()`.
 Served from `/api/capabilities` so the panel does not keep its own list, which it used to and which disagreed.
 
-**Typed length vs sent length** - not the same number, and the difference is two.
-The panel centres a label by padding a space onto each side before it posts it, so a label is two characters longer on the wire than it was in the box.
-`MIN_LABEL_CHARACTERS` and `MAX_LABEL_CHARACTERS` are both bounds on the sent length, because that is what the device receives and checks; the panel subtracts its own margin from the maximum to cap what anyone can type.
+**Typed length vs sent length** - not the same number.
+The panel centres a label by padding spaces onto both sides before it posts it: the margin picked on the page, none or 1 space a side, and more on a short label, to bring it up to the minimum.
+`MIN_LABEL_CHARACTERS` and `MAX_LABEL_CHARACTERS` are both bounds on the sent length, because that is what the device receives and checks; the panel subtracts its widest margin from the maximum to cap what anyone can type.
 Reading the maximum as a typed length is what first made it 247 and made the device refuse the longest label the panel could produce.
 
 **Character set** - what the wheel carries and what a label may say: which character sits in which slot, the aliases, the printable set, and the note each slot sounds in a label's tune.
@@ -124,7 +124,7 @@ It leaves a margin ahead of the text for the cut at the end of the label before.
 
 **Top-up** - the blank feeds after a short label's last character that bring it up to `MIN_LABEL_CHARACTERS`, so there is something to hold when it is cut.
 A one-character label is left short on purpose.
-The panel pads its own labels past the minimum, so a top-up is what a label posted some other way gets.
+The panel pads its own labels to the minimum, so a top-up is what a label posted some other way gets.
 `topUpFeeds()`.
 
 **Tape left** - what the roll's two numbers leave: the declared length less the feeds times `FEED_LENGTH_UM`, and never less than nothing.

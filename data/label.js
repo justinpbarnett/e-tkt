@@ -26,14 +26,15 @@ export function typedLengthLimit(device) {
 // How many characters the panel pads a label up to, or null while the device
 // has not said yet.
 //
-// One past the device's minimum. A label that only just reaches the minimum
-// leaves the device topping the tape up with trailing feeds, which pushes the
-// text off centre; padding one further does not. The number comes from
-// api/capabilities -- three places here used to write it as a bare 7 while
-// the device called it 6, and two of them kept saying 7 after the third
-// started asking.
+// The device's own minimum. The device tops a shorter label up with trailing
+// feeds, which pushes the text off centre, but it adds nothing to a label
+// that reaches the minimum, so padding to it is enough. Padding further only
+// costs tape and time: it used to be one past the minimum, which sent a
+// 4-letter word out as 8 characters in place of 6. The number comes from
+// api/capabilities, so the panel cannot drift from the device, as three
+// copies of it here once did.
 export function paddedLabelTarget(device) {
-  return device === null ? null : device.label.minimum + 1;
+  return device === null ? null : device.label.minimum;
 }
 
 // The label as it will be sent, with the margin, "tight" or "loose", on both

@@ -12,15 +12,18 @@ import {
 } from "../../data/label.js";
 import { labelMaker } from "./device.js";
 
-test("a short label is padded evenly to one past the device's minimum", () => {
+test("a short label is padded evenly to the device's minimum", () => {
   // The device tops a label under its minimum up with trailing feeds, which
   // puts the text off centre, so the panel pads it with spaces on both
-  // sides first: to 7, as the device's minimum is 6. The loose margin's own
-  // space on each side counts toward that, and is not lost to it.
+  // sides first: to 6, the device's minimum, which gets no top-up. The
+  // loose margin's own space on each side counts toward that, and is not
+  // lost to it.
   const device = labelMaker();
-  assert.equal(paddedLabel("AB", "loose", device), "   AB   ");
-  assert.equal(paddedLabel("AB", "tight", device), "   AB   ");
-  assert.equal(paddedLabel("ABCDEF", "tight", device), " ABCDEF ");
+  assert.equal(paddedLabel("AB", "loose", device), "  AB  ");
+  assert.equal(paddedLabel("AB", "tight", device), "  AB  ");
+  assert.equal(paddedLabel("ABLE", "loose", device), " ABLE ");
+  assert.equal(paddedLabel("ABLE", "tight", device), " ABLE ");
+  assert.equal(paddedLabel("ABCDEF", "tight", device), "ABCDEF");
   assert.equal(paddedLabel("ABCDEF", "loose", device), " ABCDEF ");
   assert.equal(paddedLabel("ABCDEFG", "tight", device), "ABCDEFG");
   assert.equal(paddedLabel("ABCDEFG", "loose", device), " ABCDEFG ");
@@ -112,5 +115,5 @@ test("a label is measured in characters as the device counts them", () => {
   // the label goes over the wire, and the device counts them as one.
   const device = labelMaker();
   assert.equal(codePoints("€☆♡♪"), 4);
-  assert.equal(paddedLabel("€☆♡♪", "tight", device), "  €☆♡♪  ");
+  assert.equal(paddedLabel("€☆♡♪", "tight", device), " €☆♡♪ ");
 });
