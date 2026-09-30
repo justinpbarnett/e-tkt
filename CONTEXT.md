@@ -131,6 +131,7 @@ The panel pads its own labels to the minimum, so a top-up is what a label posted
 **Tape left** - what the roll's two numbers leave: the declared length less the feeds times `FEED_LENGTH_UM`, and never less than nothing.
 It is an estimate, only as good as `FEED_LENGTH_UM` and the length somebody typed in.
 So the panel warns when a print looks like more than is left, but does not refuse it: the tape on the spool is the better judge.
+The panel says it, like the length of a label or a run, in whole millimetres under a metre and in metres to the centimetre from there, rounded down so it never says more is left than the estimate: `formatLength()` in `data/tape.js`.
 `remainingMm()` in `Tape.h`, reported by `/api/status` whether or not anything is running.
 
 **Labels that fit** - how many of a label the tape left holds, each one taking the lead, a feed per character and the top-up, and the cut taking none.

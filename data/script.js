@@ -51,6 +51,7 @@ import {
 } from "./status.js";
 import { Stops } from "./stops.js";
 import {
+  formatLength,
   labelLengthMm,
   offeredRollLength,
   rollGauge,
@@ -1227,7 +1228,7 @@ function renderPrintView(running, offer, focused) {
   const hint = hintFor(typed, device);
   setText(el.hint, hint.text);
   setTone(el.hint, hint.tone);
-  setText(el.length, valid ? Math.round(labelLengthMm(codePoints(buildTreatedLabel()), device)) + " mm" : "");
+  setText(el.length, valid ? formatLength(labelLengthMm(codePoints(buildTreatedLabel()), device)) : "");
   for (const key of el.keys) {
     key.disabled = busy;
   }

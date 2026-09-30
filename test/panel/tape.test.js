@@ -56,16 +56,24 @@ test("the tape left fits as many labels as the shared cases say", async (t) => {
   }
 });
 
-test("a length of tape reads in the unit a person would say it in, rounded down", () => {
+test("a length of tape reads to the millimetre under a metre, and to the centimetre from there, rounded down", () => {
+  // A label is a few centimetres, so a length said in whole centimetres
+  // could be a good share of one out: two labels of 28 mm read as 5 cm.
   // Rounded down so what is left is never said to be more than the device's
   // own estimate of it.
   assert.equal(formatLength(9.9), "9 mm");
   assert.equal(formatLength(-4), "0 mm");
-  assert.equal(formatLength(10), "1 cm");
-  assert.equal(formatLength(999), "99 cm");
+  assert.equal(formatLength(56), "56 mm");
+  assert.equal(formatLength(999.9), "999 mm");
   assert.equal(formatLength(1000), "1 m");
-  assert.equal(formatLength(2999), "2.9 m");
+  assert.equal(formatLength(1009), "1 m");
+  assert.equal(formatLength(1010), "1.01 m");
+  assert.equal(formatLength(1500), "1.5 m");
+  assert.equal(formatLength(2824), "2.82 m");
   assert.equal(formatLength(10000), "10 m");
+  // 350 labels of 6 feeds of 3.9 mm are 8190 mm, which the sum lands a hair
+  // under in floating point.
+  assert.equal(formatLength(350 * ((6 * 3900) / 1000)), "8.19 m");
 });
 
 test("the tape left is the last status's estimate, and unknown without one", () => {
@@ -152,7 +160,8 @@ test("Setup shows how much of the roll is left, and warns when it runs low", () 
   // than full, and one declared at nothing shows empty.
   const gauge = (length_mm, remaining_mm) => rollGauge({ roll: { length_mm, remaining_mm } });
   assert.deepEqual(gauge(3000, 1500), { left: "1.5 m", of: "left of 3 m", share: 0.5, low: false });
-  assert.deepEqual(gauge(3000, 300), { left: "30 cm", of: "left of 3 m", share: 0.1, low: false });
+  assert.deepEqual(gauge(3000, 300), { left: "300 mm", of: "left of 3 m", share: 0.1, low: false });
+  assert.equal(gauge(3000, 2824).left, "2.82 m");
   assert.equal(gauge(3000, 299).low, true);
   assert.equal(gauge(3000, 4000).share, 1);
   assert.equal(gauge(0, 0).share, 0);

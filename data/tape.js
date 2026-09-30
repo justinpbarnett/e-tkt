@@ -44,16 +44,18 @@ export function tapeLeftMm(status) {
   return roll && Number.isFinite(roll.remaining_mm) ? roll.remaining_mm : null;
 }
 
-// A length of tape in the unit a person would say it in. Rounded down, so
-// what is left is never more than the device's own estimate.
+// A length of tape, in whole millimetres under a metre and in metres to the
+// centimetre from there. A label is a few centimetres, so anything coarser
+// could be a good share of one out. Rounded down, so what is left is never
+// more than the device's own estimate. It counts from whole micrometres,
+// the unit a feed is measured in, so a sum that floating point leaves a
+// hair short of a whole unit is not rounded down past it.
 export function formatLength(mm) {
-  if (mm < 10) {
-    return Math.max(Math.floor(mm), 0) + " mm";
+  const um = Math.max(Math.round(mm * 1000), 0);
+  if (um < 1000000) {
+    return Math.floor(um / 1000) + " mm";
   }
-  if (mm < 1000) {
-    return Math.floor(mm / 10) + " cm";
-  }
-  return Math.floor(mm / 100) / 10 + " m";
+  return Math.floor(um / 10000) / 100 + " m";
 }
 
 // A roll length as typed into Setup's dialog, in metres, which is how people
