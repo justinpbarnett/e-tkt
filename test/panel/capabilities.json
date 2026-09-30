@@ -56,6 +56,16 @@
       "stoppable": true,
       "presses_label": false
     },
+    "unload": {
+      "uses_align": false,
+      "uses_force": false,
+      "text_field": null,
+      "text_is_label": false,
+      "prints_run": false,
+      "uses_roll_length": false,
+      "stoppable": true,
+      "presses_label": false
+    },
     "testalign": {
       "uses_align": true,
       "uses_force": false,

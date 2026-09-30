@@ -298,10 +298,26 @@
             <p class="note">
               The label maker can’t see the tape, so this is counted from the tape it has fed since the roll went in.
             </p>
-            <button type="button" class="btn btn-secondary btn-stacked" id="reel-button" data-command="reel">
-              <span class="idle-text">Load new roll</span>
-              <span class="running-text">Loading…</span>
-            </button>
+            <div class="roll-actions">
+              <button
+                type="button"
+                class="btn btn-secondary btn-compact btn-stacked"
+                id="unload-button"
+                data-command="unload"
+              >
+                <span class="idle-text">Unload roll</span>
+                <span class="running-text">Unloading…</span>
+              </button>
+              <button
+                type="button"
+                class="btn btn-secondary btn-compact btn-stacked"
+                id="reel-button"
+                data-command="reel"
+              >
+                <span class="idle-text">Load new roll</span>
+                <span class="running-text">Loading…</span>
+              </button>
+            </div>
           </div>
 
           <div class="panel card">
@@ -415,6 +431,19 @@
     <!------------->
     <!-- dialogs -->
     <!------------->
+    <dialog class="dialog" id="unload-dialog" aria-labelledby="unload-title" aria-describedby="unload-instructions">
+      <form method="dialog" class="dialog-body">
+        <h2 class="dialog-title" id="unload-title">Unload the roll</h2>
+        <p id="unload-instructions">
+          Cut off any printed label first. The tape then backs out of the feed cog, and the roll can come out.
+        </p>
+        <div class="dialog-actions">
+          <button type="submit" class="btn btn-secondary" value="cancel">Cancel</button>
+          <button type="submit" class="btn btn-primary" value="unload">Back tape out</button>
+        </div>
+      </form>
+    </dialog>
+
     <dialog class="dialog" id="reel-dialog" aria-labelledby="reel-title" aria-describedby="reel-instructions">
       <form method="dialog" class="dialog-body" id="reel-form" novalidate>
         <h2 class="dialog-title" id="reel-title">Load a new roll</h2>

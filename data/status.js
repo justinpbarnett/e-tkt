@@ -102,6 +102,11 @@ const COMMAND_WORDING = {
     stop: "Stop loading",
     stopped: "Stopped loading the new roll before the tape was all the way through. Load it again to finish.",
   },
+  unload: {
+    busy: "Unloading the roll…",
+    stop: "Stop unloading",
+    stopped: "Stopped unloading the roll. If the tape is still in the feed cog, unload it again.",
+  },
   testalign: { busy: "Testing the alignment…", stop: "Stop test", stopped: "Stopped the alignment test." },
   testfull: { busy: "Printing a test label…", stop: "Stop test print", pressed: "test label" },
   save: { busy: "Saving…" },

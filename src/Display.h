@@ -28,6 +28,7 @@ enum class Screen {
   CUTTING,
   FEEDING,
   REELING,
+  UNLOADING,
   TESTING,
   FINISHED,
   REBOOTING,

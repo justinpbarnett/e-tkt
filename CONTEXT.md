@@ -102,6 +102,7 @@ It stops at 99 rather than 100 because feeding the tail, and the cut on a label 
 
 **Feed** - one step of the tape: an eighth of a turn of the feed motor, which pulls `FEED_LENGTH_UM` of tape through.
 What a job uses is counted in feeds, and turned into millimetres only to be shown or taken off a roll's length.
+Backing the tape out, in **unloading a roll**, leaves the count as it was.
 `Feeder::feed()`, and `Feeder::feeds()` for the count so far.
 
 **Feeding in the background** - how a label moves its tape: `Feeder::start()` asks for feeds and returns at once, and the tape moves while the daisy wheel turns, because every loop and wait of the wheel's keeps it going.
@@ -119,6 +120,15 @@ The panel says roll, and `reel`, the command that loads one, is the older word f
 Whatever was fed before it is charged to the old roll, the count starts again at the declared length, and `REEL_FEEDS` then pull the new tape through from the cog to past the cutter, charged to the new one.
 A length is `ROLL_LENGTH_MIN_MM` to `ROLL_LENGTH_MAX_MM`.
 A request without one keeps the last roll's, and a device that has never been told one starts at `DEFAULT_ROLL_LENGTH_MM`, 3 m.
+
+**Unloading a roll** - the `unload` command, which undoes a load, so the roll can come out without being cut or fed the rest of the way through.
+The press goes to rest, and the tape backs out `REEL_FEEDS`, as far as a load pulls it in: from the cutter, where the last cut left its end, to behind the cog.
+Tape fed past the cutter since then is further to go, so the panel asks for any printed label to be cut off first.
+The roll's count is left as it was.
+The tape that comes back is still on the roll, but the machine cannot tell how much came back, because once the end is out of the cog the motor turns without moving it.
+So the roll reads a little shorter than it is rather than longer, and a stop partway cannot say whether the tape is still in the cog, which the panel asks the user to check.
+The panel offers it in Setup beside loading a new roll, not beside feed and cut: an unload by mistake during a shift means loading the roll again, which starts its count again as if it were new.
+`ETKT::unloadCommandInternal()` and `Feeder::backOut()`.
 
 **Lead** - the blank feed ahead of a label's first character, `LEAD_FEEDS`.
 It leaves a margin ahead of the text for the cut at the end of the label before.
@@ -141,7 +151,7 @@ The worked cases in `test/vectors/tape.json` hold both to the same answers, from
 
 ## Commands
 
-**Command** - one job the machine can be asked to do: cut, feed, reel, testalign, testfull, save, tag, home, move.
+**Command** - one job the machine can be asked to do: cut, feed, reel, unload, testalign, testfull, save, tag, home, move.
 Plus `idle`, which is a status rather than a job.
 
 **Descriptor table** - `ETKT::COMMANDS` in `ETKT.cpp`, one row per command.

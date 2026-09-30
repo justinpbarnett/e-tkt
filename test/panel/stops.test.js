@@ -247,6 +247,17 @@ test("a stop that cut a test or a new roll short says what it left", () => {
   assert.equal(notice({ command: "testfull", unfinished: undefined }).unfinished, false);
 });
 
+test("a stop that cut an unload short says how to finish it", () => {
+  // The stop can come before the end of the tape is out of the feed cog or
+  // after it, and the device cannot tell which: once the end is out, the cog
+  // turns without moving it.
+  const notice = (stopped) => new Stops().notice(stoppedBy(stopped), device);
+  assert.deepEqual(notice({ command: "unload" }), {
+    text: "Stopped unloading the roll. If the tape is still in the feed cog, unload it again.",
+    unfinished: false,
+  });
+});
+
 test("a stop that cut a cut, a feed or a turn of the wheel short says so", () => {
   // A cut stopped partway can leave the tape half cut through, and the way
   // to finish it is to cut again. The others leave nothing to do.

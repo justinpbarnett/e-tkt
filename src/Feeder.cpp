@@ -42,7 +42,8 @@ void Feeder::start(int feeds) {
     return;
   }
 
-  this->logger->log(String("Feeding ") + feeds + "x...");
+  this->logger->log(String(this->backingOut ? "Backing out " : "Feeding ") +
+                    feeds + "x...");
 
   this->pending += feeds;
   if (this->phase == Phase::IDLE) {
@@ -75,7 +76,7 @@ void Feeder::keepGoing() {
       break;
     case Phase::MOVING:
       if (!this->stepper->run()) {
-        this->fed++;
+        this->countFeed();
         this->enter(Phase::GAP);
       }
       break;
@@ -112,6 +113,16 @@ void Feeder::feed(int repeat) {
   this->finish();
 }
 
+void Feeder::backOut(int feeds) {
+  // The feeds under way were asked for forward, so they finish that way
+  // before the motor turns round.
+  this->finish();
+  this->backingOut = true;
+  this->start(feeds);
+  this->finish();
+  this->backingOut = false;
+}
+
 unsigned long Feeder::feedUs(int feeds) const {
   if (feeds <= 0) {
     return 0;
@@ -141,8 +152,8 @@ void Feeder::next() {
   }
   this->pending--;
   this->moveStart = this->stepper->currentPosition();
-  const long direction = REVERSE_FEED_STEPPER_DIRECTION ? 1 : -1;
-  this->stepper->move(STEPS_PER_FEED * direction);
+  const long forward = REVERSE_FEED_STEPPER_DIRECTION ? 1 : -1;
+  this->stepper->move(STEPS_PER_FEED * (this->backingOut ? -forward : forward));
   this->phase = Phase::MOVING;
 }
 
@@ -155,6 +166,12 @@ void Feeder::haltFeed() {
   // a whole one. The roll is estimated from this count, and an estimate that
   // runs out a little early is better than one that runs out late.
   if (this->stepper->currentPosition() != this->moveStart) {
+    this->countFeed();
+  }
+}
+
+void Feeder::countFeed() {
+  if (!this->backingOut) {
     this->fed++;
   }
 }

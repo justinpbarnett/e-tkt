@@ -246,6 +246,68 @@ void test_a_reel_without_a_length_takes_the_last_roll_length(void) {
   TEST_ASSERT_EQUAL_UINT32(16, roll.feedsUsed);
 }
 
+// A roll that has been threaded comes out again without being cut or fed
+// the rest of the way through: an unload backs the tape out of the cog as
+// far as a reel threads it, and lets go of it.
+void test_an_unload_backs_the_tape_out_as_far_as_a_reel_threads_it(void) {
+  submit(Command::REEL);
+  etkt->loop();
+  TEST_ASSERT_TRUE(feedStepper->currentPosition() != 0);
+
+  submit(Command::UNLOAD);
+  etkt->loop();
+
+  TEST_ASSERT_EQUAL_INT32(0, feedStepper->currentPosition());
+  TEST_ASSERT_FALSE(feedStepper->energized);
+  TEST_ASSERT_EQUAL_INT((int)Screen::UNLOADING, (int)display->screens().back());
+  TEST_ASSERT_EQUAL_INT(Command::IDLE, etkt->createStatus().currentCommand);
+}
+
+// What an unload backs out is still on the roll, but how much of it came
+// back cannot be told, so the roll's count is left as it was: see
+// Feeder::feeds().
+void test_an_unload_leaves_the_roll_count_as_it_was(void) {
+  CommandOptions options;
+  options.command = Command::REEL;
+  options.rollLengthMm = 5000;
+  etkt->submit(options);
+  etkt->loop();
+  submit(Command::FEED);
+  etkt->loop();
+
+  submit(Command::UNLOAD);
+  etkt->loop();
+
+  const RollState roll = etkt->createStatus().roll;
+  TEST_ASSERT_EQUAL_UINT32(5000, roll.lengthMm);
+  TEST_ASSERT_EQUAL_UINT32(17, roll.feedsUsed);
+}
+
+// A stop halts an unload where the tape is and lets go of it, so the rest
+// can be pulled out by hand. Nothing was pressed, so nothing is left on the
+// tape to cut off.
+void test_a_stopped_unload_lets_go_of_the_tape_and_leaves_nothing_to_cut(void) {
+  submit(Command::REEL);
+  etkt->loop();
+  static long threaded;
+  threaded = feedStepper->currentPosition();
+  feedStepper->afterStep = [] {
+    if (feedStepper->currentPosition() != threaded) {
+      etkt->stop();
+    }
+  };
+
+  submit(Command::UNLOAD);
+  etkt->loop();
+
+  const StatusUpdate status = etkt->createStatus();
+  TEST_ASSERT_EQUAL_INT(Command::UNLOAD, (int)status.stopped.command);
+  TEST_ASSERT_FALSE(status.stopped.unfinished);
+  TEST_ASSERT_FALSE(feedStepper->energized);
+  TEST_ASSERT_TRUE(feedStepper->currentPosition() != 0);
+  TEST_ASSERT_TRUE(display->last(DisplayCall::RENDER_IDLE)->stopped);
+}
+
 // Saving is the one job that ends in a reboot. The calibration has to be in
 // the EEPROM before the restart, or the machine comes back up without it.
 void test_saving_stores_the_calibration_and_reboots(void) {
@@ -816,6 +878,9 @@ int main(int, char**) {
   RUN_TEST(test_the_cut_button_presses_three_times_and_a_label_once);
   RUN_TEST(test_a_reel_loads_a_roll_of_the_declared_length);
   RUN_TEST(test_a_reel_without_a_length_takes_the_last_roll_length);
+  RUN_TEST(test_an_unload_backs_the_tape_out_as_far_as_a_reel_threads_it);
+  RUN_TEST(test_an_unload_leaves_the_roll_count_as_it_was);
+  RUN_TEST(test_a_stopped_unload_lets_go_of_the_tape_and_leaves_nothing_to_cut);
   RUN_TEST(test_saving_stores_the_calibration_and_reboots);
   RUN_TEST(test_a_second_job_is_refused_while_the_first_waits_its_turn);
   RUN_TEST(test_a_job_posted_while_the_idle_screen_draws_is_taken);

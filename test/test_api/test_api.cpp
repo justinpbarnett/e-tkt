@@ -769,8 +769,9 @@ void test_the_capabilities_say_how_much_tape_a_feed_takes(void) {
 void test_the_capabilities_list_every_command_that_can_be_asked_for(void) {
   const JsonObject commands = json(get("/api/capabilities"))["commands"];
 
-  const char* const names[] = {"cut",  "feed", "reel", "testalign", "testfull",
-                               "save", "tag",  "home", "move"};
+  const char* const names[] = {"cut",       "feed",     "reel", "unload",
+                               "testalign", "testfull", "save", "tag",
+                               "home",      "move"};
   const int count = sizeof(names) / sizeof(names[0]);
   TEST_ASSERT_EQUAL_INT(count, (int)commands.size());
   for (int i = 0; i < count; i++) {
@@ -800,6 +801,7 @@ void test_each_command_says_what_it_does(void) {
       {"cut", false, false, NULL, false, false, false, true, false},
       {"feed", false, false, NULL, false, false, false, true, false},
       {"reel", false, false, NULL, false, false, true, true, false},
+      {"unload", false, false, NULL, false, false, false, true, false},
       {"testalign", true, false, NULL, false, false, false, true, false},
       {"testfull", true, true, NULL, false, false, false, true, true},
       {"save", true, true, NULL, false, false, false, false, false},

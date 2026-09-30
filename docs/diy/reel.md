@@ -34,6 +34,22 @@ The length starts at the last roll's, and a new roll is usually 3 m.
 If yours is a different length, or you are putting back a part-used roll, set its length before feeding it through.
 "MAX", in the quantity of labels to print, is as many as that count says will fit.
 
+## to take a reel out
+
+A reel can come out before it runs out, to change the color, say, without cutting the tape or feeding the rest of it through.
+The machine backs the tape out of the feed cog for you.
+
+### 1. if a printed label is still on the tape, cut it off first
+
+### 2. in the app, go to "SETUP" and press "UNLOAD ROLL", then press "BACK TAPE OUT" and wait
+
+<img src="../assets/app/unload.png" width="50%" alt="The Unload the roll dialog, asking for any printed label to be cut off first">
+
+### 3. pull the end of the tape out of the slit, and take the reel out
+
+The app keeps the count of the old roll until you load the next one, so note what is left on it if it is to go back in: that is the length to set when you load it again.
+The tape that backs out is not added back to the count, so the count reads a little under what is really on the roll.
+
 ----
 
 ### PS: if the tape is skidding, try tightening the m4 screw on the feeder mechanism

@@ -249,6 +249,17 @@ test("a command that can be stopped is offered the red stop, in words of its own
   });
 });
 
+test("an unload says what it is doing, and its red stop says what it stops", () => {
+  // It backs the tape out of the feed cog and presses nothing, so it has no
+  // labels to count and no label to let finish.
+  const unloading = running({ command: "unload", status: { busy: true, command: "unload" } });
+  assert.deepEqual(activity(unloading, labelMaker()), { text: "Unloading the roll…", percentage: null });
+  assert.deepEqual(stopOffer(unloading, labelMaker()), {
+    now: { text: "Stop unloading", stopping: false },
+    afterLabel: null,
+  });
+});
+
 test("a command the device says it cannot stop is offered no stop", () => {
   // Which commands the device can stop is its own to say, and the page
   // offers no stop the device would refuse.

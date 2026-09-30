@@ -197,6 +197,10 @@ const ScreenSpec SCREEN_SPECS[] = {
      nullptr, 0x006e, 26, 90},
     {Screen::REELING, ScreenLayout::BANNER, false, "REELING", 44, nullptr,
      nullptr, 0x00d5, 26, 90},
+    // REELING the other way round: the same gaps either side of the word,
+    // and the arrows turned to point back.
+    {Screen::UNLOADING, ScreenLayout::BANNER, false, "UNLOADING", 38, nullptr,
+     nullptr, 0x00d6, 21, 97},
     {Screen::TESTING, ScreenLayout::BANNER, false, "TESTING", 44, nullptr,
      nullptr, 0x0073, 26, 90},
     {Screen::FINISHED, ScreenLayout::BANNER, true, "FINISHED!", 42, nullptr,
@@ -206,9 +210,9 @@ const ScreenSpec SCREEN_SPECS[] = {
 };
 
 // Draws one word centred between two icons. The shape behind CUTTING,
-// FEEDING, REELING, TESTING, FINISHED and REBOOTING. The caller has already
-// cleared the glass, which leaves the draw colour set to the opposite of the
-// background so the text reads either way round.
+// FEEDING, REELING, UNLOADING, TESTING, FINISHED and REBOOTING. The caller
+// has already cleared the glass, which leaves the draw colour set to the
+// opposite of the background so the text reads either way round.
 void drawBanner(U8G2_SSD1306_128X64_NONAME_F_HW_I2C* u8g2,
                 const ScreenSpec& spec) {
   u8g2->setFont(u8g2_font_nine_by_five_nbp_t_all);

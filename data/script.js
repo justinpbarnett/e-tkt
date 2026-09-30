@@ -192,6 +192,7 @@ const el = {
   rollRemaining: $("roll-remaining"),
   rollOf: $("roll-of"),
   rollMeter: $("roll-meter"),
+  unloadButton: $("unload-button"),
   reelButton: $("reel-button"),
   alignValue: $("align-value"),
   forceValue: $("force-value"),
@@ -206,6 +207,7 @@ const el = {
   saveButton: $("save-button"),
   stopNotices: document.querySelectorAll("[data-stop-notice]"),
   problems: document.querySelectorAll("[data-problem]"),
+  unloadDialog: $("unload-dialog"),
   reelDialog: $("reel-dialog"),
   reelForm: $("reel-form"),
   reelLength: $("reel-length"),
@@ -316,6 +318,7 @@ function wireEvents() {
   window.addEventListener("scroll", watchStuck, { passive: true });
   window.addEventListener("resize", watchStuck);
 
+  el.unloadButton.addEventListener("click", () => openDialog(el.unloadDialog));
   el.reelButton.addEventListener("click", openReelDialog);
   for (const button of el.stepButtons) {
     button.addEventListener("click", () => stepSetting(button.dataset.setting, Number(button.dataset.step)));
@@ -344,6 +347,11 @@ function wireEvents() {
   el.reelForm.addEventListener("submit", (event) => {
     if (event.submitter === el.reelConfirm && typedRollLength() === null) {
       event.preventDefault();
+    }
+  });
+  el.unloadDialog.addEventListener("close", async () => {
+    if (el.unloadDialog.returnValue === "unload" && (await send(el.unloadButton.dataset.command))) {
+      scrollStopsIntoPlace(el.setupRunActions, el.unloadButton);
     }
   });
   el.reelDialog.addEventListener("close", async () => {
@@ -1342,6 +1350,9 @@ function renderSetupView(running, offer, focused) {
     setText(el.rollOf, "");
     el.rollMeter.style.width = "0";
   }
+  // Unloading needs nothing the device has to say first. Loading needs the
+  // roll lengths it takes.
+  el.unloadButton.disabled = busy || offline;
   el.reelButton.disabled = busy || offline || device === null;
 
   const calibration = state.calibration;
@@ -1358,7 +1369,7 @@ function renderSetupView(running, offer, focused) {
   }
   // Whoever started it: the command a button names in data-command is the
   // one it says is running.
-  for (const button of [el.reelButton, el.testAlignButton, el.testFullButton]) {
+  for (const button of [el.unloadButton, el.reelButton, el.testAlignButton, el.testFullButton]) {
     showRunning(button, command === button.dataset.command);
   }
   // Saving restarts the label maker, which is not worth doing for the
@@ -1378,8 +1389,8 @@ function renderSetupView(running, offer, focused) {
     el.setupView.focus({ preventScroll: true });
   }
   // Named by a line of its own when it has no stop to name it, which leaves
-  // a save: the device can stop everything else, and setup's own tests and
-  // the new roll say so on their buttons as well.
+  // a save: the device can stop everything else, and setup's own tests, the
+  // unload and the new roll say so on their buttons as well.
   setText(el.setupStatus, busy && offer === null ? busyText(command) : "");
 }
 

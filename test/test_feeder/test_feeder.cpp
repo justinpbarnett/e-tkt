@@ -105,7 +105,7 @@ void test_feeding_is_relative_to_where_the_tape_already_is(void) {
                           stepper->currentPosition());
 }
 
-void test_the_tape_only_ever_goes_one_way(void) {
+void test_feeding_only_ever_moves_the_tape_forward(void) {
   feeder->initialize();
   feeder->feed(5);
   const std::vector<long> moves = stepper->valuesOf(StepperCall::MOVE);
@@ -154,7 +154,7 @@ void test_deenergize_releases_the_motor(void) {
 
 // --- counting ------------------------------------------------------------
 // The count is the only evidence of how much of the roll is gone, so it has
-// to match what the motor did, move for move.
+// to match what the motor fed, move for move.
 
 void test_nothing_is_counted_before_the_first_feed(void) {
   feeder->initialize();
@@ -347,6 +347,75 @@ void test_a_stop_once_the_last_feed_has_arrived_cuts_nothing_short(void) {
   TEST_ASSERT_FALSE(stepper->energized);
 }
 
+// --- backing out ---------------------------------------------------------
+// Unloading a roll turns the motor the other way, so the tape comes back out
+// of the cog and the roll can be lifted out without cutting it or feeding it
+// all the way through.
+
+void test_backing_out_moves_the_tape_the_other_way(void) {
+  feeder->initialize();
+  feeder->backOut(3);
+  const std::vector<long> moves = stepper->valuesOf(StepperCall::MOVE);
+  TEST_ASSERT_EQUAL_INT(3, (int)moves.size());
+  for (size_t i = 0; i < moves.size(); i++) {
+    TEST_ASSERT_EQUAL_INT32(-FEED_STEP * FEED_DIRECTION, moves[i]);
+  }
+  TEST_ASSERT_EQUAL_INT32(-3 * FEED_STEP * FEED_DIRECTION,
+                          stepper->currentPosition());
+}
+
+void test_backing_out_takes_nothing_off_the_count(void) {
+  // Tape backed out of the cog is still on the roll, but the machine cannot
+  // tell how much came back: once the end is out of the cog, the motor turns
+  // without moving it. So the count stays as it was, and the roll reads a
+  // little shorter than it is rather than longer.
+  feeder->initialize();
+  feeder->feed(2);
+  feeder->backOut(3);
+  TEST_ASSERT_EQUAL_INT32(2, feeder->feeds());
+}
+
+void test_backing_out_lets_go_of_the_tape(void) {
+  // The roll is lifted out by hand once the tape is out of the cog.
+  feeder->initialize();
+  feeder->backOut(3);
+  TEST_ASSERT_FALSE(stepper->energized);
+}
+
+void test_feeds_under_way_go_on_forward_before_backing_out(void) {
+  feeder->initialize();
+  feeder->start(2);
+  pause(500, feeder);
+  feeder->backOut(1);
+  const std::vector<long> moves = stepper->valuesOf(StepperCall::MOVE);
+  TEST_ASSERT_EQUAL_INT(3, (int)moves.size());
+  TEST_ASSERT_EQUAL_INT32(FEED_STEP * FEED_DIRECTION, moves[0]);
+  TEST_ASSERT_EQUAL_INT32(FEED_STEP * FEED_DIRECTION, moves[1]);
+  TEST_ASSERT_EQUAL_INT32(-FEED_STEP * FEED_DIRECTION, moves[2]);
+  TEST_ASSERT_EQUAL_INT32(2, feeder->feeds());
+}
+
+void test_a_feed_after_backing_out_goes_forward_again(void) {
+  feeder->initialize();
+  feeder->backOut(2);
+  feeder->feed(2);
+  TEST_ASSERT_EQUAL_INT32(0, stepper->currentPosition());
+  TEST_ASSERT_EQUAL_INT32(2, feeder->feeds());
+}
+
+void test_a_stop_halts_a_back_out_where_it_is(void) {
+  feeder->initialize();
+  stopAtStep = FEED_STEP + 1;
+  feeder->backOut(5);
+  TEST_ASSERT_EQUAL_INT(2, stepper->countOf(StepperCall::MOVE));
+  TEST_ASSERT_EQUAL_INT32(-(FEED_STEP + 1) * FEED_DIRECTION,
+                          stepper->currentPosition());
+  TEST_ASSERT_TRUE(stop->cutShort());
+  TEST_ASSERT_FALSE(stepper->energized);
+  // Cut short, and still not counted.
+  TEST_ASSERT_EQUAL_INT32(0, feeder->feeds());
+}
+
 // --- how long it takes -------------------------------------------------
 
 void test_the_estimate_of_feeding_is_how_long_it_takes(void) {
@@ -376,7 +445,7 @@ int main(int, char**) {
   RUN_TEST(test_one_feed_advances_one_eighth_of_a_revolution);
   RUN_TEST(test_a_repeated_feed_moves_once_per_repeat);
   RUN_TEST(test_feeding_is_relative_to_where_the_tape_already_is);
-  RUN_TEST(test_the_tape_only_ever_goes_one_way);
+  RUN_TEST(test_feeding_only_ever_moves_the_tape_forward);
   RUN_TEST(test_feed_energizes_before_moving_and_releases_after);
   RUN_TEST(test_the_motor_is_never_left_energized);
   RUN_TEST(test_a_feed_of_nothing_still_releases_the_motor);
@@ -398,6 +467,12 @@ int main(int, char**) {
   RUN_TEST(test_deenergize_lets_go_of_a_feed_under_way_and_counts_it);
   RUN_TEST(test_an_idle_feeder_leaves_a_stop_to_whatever_else_is_running);
   RUN_TEST(test_a_stop_once_the_last_feed_has_arrived_cuts_nothing_short);
+  RUN_TEST(test_backing_out_moves_the_tape_the_other_way);
+  RUN_TEST(test_backing_out_takes_nothing_off_the_count);
+  RUN_TEST(test_backing_out_lets_go_of_the_tape);
+  RUN_TEST(test_feeds_under_way_go_on_forward_before_backing_out);
+  RUN_TEST(test_a_feed_after_backing_out_goes_forward_again);
+  RUN_TEST(test_a_stop_halts_a_back_out_where_it_is);
   RUN_TEST(test_the_estimate_of_feeding_is_how_long_it_takes);
   RUN_TEST(test_no_feeds_take_no_time);
   return UNITY_END();

@@ -20,7 +20,8 @@
 constexpr int LEAD_FEEDS = 1;
 
 // How many feeds loading a new roll takes to pull the tape through the
-// mechanism, from the cog to past the cutter.
+// mechanism, from the cog to past the cutter. Unloading a roll backs the tape
+// out as far, so its end comes back out of the cog.
 constexpr int REEL_FEEDS = 16;
 
 /**

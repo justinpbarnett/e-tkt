@@ -71,6 +71,10 @@ const CommandSpec ETKT::COMMANDS[] = {
     {Command::REEL, "reel", NULL,
      CommandFact::USES_ROLL_LENGTH | CommandFact::STOPPABLE,
      &ETKT::reelCommandInternal},
+    // An unload undoes a reel: it backs the tape out of the cog, so the roll
+    // can come out without being cut or fed the rest of the way through.
+    {Command::UNLOAD, "unload", NULL, CommandFact::STOPPABLE,
+     &ETKT::unloadCommandInternal},
     // Align only. This test presses at the minimum force by design -- see
     // Printhead::testPress() -- so a force in the body is ignored, not
     // refused, which keeps a stale cached script.js working.
@@ -431,6 +435,20 @@ void ETKT::reelCommandInternal() {
   this->roll->load(length);
 
   this->feeder->feed(REEL_FEEDS);
+  this->ledFinish->off();
+  this->ledChar->off();
+}
+
+void ETKT::unloadCommandInternal() {
+  this->display->render(Screen::UNLOADING);
+  this->ledFinish->on(LIGHT_FAINT);
+  this->printhead->rest();
+  delay(REST_SETTLE_MS);
+
+  // As far back as a reel threads the tape forward: from past the cutter to
+  // behind the cog. The roll's count is left as it was, and Feeder::feeds()
+  // says why.
+  this->feeder->backOut(REEL_FEEDS);
   this->ledFinish->off();
   this->ledChar->off();
 }

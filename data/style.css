@@ -1369,8 +1369,21 @@ input.stepper-value,
   background: var(--warning);
 }
 
-.card > .btn {
+/* The two ways a roll goes, out and in, in the order they are done. Side by
+   side, half the row each, while both names fit in half of it, and one above
+   the other, the whole row each, once either does not. Which of the two it is
+   depends on the font as much as on the screen: the one a phone falls back
+   to can be wider than the one the page asks for. */
+.roll-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
   margin-top: 16px;
+}
+
+/* Half the row, less half the gap between the two. */
+.roll-actions > .btn {
+  flex: 1 1 calc(50% - 4px);
 }
 
 .setting + .setting {

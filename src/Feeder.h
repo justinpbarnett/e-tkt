@@ -22,8 +22,9 @@ constexpr long STEPS_PER_FEED = FEED_MOTOR_STEPS_PER_REVOLUTION / 8;
 /**
  * @brief Controls the feeder stepper motor.
  *
- * This motor feeds the label tape in only one direction
- * and never needs to maintain its position.
+ * This motor feeds the label tape forward, and turns the other way only to
+ * back the tape out of the cog when a roll is unloaded. It never needs to
+ * hold its position.
  *
  * It feeds in the background: start() asks for feeds and returns at once,
  * and the tape moves as the command loop keeps it going, which it does from
@@ -55,6 +56,8 @@ class Feeder : public Background {
   unsigned long phaseStartUs = 0;
   // Where the feed under way began.
   long moveStart = 0;
+  // Whether the feeds under way back the tape out, rather than feed it.
+  bool backingOut = false;
 
   void enter(Phase phase);
   bool waited(unsigned long ms) const;
@@ -70,6 +73,12 @@ class Feeder : public Background {
    * counts it if the tape moved at all.
    */
   void haltFeed();
+
+  /**
+   * @brief Counts the feed that just moved the tape, unless it backed the
+   * tape out: see feeds().
+   */
+  void countFeed();
 
  public:
   Feeder(Logger* logger, StepperDriver* stepper, StopSignal* stop);
@@ -108,6 +117,16 @@ class Feeder : public Background {
   void feed(int repeat = 1);
 
   /**
+   * @brief Turns the motor the other way for `feeds` feeds, so the tape
+   * backs out of the cog, and waits for it: the feeds under way go on
+   * forward first, and it returns with the motor free and the tape settled.
+   *
+   * A stop halts it as it halts a feed. With ENABLE_FEED off nothing moves,
+   * and it waits half a second in place of the feeds.
+   */
+  void backOut(int feeds);
+
+  /**
    * @brief How long feed(feeds) takes: from start() to the tape settled and
    * the motor free.
    *
@@ -125,7 +144,7 @@ class Feeder : public Background {
   void deenergize();
 
   /**
-   * @brief Every feed since power-on that actually moved the tape.
+   * @brief Every feed since power-on that actually moved the tape forward.
    *
    * The machine has no way to see the tape, so this count is the only
    * evidence of how much of the roll has been used. It is counted here,
@@ -134,6 +153,12 @@ class Feeder : public Background {
    * until the next one was added. With ENABLE_FEED off nothing moves, so
    * nothing is counted. A feed a stop or a deenergize() cut short counts as a
    * whole one if the motor turned at all.
+   *
+   * backOut() leaves the count as it was. The tape it pulls back out of the
+   * cog is still on the roll, but the machine cannot tell how much came
+   * back: once the end is out of the cog, the motor turns without moving it.
+   * Left alone, the roll reads a little shorter than it is rather than
+   * longer.
    */
   long feeds() const;
 };

@@ -31,13 +31,14 @@ enum Command {
   CUT = 0,
   FEED = 1,
   REEL = 2,
-  TEST_ALIGN = 3,
-  TEST_FULL = 4,
-  SAVE = 5,
-  TAG = 6,
-  HOME = 7,
-  MOVE = 8,
-  IDLE = 9
+  UNLOAD = 3,
+  TEST_ALIGN = 4,
+  TEST_FULL = 5,
+  SAVE = 6,
+  TAG = 7,
+  HOME = 8,
+  MOVE = 9,
+  IDLE = 10
 };
 
 // Declared here only so CommandSpec below can name a handler on it.
@@ -155,8 +156,9 @@ struct CommandSpec {
 
   // Whether this command presses a label into the tape, which a stop can
   // leave there unfinished: fed and pressed only as far as it got. A tag and
-  // the full test press one. A reel and a feed move tape with nothing pressed
-  // into it, so stopping one of them leaves nothing to cut off.
+  // the full test press one. A reel, an unload and a feed move tape with
+  // nothing pressed into it, so stopping one of them leaves nothing to cut
+  // off.
   bool pressesLabel;
 
   // The handler ETKT::loop() runs for this command. NULL means there is
@@ -472,6 +474,7 @@ class ETKT {
   void cutCommandInternal();
   void feedCommandInternal();
   void reelCommandInternal();
+  void unloadCommandInternal();
   void testCommandInternal();
   void testCommandFullInternal();
   void saveCommandInternal();
