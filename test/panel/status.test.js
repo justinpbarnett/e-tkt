@@ -50,6 +50,16 @@ test("capabilities from older firmware are refused, naming what is missing", () 
       message: "api/capabilities served no command facts",
     });
   }
+
+  // The page sends a command again when it hears nothing back. Firmware that
+  // keeps no ids cannot tell the second from a new one, and would run it
+  // twice.
+  const forgetful = capabilitiesReply();
+  delete forgetful.remembered_ids;
+  assert.throws(() => readCapabilities(forgetful), {
+    name: "CapabilitiesMismatch",
+    message: "api/capabilities served no count of remembered ids",
+  });
 });
 
 test("the panel has words for every command the firmware offers", () => {
@@ -198,6 +208,18 @@ test("a stop now says only that it is stopping, whatever was running", () => {
     text: "Stopping…",
     percentage: null,
   });
+});
+
+test("a command that has had no answer yet says the page is trying again", () => {
+  // The machine has not moved, and whoever tapped is standing next to it.
+  // The page is still sending the command, and says that rather than that it
+  // is printing.
+  assert.deepEqual(activity(running({ command: "tag", unanswered: true }), labelMaker()), {
+    text: "No answer yet. Trying again…",
+    percentage: null,
+  });
+  // A stop tapped meanwhile is the end of trying, and the page says that.
+  assert.equal(activity(running({ command: "tag", unanswered: true, stop: "now" }), labelMaker()).text, "Stopping…");
 });
 
 test("a save is offered no stop", () => {

@@ -32,6 +32,10 @@ static const size_t CAPABILITIES_JSON_BYTES = 4096;
 // two more fields.
 static const size_t STATUS_JSON_BYTES = 2048;
 
+// The longest id a request may be sent under: what a UUID takes. The device
+// keeps several at a time, so one is not allowed to be a page of text.
+static const size_t MAX_ID_BYTES = 36;
+
 // The document as the body of a reply. A document that ran out of room has
 // dropped the fields that did not fit without a word, and is not sent short:
 // that is the device failing, and the reply says so instead. Written out
@@ -221,7 +225,24 @@ static bool readCommandRequest(const CommandSpec* spec, const Request& request,
   return true;
 }
 
+// Reads the id a request was sent under, which is empty for one sent under
+// none: an older panel, or anything else that is not going to send it again.
+// Returns false with the reply that refuses it written when the id is too
+// long to keep.
+static bool readId(const Request& request, String* id, Reply* refused) {
+  const std::map<String, String>::const_iterator sent =
+      request.query.find("id");
+  *id = sent != request.query.end() ? sent->second : String();
+  if (id->length() > MAX_ID_BYTES) {
+    *refused = errorReply(
+        400, String("An id may be at most ") + MAX_ID_BYTES + " bytes");
+    return false;
+  }
+  return true;
+}
+
 const size_t Api::MAX_BODY_BYTES;
+const size_t Api::REMEMBERED_IDS;
 
 Api::Api(ETKT* etkt, Logger* logger) {
   this->etkt = etkt;
@@ -287,11 +308,67 @@ Reply Api::route(const Request& request) {
   return errorReply(404, "Not found");
 }
 
-// Every command endpoint. There used to be nine of these, alike down to the
-// catch block, and the differences that mattered -- which fields the body
-// must carry -- were buried in the sameness. The table in ETKT.cpp holds
-// those differences now and this reads them.
+bool Api::recall(const String& id, Reply* reply) {
+  if (id.length() == 0) {
+    return false;
+  }
+  for (const Answer& answer : this->answers) {
+    if (answer.id == id) {
+      *reply = answer.reply;
+      return true;
+    }
+  }
+  return false;
+}
+
+void Api::remember(const String& id, const Reply& reply) {
+  if (id.length() == 0) {
+    return;
+  }
+  Answer& answer = this->answers[this->nextAnswer];
+  answer.id = id;
+  answer.reply = reply;
+  this->nextAnswer = (this->nextAnswer + 1) % REMEMBERED_IDS;
+}
+
+// A request that changes what the machine does, answered once however many
+// times it is sent. On a slow link the reply can be lost after the device
+// did what was asked, and the panel then asks again under the same id: it is
+// told again what it was told, and nothing more is done.
+template <typename AnswerNow>
+Reply Api::once(const Request& request, Keep keep, AnswerNow answerNow) {
+  String id;
+  Reply reply;
+  if (!readId(request, &id, &reply)) {
+    return reply;
+  }
+  // Held from the look to the note, so a request that arrives twice at once
+  // is still answered once.
+  std::lock_guard<std::mutex> guard(this->answersLock);
+  if (this->recall(id, &reply)) {
+    return reply;
+  }
+  reply = answerNow();
+  if (keep == Keep::EVERY_ANSWER || reply.code == 200) {
+    this->remember(id, reply);
+  }
+  return reply;
+}
+
+// Every command endpoint. Only a command the job runner took is kept under
+// its id. One that was refused ran nothing, so sent again it is judged
+// again: the machine may be free by then, and running it is what the press
+// was for.
 Reply Api::command(const CommandSpec* spec, const Request& request) {
+  return this->once(request, Keep::ACCEPTED,
+                    [&] { return this->submit(spec, request); });
+}
+
+// Hands a command to the job runner. There used to be nine of these, alike
+// down to the catch block, and the differences that mattered -- which fields
+// the body must carry -- were buried in the sameness. The table in ETKT.cpp
+// holds those differences now and this reads them.
+Reply Api::submit(const CommandSpec* spec, const Request& request) {
   CommandOptions options;
   Reply refused;
   if (!readCommandRequest(spec, request, &options, &refused)) {
@@ -394,9 +471,17 @@ Reply Api::status(const Request& /*request*/) {
   return jsonReply(200, doc);
 }
 
-// The big red button. What to stop after is in the query string rather than
-// a body, so a stop is one bare POST.
+// The big red button. Every answer to a stop is kept under its id, a refusal
+// too. A stop is for the command that was running when it was pressed, so
+// sent again it must not reach a command that began after.
 Reply Api::stop(const Request& request) {
+  return this->once(request, Keep::EVERY_ANSWER,
+                    [&] { return this->stopRunning(request); });
+}
+
+// Asks the job runner to stop. What to stop after is in the query string
+// rather than a body, so a stop is one bare POST.
+Reply Api::stopRunning(const Request& request) {
   const std::map<String, String>::const_iterator after =
       request.query.find("after");
   const bool afterLabel = after != request.query.end();
@@ -482,6 +567,11 @@ Reply Api::capabilities(const Request& /*request*/) {
   const JsonObject feed = doc.createNestedObject("feed");
   feed["length_um"] = FEED_LENGTH_UM;
   feed["lead"] = LEAD_FEEDS;
+
+  // How many command ids the device keeps, which tells a panel that it keeps
+  // any: one that hears nothing back sends a command again on its own only
+  // to a device that can tell the second from a new one.
+  doc["remembered_ids"] = REMEMBERED_IDS;
 
   // Every command that can actually be asked for -- the same rows route()
   // answers a post for -- by name, with everything its row says. The panel

@@ -37,6 +37,9 @@ export function readCapabilities(response) {
   );
   const feed = response.feed;
   need(feed && Number.isInteger(feed.length_um) && feed.length_um > 0 && Number.isInteger(feed.lead), "feed length");
+  // Not a number the page counts with. That the device keeps any is what lets
+  // the page send a command again without it running twice: see link.js.
+  need(Number.isInteger(response.remembered_ids) && response.remembered_ids > 0, "count of remembered ids");
   const commands = response.commands;
   need(
     commands !== null &&
@@ -181,6 +184,8 @@ export function printingRun(status, device) {
 //               has it, or null
 //   sentCopies  how many labels this page last asked for
 //   offline     whether the page has lost touch with the device
+//   unanswered  whether the command is still on its way and has had no
+//               answer, so the page is sending it again
 
 // What the activity bar says while a command runs, and how far through it
 // is as a whole percentage, or null while there is no number to show.
@@ -199,6 +204,11 @@ export function activity(running, device) {
       // would say nothing about when the run ends.
       percentage = Math.floor(((clamp(run.copy, 1, run.copies) - 1) * 100 + percentage) / run.copies);
     }
+  }
+  // The device has not said it has the command, so the page does not say it
+  // is doing it.
+  if (running.unanswered) {
+    text = "No answer yet. Trying again…";
   }
   if (running.stop === "now") {
     text = "Stopping…";

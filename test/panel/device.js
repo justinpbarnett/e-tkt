@@ -26,6 +26,7 @@ export function running(overrides) {
     stop: null,
     sentCopies: null,
     offline: false,
+    unanswered: false,
     ...overrides,
   };
 }

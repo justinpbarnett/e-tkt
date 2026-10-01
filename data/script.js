@@ -38,6 +38,7 @@ import {
   typedLengthLimit,
   unprintableCharacters,
 } from "./label.js";
+import { deliver, newCommandId } from "./link.js";
 import { plural, quantity, settledCopies, steppedCopies } from "./quantity.js";
 import {
   activity,
@@ -123,6 +124,9 @@ const state = {
   missedPolls: 0,
   // The command whose POST is on its way.
   posting: null,
+  // Set while that command has had no answer, and the page is sending it
+  // again.
+  unanswered: false,
   // A command the device has accepted that no poll has reported on yet.
   // Without it a quick command could come and go between two polls and the
   // page never show it running. With it the page is busy from the moment
@@ -481,9 +485,7 @@ async function retrieveCapabilities() {
     return;
   }
 
-  if (state.problem !== null && state.problem.source === "capabilities") {
-    state.problem = null;
-  }
+  takeDownProblem("capabilities");
   el.input.maxLength = typedLengthLimit(device);
   el.copiesInput.max = device.copies.maximum;
   const disagreement = commandListDisagreement(device);
@@ -757,15 +759,34 @@ async function askEstimate() {
 // Sends one command to the device, by the name the device answers to, which
 // is also the path it posts to. Returns whether the device accepted it; if
 // it did not, the page says why.
-async function send(name, data = {}) {
+//
+// A command that has had no answer is sent again, as deliver() in link.js
+// has it, unless sendAgain is false.
+async function send(name, data = {}, { sendAgain = true } = {}) {
   state.problem = null;
   state.stops.commandStarting();
   state.revealStop = false;
   state.posting = name;
   render();
   let accepted = false;
+  let stop = null;
+  // One id for every try, so a device that took the command, and whose
+  // answer was lost, says so to the next try and does not run it twice.
+  const path = "api/" + name + "?id=" + newCommandId();
+  const post = () => postJson(path, data);
   try {
-    const response = await postJson("api/" + name, data);
+    const response = sendAgain
+      ? await sendUntilAnswered(
+          post,
+          // A stop tapped while the command is still on its way is the end of
+          // trying to send it.
+          () => state.stops.pending(null) === null,
+          () => {
+            state.unanswered = true;
+            render();
+          },
+        )
+      : await post();
     if (response.ok) {
       accepted = true;
       state.pending = { name: name, acceptedAt: performance.now() };
@@ -774,30 +795,47 @@ async function send(name, data = {}) {
       const reason = reply && typeof reply.error === "string" ? reply.error : null;
       console.error("Unable to " + name);
       console.error(reason ?? response.status);
-      state.stops.commandFailed();
+      state.stops.commandRefused();
       showProblem(reason ?? "The label maker refused that, and did not say why (HTTP " + response.status + ").");
     }
   } catch (error) {
     console.error("Unable to " + name);
     console.error(error);
-    state.stops.commandFailed();
-    showProblem("Couldn’t reach the label maker. Check that it’s switched on, then try again.");
+    showProblem("Couldn’t reach the label maker. Check that it’s switched on, then try again.", "command");
+    // The device may have taken the command all the same, with only its
+    // answer lost. A stop tapped meanwhile is still sent.
+    stop = state.stops.commandUnanswered(performance.now());
   } finally {
     state.posting = null;
+    state.unanswered = false;
     render();
   }
   if (accepted) {
     // A stop tapped while the command was on its way, sent now that the
     // device has something to stop.
-    const request = state.stops.takeUnsent();
-    if (request !== null) {
-      postStop(request);
-    }
+    stop = state.stops.takeUnsent(performance.now());
+  }
+  if (stop !== null) {
+    postStop(stop);
+  }
+  if (accepted) {
     // Now rather than on the next tick, so what the device is doing shows as
     // soon as it has started doing it.
     poll();
   }
   return accepted;
+}
+
+// Sends something until the device answers it, as deliver() in link.js has
+// it, on this page's clock.
+function sendUntilAnswered(attempt, wanted, unanswered) {
+  return deliver({
+    attempt: attempt,
+    wanted: wanted,
+    unanswered: unanswered,
+    now: () => performance.now(),
+    pause: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  });
 }
 
 // The run of labels on the form, as it is posted to api/tag, or null while
@@ -849,18 +887,31 @@ function requestStop(kind, row) {
   // Still on its way, the command has nothing to stop yet. send() passes
   // this on once the device has it.
   if (state.posting === null) {
-    postStop(state.stops.takeUnsent());
+    postStop(state.stops.takeUnsent(performance.now()));
   }
 }
 
 async function postStop(request) {
+  // One id for every try. The device keeps what it answered under it, so a
+  // stop that got through, and whose answer was lost, cannot land a second
+  // time on whatever the machine does next.
+  const path = "api/stop?" + (request.kind === "now" ? "" : "after=label&") + "id=" + newCommandId();
   try {
     // A stop is no use late, so the device is given less time than usual
-    // to answer one before the page says it cannot get through.
-    const response = await fetchWithTimeout(request.kind === "now" ? "api/stop" : "api/stop?after=label", {
-      method: "POST",
-      timeout: 5000,
-    });
+    // to answer one before the page says it has not got through. The page
+    // goes on trying after that, for as long as the stop is still wanted.
+    const response = await sendUntilAnswered(
+      () => fetchWithTimeout(path, { method: "POST", timeout: 5000 }),
+      () => state.stops.wanted(request),
+      () => {
+        const problem = state.stops.unanswered(request);
+        if (problem !== null) {
+          showProblem(problem, "stop");
+          render();
+        }
+      },
+    );
+    takeDownProblem("stop");
     const problem = state.stops.answered(request, response, await readJson(response), performance.now());
     if (problem !== null) {
       console.error("Unable to stop");
@@ -870,6 +921,7 @@ async function postStop(request) {
   } catch (error) {
     console.error("Unable to stop");
     console.error(error);
+    takeDownProblem("stop");
     const problem = state.stops.unreachable(request);
     if (problem !== null) {
       showProblem(problem);
@@ -1005,7 +1057,10 @@ async function settingsCommand() {
     console.error("Cannot save: align/force not loaded from the device yet");
     return;
   }
-  if (!(await send("save", fields))) {
+  // Sent once. A save ends in a restart, and a restart is the end of the ids
+  // the device kept: sent again after it, the save would run again and
+  // restart the device again.
+  if (!(await send("save", fields, { sendAgain: false }))) {
     return;
   }
   state.restarting = true;
@@ -1167,6 +1222,16 @@ function applyStatus(status, requestedAt) {
     state.pending = null;
   }
   state.stops.statusArrived(status, requestedAt);
+  // A stop the page was still trying to get through is over once the device
+  // has nothing left to stop, and so is what the page said about trying.
+  if (state.stops.pending(null) === null) {
+    takeDownProblem("stop");
+  }
+  // A command the page gave up on, and said it could not get through, did
+  // get through if the device is now running something.
+  if (status.busy) {
+    takeDownProblem("command");
+  }
   state.calibration.statusArrived(status, state.view === "setup");
 }
 
@@ -1200,6 +1265,7 @@ function render() {
     stop: state.stops.pending(state.status),
     sentCopies: state.sentCopies,
     offline: offline,
+    unanswered: state.unanswered,
   };
   const offer = busy ? stopOffer(running, device) : null;
   // Read before anything is disabled or hidden: either can take focus away,
@@ -1444,6 +1510,13 @@ function renderProblems() {
 // that same thing goes right.
 function showProblem(message, source = null) {
   state.problem = { view: state.view, message: message, source: source };
+}
+
+// Takes down the problem that source raised, if it is the one showing.
+function takeDownProblem(source) {
+  if (state.problem !== null && state.problem.source === source) {
+    state.problem = null;
+  }
 }
 
 function dismissProblem() {

@@ -72,6 +72,30 @@ static Reply postStop(const char* after) {
   return api->handle(request);
 }
 
+// A command sent under an id, the way the panel sends one it may have to send
+// again: the id rides in the query string, beside the body.
+static Reply postUnder(const char* id, const char* path, const char* body) {
+  Request request;
+  request.method = Method::POST;
+  request.path = path;
+  request.query["id"] = id;
+  request.contentType = "application/json";
+  request.body = body;
+  return api->handle(request);
+}
+
+// A stop sent under an id.
+static Reply postStopUnder(const char* id, const char* after) {
+  Request request;
+  request.method = Method::POST;
+  request.path = "/api/stop";
+  request.query["id"] = id;
+  if (after != NULL) {
+    request.query["after"] = after;
+  }
+  return api->handle(request);
+}
+
 // What the job runner has in hand, which the Api's word alone does not prove.
 static Command running(void) {
   return machine->etkt.createStatus().currentCommand;
@@ -943,6 +967,151 @@ void test_a_stop_asked_for_with_get_is_told_to_post(void) {
   TEST_ASSERT_TRUE(machine->etkt.createStatus().stop == PendingStop::NONE);
 }
 
+// --- ids --------------------------------------------------------------------
+
+// On a slow link the reply to a command can be lost after the device took
+// the command, and the panel then sends it again. Sent under the id the
+// first was accepted under, it is the same press of the button: the device
+// says again that it took it, and runs nothing more.
+void test_a_command_sent_again_under_its_id_does_not_run_twice(void) {
+  TEST_ASSERT_EQUAL_INT(200, postUnder("press-1", "/api/cut", "{}").code);
+  machine->etkt.loop();
+  TEST_ASSERT_EQUAL_INT((int)Command::IDLE, (int)running());
+
+  const Reply again = postUnder("press-1", "/api/cut", "{}");
+
+  TEST_ASSERT_EQUAL_INT(200, again.code);
+  TEST_ASSERT_EQUAL_STRING("success", json(again)["result"].as<const char*>());
+  TEST_ASSERT_EQUAL_INT((int)Command::IDLE, (int)running());
+}
+
+// A new press of the same button is a new id, and runs again.
+void test_a_command_under_a_new_id_runs_again(void) {
+  postUnder("press-1", "/api/cut", "{}");
+  machine->etkt.loop();
+
+  const Reply reply = postUnder("press-2", "/api/cut", "{}");
+
+  TEST_ASSERT_EQUAL_INT(200, reply.code);
+  TEST_ASSERT_EQUAL_INT((int)Command::CUT, (int)running());
+}
+
+// A panel from before there were ids sends none, and so does curl. Each
+// command sent that way is its own, as it always was.
+void test_a_command_under_no_id_runs_each_time_it_is_sent(void) {
+  post("/api/cut", "{}");
+  machine->etkt.loop();
+
+  const Reply reply = post("/api/cut", "{}");
+
+  TEST_ASSERT_EQUAL_INT(200, reply.code);
+  TEST_ASSERT_EQUAL_INT((int)Command::CUT, (int)running());
+}
+
+// A command the device refused ran nothing, so its id is not kept: sent
+// again once the machine is free, it runs, which is what the press was for.
+void test_a_command_that_was_refused_runs_when_it_is_sent_again(void) {
+  post("/api/cut", "{}");
+  TEST_ASSERT_EQUAL_INT(409, postUnder("press-1", "/api/feed", "{}").code);
+  machine->etkt.loop();
+
+  const Reply again = postUnder("press-1", "/api/feed", "{}");
+
+  TEST_ASSERT_EQUAL_INT(200, again.code);
+  TEST_ASSERT_EQUAL_INT((int)Command::FEED, (int)running());
+}
+
+// A stop is for the command that was running when it was pressed. Sent
+// again after that command has ended and another has begun, it is told what
+// it was told the first time, and the new command runs on.
+void test_a_stop_sent_again_does_not_stop_the_next_command(void) {
+  post("/api/tag", "{\"tag\":\"AB\",\"copies\":3}");
+  TEST_ASSERT_EQUAL_STRING(
+      "stopping",
+      json(postStopUnder("stop-1", NULL))["result"].as<const char*>());
+  machine->etkt.loop();
+  post("/api/tag", "{\"tag\":\"AB\",\"copies\":3}");
+
+  const Reply again = postStopUnder("stop-1", NULL);
+
+  TEST_ASSERT_EQUAL_INT(200, again.code);
+  TEST_ASSERT_EQUAL_STRING("stopping", json(again)["result"].as<const char*>());
+  TEST_ASSERT_EQUAL_INT((int)Command::TAG, (int)running());
+  TEST_ASSERT_TRUE(machine->etkt.createStatus().stop == PendingStop::NONE);
+}
+
+// A stop that found nothing running is kept as well, unlike a command that
+// was refused: sent again, it must not stop a command that began after the
+// press.
+void test_a_stop_that_found_nothing_running_is_remembered_too(void) {
+  TEST_ASSERT_EQUAL_STRING(
+      "idle", json(postStopUnder("stop-1", NULL))["result"].as<const char*>());
+  post("/api/tag", "{\"tag\":\"AB\",\"copies\":3}");
+
+  const Reply again = postStopUnder("stop-1", NULL);
+
+  TEST_ASSERT_EQUAL_STRING("idle", json(again)["result"].as<const char*>());
+  TEST_ASSERT_TRUE(machine->etkt.createStatus().stop == PendingStop::NONE);
+}
+
+// An id is a few characters the panel makes up, and the device keeps eight
+// of them. One longer than a UUID is refused rather than kept, and nothing
+// runs.
+void test_an_id_too_long_to_keep_is_refused(void) {
+  const Reply command = postUnder("1234567890123456789012345678901234567",
+                                  "/api/cut", "{}");
+
+  TEST_ASSERT_EQUAL_INT(400, command.code);
+  TEST_ASSERT_EQUAL_STRING("An id may be at most 36 bytes", errorOf(command));
+  TEST_ASSERT_EQUAL_INT((int)Command::IDLE, (int)running());
+
+  post("/api/tag", "{\"tag\":\"AB\",\"copies\":3}");
+  const Reply stop =
+      postStopUnder("1234567890123456789012345678901234567", NULL);
+
+  TEST_ASSERT_EQUAL_INT(400, stop.code);
+  TEST_ASSERT_EQUAL_STRING("An id may be at most 36 bytes", errorOf(stop));
+  TEST_ASSERT_TRUE(machine->etkt.createStatus().stop == PendingStop::NONE);
+}
+
+// The longest id the device takes is as long as a UUID.
+void test_an_id_as_long_as_a_uuid_is_kept(void) {
+  const char* id = "123e4567-e89b-12d3-a456-426614174000";
+  TEST_ASSERT_EQUAL_INT(200, postUnder(id, "/api/cut", "{}").code);
+  machine->etkt.loop();
+
+  postUnder(id, "/api/cut", "{}");
+
+  TEST_ASSERT_EQUAL_INT((int)Command::IDLE, (int)running());
+}
+
+// The device keeps the newest eight ids. The ninth pushes out the first,
+// which by then is far older than any panel still sends.
+void test_the_newest_eight_ids_are_remembered(void) {
+  const char* ids[] = {"1", "2", "3", "4", "5", "6", "7", "8", "9"};
+  for (const char* id : ids) {
+    TEST_ASSERT_EQUAL_INT_MESSAGE(200, postUnder(id, "/api/cut", "{}").code,
+                                  id);
+    machine->etkt.loop();
+  }
+
+  postUnder("2", "/api/cut", "{}");
+  TEST_ASSERT_EQUAL_INT((int)Command::IDLE, (int)running());
+  postUnder("9", "/api/cut", "{}");
+  TEST_ASSERT_EQUAL_INT((int)Command::IDLE, (int)running());
+
+  postUnder("1", "/api/cut", "{}");
+  TEST_ASSERT_EQUAL_INT((int)Command::CUT, (int)running());
+}
+
+// How many ids the device keeps, which tells a panel that it keeps any: a
+// panel sends a command again on its own only to a device that says so.
+void test_the_capabilities_say_how_many_ids_are_remembered(void) {
+  const JsonObject capabilities = json(get("/api/capabilities"));
+
+  TEST_ASSERT_EQUAL_INT(8, capabilities["remembered_ids"].as<int>());
+}
+
 // --- log --------------------------------------------------------------------
 
 // The log is read, never written, so a post to it is told to get.
@@ -1101,6 +1270,16 @@ int main(int, char**) {
   RUN_TEST(test_a_stop_of_what_cannot_be_stopped_is_refused_as_a_conflict);
   RUN_TEST(test_only_a_run_of_labels_can_stop_after_a_label);
   RUN_TEST(test_a_stop_asked_for_with_get_is_told_to_post);
+  RUN_TEST(test_a_command_sent_again_under_its_id_does_not_run_twice);
+  RUN_TEST(test_a_command_under_a_new_id_runs_again);
+  RUN_TEST(test_a_command_under_no_id_runs_each_time_it_is_sent);
+  RUN_TEST(test_a_command_that_was_refused_runs_when_it_is_sent_again);
+  RUN_TEST(test_a_stop_sent_again_does_not_stop_the_next_command);
+  RUN_TEST(test_a_stop_that_found_nothing_running_is_remembered_too);
+  RUN_TEST(test_an_id_too_long_to_keep_is_refused);
+  RUN_TEST(test_an_id_as_long_as_a_uuid_is_kept);
+  RUN_TEST(test_the_newest_eight_ids_are_remembered);
+  RUN_TEST(test_the_capabilities_say_how_many_ids_are_remembered);
   RUN_TEST(test_the_log_is_what_the_machine_logged_as_plain_text);
   RUN_TEST(test_the_log_posted_to_is_told_to_get);
   RUN_TEST(test_a_run_is_estimated_from_the_body_that_would_send_it);

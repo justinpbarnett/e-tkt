@@ -25,6 +25,7 @@
     "length_um": 3700,
     "lead": 1
   },
+  "remembered_ids": 8,
   "commands": {
     "cut": {
       "uses_align": false,

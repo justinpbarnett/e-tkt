@@ -3,6 +3,7 @@
 #include <Arduino.h>
 
 #include <map>
+#include <mutex>
 
 #include "ETKT.h"
 #include "Logger.h"
@@ -22,7 +23,8 @@ struct Request {
   // The path alone, "/api/status", without the query string.
   String path;
 
-  // The query string's parameters, decoded. Only /api/stop reads one.
+  // The query string's parameters, decoded: the id a command or a stop is
+  // sent under, and what a stop is to wait for.
   std::map<String, String> query;
 
   // The Content-Type header, or empty if the request had none.
@@ -65,6 +67,43 @@ class Api {
   ETKT* etkt;
   Logger* logger;
 
+  // How many command ids the device remembers. A panel sends one command at
+  // a time and gives up on it within seconds, so only the newest few can
+  // come again; eight leaves room for several panels at once.
+  static const size_t REMEMBERED_IDS = 8;
+
+  // A request sent under an id, and what the device answered it.
+  struct Answer {
+    String id;
+    Reply reply;
+  };
+
+  // The newest answers, the oldest written over first. Kept in RAM alone, so
+  // a restart forgets them: a command sent again across one runs again,
+  // which takes a reply lost and a restart within the few seconds a panel
+  // keeps trying.
+  Answer answers[REMEMBERED_IDS] = {};
+  size_t nextAnswer = 0;
+  std::mutex answersLock;
+
+  // What the request sent under this id was answered, written through.
+  // False if the device remembers none: the id is new, or older than the
+  // ones it keeps, or the request was sent under none.
+  bool recall(const String& id, Reply* reply);
+
+  // Keeps the answer to the request sent under this id, and nothing for a
+  // request sent under none.
+  void remember(const String& id, const Reply& reply);
+
+  // Which answers to a request sent under an id are kept: the ones that
+  // took it, or every one, a refusal too.
+  enum class Keep { ACCEPTED, EVERY_ANSWER };
+
+  // What a request sent under an id was answered the first time, or what
+  // answerNow() says to it, kept for when it is sent again.
+  template <typename AnswerNow>
+  Reply once(const Request& request, Keep keep, AnswerNow answerNow);
+
   // Which route a request is for, and that route's answer to it.
   Reply route(const Request& request);
 
@@ -72,9 +111,11 @@ class Api {
   // already matched. The routes that are not commands are a table in route(),
   // so each takes the request whether it reads it or not.
   Reply command(const CommandSpec* spec, const Request& request);
+  Reply submit(const CommandSpec* spec, const Request& request);
   Reply estimate(const CommandSpec* spec, const Request& request);
   Reply status(const Request& request);
   Reply stop(const Request& request);
+  Reply stopRunning(const Request& request);
   Reply capabilities(const Request& request);
   Reply log(const Request& request);
 

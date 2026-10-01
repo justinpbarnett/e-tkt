@@ -285,6 +285,18 @@ class Jobs(RelayTestCase):
             {"error": "The printer is already busy executing a command."},
             await response.json())
 
+    async def test_a_command_sent_again_under_its_id_is_not_run_again(self):
+        # The panel sends a command again when it hears nothing back, under
+        # the id it sent it under the first time, which is in the query. If
+        # the id did not reach the Api, the second of these would be refused,
+        # the machine being busy with the first.
+        for _ in range(2):
+            response = await self.client.post(
+                "/api/tag?id=3f9a0c5d7e21b684",
+                json={"tag": " HELLO ", "copies": 500})
+            self.assertEqual(200, response.status)
+            self.assertEqual({"result": "success"}, await response.json())
+
     async def test_requests_that_arrive_together_each_get_their_own_reply(
             self):
         # The panel polls while a click is on its way, and two browsers can
