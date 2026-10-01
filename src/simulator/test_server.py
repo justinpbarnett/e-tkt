@@ -234,11 +234,12 @@ class Replies(RelayTestCase):
 
 class Jobs(RelayTestCase):
     async def test_a_run_of_labels_is_pressed_off_the_roll(self):
-        # Three labels of " HELLO " take 32 mm each off a roll that starts
-        # at 3000 mm, and the device counts it off as it feeds.
+        # Three labels of " HELLO " take 8 feeds of 3.7 mm each, 88.8 mm in
+        # all, off a roll that starts at 3000 mm. The device counts it off
+        # as it feeds, in whole millimetres.
         await self.press(" HELLO ", copies=3)
         status = await self.until_idle()
-        self.assertEqual({"length_mm": 3000, "remaining_mm": 2904},
+        self.assertEqual({"length_mm": 3000, "remaining_mm": 2912},
                          status["roll"])
 
     async def test_a_label_takes_the_time_it_takes_on_the_machine(self):
