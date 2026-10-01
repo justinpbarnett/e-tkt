@@ -82,7 +82,7 @@ void test_a_submitted_feed_runs_and_the_machine_goes_idle(void) {
 
   const StatusUpdate status = etkt->createStatus();
   TEST_ASSERT_EQUAL_INT(Command::IDLE, status.currentCommand);
-  // One feed is 4 mm off the roll, and the panel's tape gauge reads it here.
+  // One feed comes off the roll, and the panel's tape gauge reads it here.
   TEST_ASSERT_EQUAL_UINT32(1, status.roll.feedsUsed);
 }
 

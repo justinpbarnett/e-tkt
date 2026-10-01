@@ -5,7 +5,7 @@ import { quantity, settledCopies, steppedCopies } from "../../data/quantity.js";
 import { labelMaker } from "./device.js";
 
 // The quantity options as a person has left them, for a label of 9
-// characters as sent on a full 3 m roll: 40 mm a label, so 75 fit.
+// characters as sent on a full 3 m roll: 37 mm a label, so 81 fit.
 function choice(changes) {
   return { mode: "one", copiesText: "2", labelLength: 9, tapeLeftMm: 3000, ...changes };
 }
@@ -34,13 +34,13 @@ test("the Multiple option prints the count typed, once it is one the device take
 });
 
 test("the Max option prints the labels that fit, up to the most one run prints", () => {
-  // 75 of a 9-character label fit on 3 m. 1250 of a 1-character label fit
+  // 81 of a 9-character label fit on 3 m. 1351 of a 1-character label fit
   // on 10 m, and one run prints 500. With no label to measure, or no roll
   // to measure it against, there is no number to print.
   const device = labelMaker();
   const max = (changes) => quantity(choice({ mode: "max", ...changes }), device);
-  assert.equal(max({}).copies, 75);
-  assert.equal(max({}).printText, "Print 75 labels");
+  assert.equal(max({}).copies, 81);
+  assert.equal(max({}).printText, "Print 81 labels");
   assert.equal(max({ labelLength: 1, tapeLeftMm: 10000 }).copies, 500);
   assert.equal(max({ tapeLeftMm: 40 }).copies, 1);
   assert.equal(max({ tapeLeftMm: 40 }).printText, "Print label");
@@ -58,7 +58,8 @@ test("the Max option goes back to One when there is nothing to print to the end 
   const spentRolls = [
     max({ tapeLeftMm: 0 }),
     max({ tapeLeftMm: 0, labelLength: null }),
-    max({ tapeLeftMm: 31, labelLength: 7 }),
+    // A 7-character label takes 29.6 mm, so 29 mm is not one of them.
+    max({ tapeLeftMm: 29, labelLength: 7 }),
   ];
   for (const spent of spentRolls) {
     assert.equal(spent.mode, "one");
@@ -129,10 +130,10 @@ test("the quantity note says how much tape is left while there is no label to me
 });
 
 test("the quantity note warns when not even one of the label fits", () => {
-  // A 7-character label takes 32 mm, and 31 mm is left.
-  const short = quantity(choice({ labelLength: 7, tapeLeftMm: 31 }), labelMaker()).note;
+  // A 7-character label takes 29.6 mm, and 29 mm is left.
+  const short = quantity(choice({ labelLength: 7, tapeLeftMm: 29 }), labelMaker()).note;
   assert.deepEqual(short, {
-    text: "Only 31 mm left, not enough for a label this long.\nLoad a new roll in Setup.",
+    text: "Only 29 mm left, not enough for a label this long.\nLoad a new roll in Setup.",
     tone: "warning",
   });
 });
@@ -140,7 +141,7 @@ test("the quantity note warns when not even one of the label fits", () => {
 test("with One picked, the quantity note says about how many of the label fit", () => {
   const device = labelMaker();
   assert.deepEqual(quantity(choice({}), device).note, {
-    text: "About 75 labels this long fit on the 3 m left.",
+    text: "About 81 labels this long fit on the 3 m left.",
     tone: null,
   });
   assert.deepEqual(quantity(choice({ tapeLeftMm: 40 }), device).note, {
@@ -150,19 +151,19 @@ test("with One picked, the quantity note says about how many of the label fit", 
 });
 
 test("with Multiple picked, the quantity note says what the run takes, or why it cannot be printed", () => {
-  // 12 labels of 40 mm are 480 mm, and two of a 6-character label, 28 mm
-  // each, are 56 mm. More than fit is a warning, not a refusal: the tape on
+  // 12 labels of 37 mm are 444 mm, and two of a 6-character label, 25.9 mm
+  // each, are 51.8 mm. More than fit is a warning, not a refusal: the tape on
   // the spool is the better judge of what is left.
   const device = labelMaker();
   const multiple = (changes) => quantity(choice({ mode: "multiple", ...changes }), device).note;
-  assert.deepEqual(multiple({ copiesText: "12" }), { text: "Uses about 480 mm of the 3 m left.", tone: null });
+  assert.deepEqual(multiple({ copiesText: "12" }), { text: "Uses about 444 mm of the 3 m left.", tone: null });
   assert.deepEqual(multiple({ copiesText: "2", labelLength: 6 }), {
-    text: "Uses about 56 mm of the 3 m left.",
+    text: "Uses about 51 mm of the 3 m left.",
     tone: null,
   });
   assert.deepEqual(multiple({ copiesText: "1" }), { text: "Enter a number from 2 to 500.", tone: "warning" });
-  assert.deepEqual(multiple({ copiesText: "75" }), { text: "Uses about 3 m of the 3 m left.", tone: null });
-  assert.deepEqual(multiple({ copiesText: "76" }), { text: "Only about 75 fit on the 3 m left.", tone: "warning" });
+  assert.deepEqual(multiple({ copiesText: "81" }), { text: "Uses about 2.99 m of the 3 m left.", tone: null });
+  assert.deepEqual(multiple({ copiesText: "82" }), { text: "Only about 81 fit on the 3 m left.", tone: "warning" });
   assert.deepEqual(multiple({ copiesText: "2", tapeLeftMm: 40 }), {
     text: "Only about 1 fits on the 40 mm left.",
     tone: "warning",
@@ -170,17 +171,18 @@ test("with Multiple picked, the quantity note says what the run takes, or why it
 });
 
 test("with Max picked, the quantity note says how many that is, and when a run cannot hold them all", () => {
-  // 1250 of a 1-character label fit on 10 m, and one run prints 500.
+  // 500 single-letter labels take 3700 mm, so that roll ends on the copy
+  // limit. 1351 fit on 10 m, and one run prints 500 of them.
   const device = labelMaker();
   const max = (changes) => quantity(choice({ mode: "max", ...changes }), device).note;
-  assert.deepEqual(max({}), { text: "75 labels, to the end of the roll.", tone: null });
+  assert.deepEqual(max({}), { text: "81 labels, to the end of the roll.", tone: null });
   assert.deepEqual(max({ tapeLeftMm: 40 }), { text: "1 label, to the end of the roll.", tone: null });
-  assert.deepEqual(max({ labelLength: 1, tapeLeftMm: 4000 }), {
+  assert.deepEqual(max({ labelLength: 1, tapeLeftMm: 3700 }), {
     text: "500 labels, to the end of the roll.",
     tone: null,
   });
   assert.deepEqual(max({ labelLength: 1, tapeLeftMm: 10000 }), {
-    text: "500 labels, the most one run prints. About 1250 fit.",
+    text: "500 labels, the most one run prints. About 1351 fit.",
     tone: null,
   });
 });

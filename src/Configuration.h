@@ -146,14 +146,15 @@ constexpr int MAX_LABEL_CHARACTERS = 249;
  */
 
 // How far one feed moves the tape, in micrometres. A feed is an eighth of a
-// turn of the feed motor (see Feeder::feed), and 4 mm is what that eighth
-// pulls through the feed cog on this design -- the same figure the panel has
-// always used for a label's length.
+// turn of the feed motor (see Feeder::feed). Measured on a 3 m roll of
+// " FORGIVEN " with a space on each side, which is 11 feeds a label: at
+// 4.0 mm a feed that roll was counted five labels short of what it held.
+// 3.7 mm a feed is that roll, 73 labels.
 //
 // Micrometres so a measured correction can be finer than a whole millimetre.
-// A 3 m roll is 750 feeds, so a tenth of a millimetre out on each one adds
-// up to 75 mm -- two labels -- by the end of the roll.
-constexpr int FEED_LENGTH_UM = 4000;
+// A 3 m roll is about 810 feeds at this length, so a tenth of a millimetre
+// out on each one adds up to about 80 mm, two labels, by the end of the roll.
+constexpr int FEED_LENGTH_UM = 3700;
 
 // What a roll is assumed to hold until somebody says otherwise. A device
 // starts on a roll this long, and a roll loaded without a length is taken to
@@ -170,8 +171,49 @@ constexpr int ROLL_LENGTH_MIN_MM = 500;
 constexpr int ROLL_LENGTH_MAX_MM = 10000;
 
 // The most labels one request may ask for. Not a limit anyone should meet --
-// the panel's shortest label takes 28 mm of tape, so even the longest roll
-// above holds only 357 -- but without one, a number POSTed straight at
+// the panel's shortest label takes 25.9 mm of tape, so even the longest roll
+// above holds only 386 -- but without one, a number POSTed straight at
 // /api/tag could keep the machine pressing air for days after the tape ran
 // out.
 constexpr int MAX_COPIES = 500;
+
+/**
+ * Wi-Fi
+ *
+ * The radio at a machine can be weak enough that a join takes minutes,
+ * and most tries die in a handshake timeout. One ten-second try, then a
+ * portal that never goes back to the saved network, is how the panel
+ * used to stay dark. The machine keeps trying the saved network for as
+ * long as it takes. The setup portal opens beside that only when there
+ * is no saved network, or when a minute has passed with none joined.
+ */
+
+// How long to wait after a failed try before the next one. Long enough
+// that the stack has finished the disconnect, short enough that a run
+// of handshake timeouts still joins in the minutes this spot takes.
+constexpr uint32_t WIFI_RETRY_MS = 3000;
+
+// While a phone is on the setup portal, tries are this far apart. A
+// closer retry takes the radio the phone's page needs, and a phone that
+// stays on E-TKT would keep the saved network from winning.
+constexpr uint32_t WIFI_RETRY_WHILE_SETUP_MS = 30000;
+
+// A try that never ends, because no disconnect event arrives, is
+// abandoned after this and started again. A try that is going to fail
+// does it well inside this.
+constexpr uint32_t WIFI_TRY_MS = 30000;
+
+// How long an association may sit without an address before it is
+// dropped and the join starts again. A measured DHCP on this link took
+// 51 s and then worked, so the cap sits well past that. The ordinary
+// try cap above is shorter, and applying it here would abandon a join
+// that is about to succeed.
+constexpr uint32_t WIFI_DHCP_MS = 120000;
+
+// How long to try the saved network on its own before the setup portal
+// opens beside it. With nothing saved, the portal opens at once.
+constexpr uint32_t WIFI_SETUP_AFTER_MS = 60000;
+
+// How often, while still offline, to say that the join is still going.
+// The log keeps 32 lines, so this is a summary and not one line a try.
+constexpr uint32_t WIFI_REPORT_MS = 60000;

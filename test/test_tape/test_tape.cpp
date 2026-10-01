@@ -6,6 +6,7 @@
 // label early or runs one off the end. Run with:  pio test -e native
 #include <unity.h>
 
+#include <cmath>
 #include <fstream>
 #include <iterator>
 #include <string>
@@ -68,12 +69,17 @@ void test_each_label_takes_the_feeds_the_cases_say(void) {
   for (JsonObject label : cases("labels")) {
     const char* why = label["case"];
     const int characters = number(label, "characters");
+    const int feeds = number(label, "feeds");
     TEST_ASSERT_EQUAL_INT_MESSAGE(number(label, "top_up"),
                                   topUpFeeds(characters), why);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(number(label, "feeds"),
-                                  labelFeeds(characters), why);
-    TEST_ASSERT_EQUAL_INT64_MESSAGE(number(label, "mm"),
-                                    tapeUsedMm(labelFeeds(characters)), why);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(feeds, labelFeeds(characters), why);
+    // mm is the length to a tenth of a millimetre, the same product the
+    // panel shows. The gauge rounds it down to a whole millimetre.
+    TEST_ASSERT_TRUE_MESSAGE(label["mm"].is<int>() || label["mm"].is<float>(),
+                             why);
+    const long long um = std::llround(label["mm"].as<double>() * 1000.0);
+    TEST_ASSERT_EQUAL_INT64_MESSAGE((long long)feeds * FEED_LENGTH_UM, um, why);
+    TEST_ASSERT_EQUAL_INT64_MESSAGE(um / 1000, tapeUsedMm(feeds), why);
   }
 }
 
@@ -91,7 +97,14 @@ void test_the_tape_left_fits_the_labels_the_cases_say(void) {
 void test_each_feed_uses_the_configured_length(void) {
   TEST_ASSERT_EQUAL_INT64(0, tapeUsedMm(0));
   TEST_ASSERT_EQUAL_INT64(FEED_LENGTH_UM / 1000, tapeUsedMm(1));
-  TEST_ASSERT_EQUAL_INT64(3000, tapeUsedMm(3000000 / FEED_LENGTH_UM));
+  // The first feed count whose product reads as a whole 3 m, and one fewer,
+  // which is still short of it. A feed length that does not divide 3 m
+  // leaves a fraction of a millimetre on the count that fits inside
+  // 3,000,000 µm, so that count is not itself the one that reads as 3000.
+  const long long reaches =
+      (3000LL * 1000 + FEED_LENGTH_UM - 1) / FEED_LENGTH_UM;
+  TEST_ASSERT_EQUAL_INT64(3000, tapeUsedMm(reaches));
+  TEST_ASSERT_TRUE(tapeUsedMm(reaches - 1) < 3000);
 }
 
 void test_negative_feeds_use_nothing(void) {
@@ -112,7 +125,11 @@ void test_what_is_left_is_the_roll_less_what_was_fed(void) {
 }
 
 void test_an_overrun_roll_reads_empty_not_negative(void) {
-  const long long feedsInARoll = 3000LL * 1000 / FEED_LENGTH_UM;
+  // The first feed count that reaches the roll. One short of it still has
+  // some tape left; past it the estimate stays empty rather than owing tape.
+  const long long feedsInARoll =
+      (3000LL * 1000 + FEED_LENGTH_UM - 1) / FEED_LENGTH_UM;
+  TEST_ASSERT_TRUE(remainingMm(3000, feedsInARoll - 1) > 0);
   TEST_ASSERT_EQUAL_INT64(0, remainingMm(3000, feedsInARoll));
   TEST_ASSERT_EQUAL_INT64(0, remainingMm(3000, feedsInARoll + 40));
 }

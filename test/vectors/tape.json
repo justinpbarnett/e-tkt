@@ -1,24 +1,26 @@
 {
-  "about": "How much tape a label takes, worked by hand for the label maker in device, as /api/capabilities serves it. The firmware and the panel each do these sums, in src/Tape.h and data/tape.js, and test/test_tape/test_tape.cpp and test/panel/tape.test.js hold both to these cases.",
-  "device": { "label": { "minimum": 6, "maximum": 249 }, "feed": { "lead": 1, "length_um": 4000 } },
+  "about": "How much tape a label takes, worked by hand for the label maker in device, as /api/capabilities serves it. The firmware and the panel each do these sums, in src/Tape.h and data/tape.js, and test/test_tape/test_tape.cpp and test/panel/tape.test.js hold both to these cases. mm is that length to a tenth of a millimetre. The device's gauge rounds the same product down to a whole millimetre.",
+  "device": { "label": { "minimum": 6, "maximum": 249 }, "feed": { "lead": 1, "length_um": 3700 } },
   "labels": [
-    { "case": "the shortest label the panel sends is the minimum", "characters": 6, "top_up": 0, "feeds": 7, "mm": 28 },
-    { "case": "a label is the lead and a feed per character", "characters": 30, "top_up": 0, "feeds": 31, "mm": 124 },
-    { "case": "the longest label a request may carry", "characters": 249, "top_up": 0, "feeds": 250, "mm": 1000 },
-    { "case": "a short label is topped up to the minimum", "characters": 3, "top_up": 3, "feeds": 7, "mm": 28 },
-    { "case": "a label one short of the minimum", "characters": 5, "top_up": 1, "feeds": 7, "mm": 28 },
-    { "case": "a single letter is left short", "characters": 1, "top_up": 0, "feeds": 2, "mm": 8 },
-    { "case": "an empty label still feeds a whole minimum", "characters": 0, "top_up": 6, "feeds": 7, "mm": 28 },
-    { "case": "a negative length feeds as an empty label", "characters": -4, "top_up": 6, "feeds": 7, "mm": 28 }
+    { "case": "the shortest label the panel sends is the minimum", "characters": 6, "top_up": 0, "feeds": 7, "mm": 25.9 },
+    { "case": "a label is the lead and a feed per character", "characters": 30, "top_up": 0, "feeds": 31, "mm": 114.7 },
+    { "case": "the longest label a request may carry", "characters": 249, "top_up": 0, "feeds": 250, "mm": 925 },
+    { "case": "a short label is topped up to the minimum", "characters": 3, "top_up": 3, "feeds": 7, "mm": 25.9 },
+    { "case": "a label one short of the minimum", "characters": 5, "top_up": 1, "feeds": 7, "mm": 25.9 },
+    { "case": "a single letter is left short", "characters": 1, "top_up": 0, "feeds": 2, "mm": 7.4 },
+    { "case": "FORGIVEN with a space on each side", "characters": 10, "top_up": 0, "feeds": 11, "mm": 40.7 },
+    { "case": "an empty label still feeds a whole minimum", "characters": 0, "top_up": 6, "feeds": 7, "mm": 25.9 },
+    { "case": "a negative length feeds as an empty label", "characters": -4, "top_up": 6, "feeds": 7, "mm": 25.9 }
   ],
   "fit": [
-    { "case": "3 m holds 107.1 of the panel's shortest label", "left_mm": 3000, "characters": 6, "labels": 107 },
-    { "case": "3 m holds 93.75 labels of 7 characters, not 94", "left_mm": 3000, "characters": 7, "labels": 93 },
-    { "case": "3 m of short labels, each topped up to the minimum", "left_mm": 3000, "characters": 3, "labels": 107 },
-    { "case": "3 m of single letters, each left short", "left_mm": 3000, "characters": 1, "labels": 375 },
-    { "case": "10 m holds 357.1 of the panel's shortest label", "left_mm": 10000, "characters": 6, "labels": 357 },
-    { "case": "exactly one label left fits one", "left_mm": 28, "characters": 6, "labels": 1 },
-    { "case": "a millimetre short of one label fits none", "left_mm": 27, "characters": 6, "labels": 0 },
+    { "case": "3 m holds 115.8 of the panel's shortest label", "left_mm": 3000, "characters": 6, "labels": 115 },
+    { "case": "3 m holds 101.3 labels of 7 characters, not 102", "left_mm": 3000, "characters": 7, "labels": 101 },
+    { "case": "3 m of short labels, each topped up to the minimum", "left_mm": 3000, "characters": 3, "labels": 115 },
+    { "case": "3 m of single letters, each left short", "left_mm": 3000, "characters": 1, "labels": 405 },
+    { "case": "3 m of FORGIVEN with a space on each side holds 73", "left_mm": 3000, "characters": 10, "labels": 73 },
+    { "case": "10 m holds 386.1 of the panel's shortest label", "left_mm": 10000, "characters": 6, "labels": 386 },
+    { "case": "exactly one label left fits one", "left_mm": 26, "characters": 6, "labels": 1 },
+    { "case": "a millimetre short of one label fits none", "left_mm": 25, "characters": 6, "labels": 0 },
     { "case": "an empty roll fits nothing", "left_mm": 0, "characters": 6, "labels": 0 },
     { "case": "less than nothing left fits nothing", "left_mm": -10, "characters": 6, "labels": 0 }
   ]

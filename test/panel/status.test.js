@@ -19,7 +19,7 @@ test("the label maker's capabilities read as the numbers the panel works from", 
   assert.equal(device.label.minimum, 6);
   assert.equal(device.label.maximum, 249);
   assert.equal(device.copies.maximum, 500);
-  assert.equal(device.feed.length_um, 4000);
+  assert.equal(device.feed.length_um, 3700);
   assert.deepEqual(device.aliases, { 0: "O", 1: "I" });
   assert.equal(device.commands.get("tag").prints_run, true);
   assert.equal(device.commands.get("save").stoppable, false);

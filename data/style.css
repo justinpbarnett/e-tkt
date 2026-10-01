@@ -36,13 +36,10 @@
  * No web fonts except the tape's own. The panel has to work on a network
  * with no way out to the internet, so the Passion faces are named first
  * for the devices that have them and fall back to what every phone has.
+ * The tape face is not declared here. The page adds it once the rest has
+ * loaded: the file is half the panel, and pulling it with the first paint
+ * held every other file behind it.
  */
-
-@font-face {
-  font-family: "Impact Label Reversed";
-  src: url("/fontwhite.ttf") format("truetype");
-  font-display: block;
-}
 
 /* Realtime Text, on the Macs that have it installed, keeps all of its line
    spacing above the letters, so in a button its capitals sit a sixth of the

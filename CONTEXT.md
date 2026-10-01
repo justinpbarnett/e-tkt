@@ -85,7 +85,7 @@ Reading the maximum as a typed length is what first made it 247 and made the dev
 A second module named `Characters` used to sit a letter away from it, holding the notes and the OLED glyphs.
 The notes belong to the slots, so they moved here, and the glyphs are the screen's business, so they moved into `OledDisplay`.
 
-**Screen** - one of the device's fixed OLED banners: wifi setup, wifi reset, finished, and so on.
+**Screen** - one of the device's fixed OLED banners: connecting, wifi setup, wifi reset, finished, and so on.
 One table in `OledDisplay.cpp` says what each one draws, rather than one method each.
 `Screen`.
 

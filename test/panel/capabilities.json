@@ -22,7 +22,7 @@
     "default_mm": 3000
   },
   "feed": {
-    "length_um": 4000,
+    "length_um": 3700,
     "lead": 1
   },
   "commands": {

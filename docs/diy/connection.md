@@ -17,7 +17,9 @@ The device must be connected to a 2.4GHz Wireless Local Area Network.
 ![image](https://user-images.githubusercontent.com/15098003/196288878-c1d163cf-1c81-4d74-9b00-c7b1c382f926.png)
 
 - turn it on;
-- check if it is asking for be connected (if not, you might want to reset wi-fi — see the bottom of the page);
+- a saved network is joined on its own. The screen says CONNECTING while that is happening, and where the signal is weak it can take a few minutes;
+- the "E-TKT" setup network opens right away when nothing is saved, and about a minute after power-on when a saved network still has not answered;
+- after the machine has joined, a different network is set with the reset at the bottom of this page, then a restart;
 
 ## 2. in the smartphone
 
@@ -43,4 +45,5 @@ The device must be connected to a 2.4GHz Wireless Local Area Network.
 - press and hold the physical "WI-FI" button on the device;
 - either turn the device off and on again, or press reset;
 - wait for the splash screen and then for the confirmation that the wi-fi has been cleared;
-- release the "WI-FI" button.
+- release the "WI-FI" button;
+- the next boot opens the "E-TKT" setup network, because nothing is saved.

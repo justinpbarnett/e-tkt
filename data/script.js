@@ -223,6 +223,20 @@ const el = {
   countdown: $("countdown"),
 };
 
+// The tape's own face. Half the bytes of the panel, so it is fetched once
+// the page is already on screen. A browser that kept it from last time
+// finishes this without another trip, and the tape is measured again then.
+function loadTapeFont() {
+  if (typeof FontFace !== "function" || !document.fonts) {
+    return;
+  }
+  const face = new FontFace("Impact Label Reversed", 'url("/fontwhite.ttf")', {
+    display: "swap",
+  });
+  document.fonts.add(face);
+  face.load().then(drawTape, () => {});
+}
+
 async function startup() {
   document.body.dataset.printing = "false";
   applyTheme(document.documentElement.dataset.theme === "dark" ? "dark" : "light");
@@ -237,16 +251,12 @@ async function startup() {
     el.input.focus();
   }
 
-  // The tape is measured in its own face, which may still be on its way
-  // when the page first draws. Measured again once it is here.
-  if (document.fonts) {
-    document.fonts.load('25px "Impact Label Reversed"').then(drawTape, () => {});
-  }
-
   // One after the other, not side by side: the device serves the page's own
-  // files at the same time, and it has only a handful of sockets.
+  // files at the same time, and it has only a handful of sockets. The tape
+  // face is last, so it does not take a socket from either of these.
   await retrieveCapabilities();
-  poll();
+  await poll();
+  loadTapeFont();
 }
 
 function wireEvents() {

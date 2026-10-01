@@ -205,6 +205,8 @@ const ScreenSpec SCREEN_SPECS[] = {
      nullptr, 0x0073, 26, 90},
     {Screen::FINISHED, ScreenLayout::BANNER, true, "FINISHED!", 42, nullptr,
      nullptr, 0x0073, 27, 90},
+    {Screen::WIFI_JOINING, ScreenLayout::NOTICE, false, "CONNECTING", 15,
+     "Connecting to the", "saved network...", 0x011a, 0, 0},
     {Screen::REBOOTING, ScreenLayout::BANNER, false, "REBOOTING...", 38,
      nullptr, nullptr, NO_GLYPH, 0, 0},
 };
@@ -228,7 +230,7 @@ void drawBanner(U8G2_SSD1306_128X64_NONAME_F_HW_I2C* u8g2,
 }
 
 // Draws a titled notice with two lines of body text and one icon beside the
-// title. The shape behind WIFI_SETUP and WIFI_RESET.
+// title. The shape behind WIFI_SETUP, WIFI_RESET and WIFI_JOINING.
 void drawNotice(U8G2_SSD1306_128X64_NONAME_F_HW_I2C* u8g2,
                 const ScreenSpec& spec) {
   u8g2->setFont(u8g2_font_nine_by_five_nbp_t_all);

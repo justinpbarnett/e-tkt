@@ -626,8 +626,8 @@ void test_a_lost_wheel_is_reported_as_the_cause(void) {
 }
 
 // What is estimated to be left on the roll, busy or not, so the panel can
-// say how many labels fit before anything has been printed. A feed is 4 mm
-// of tape, so 250 of them take a metre off a 4 m roll.
+// say how many labels fit before anything has been printed. A feed is 3.7 mm
+// of tape, so 250 of them take 925 mm off a 4 m roll.
 void test_the_status_says_what_is_left_on_the_roll(void) {
   machine->roll.load(4000);
   machine->roll.use(250);
@@ -635,7 +635,7 @@ void test_the_status_says_what_is_left_on_the_roll(void) {
   const JsonObject roll = json(get("/api/status"))["roll"];
 
   TEST_ASSERT_EQUAL_INT(4000, roll["length_mm"].as<int>());
-  TEST_ASSERT_EQUAL_INT(3000, roll["remaining_mm"].as<int>());
+  TEST_ASSERT_EQUAL_INT(3075, roll["remaining_mm"].as<int>());
 }
 
 // How much memory the device has free, how much of that is in one piece, and
@@ -760,7 +760,7 @@ void test_the_capabilities_give_the_ranges_the_device_checks(void) {
 void test_the_capabilities_say_how_much_tape_a_feed_takes(void) {
   const JsonObject feed = json(get("/api/capabilities"))["feed"];
 
-  TEST_ASSERT_EQUAL_INT(4000, feed["length_um"].as<int>());
+  TEST_ASSERT_EQUAL_INT(3700, feed["length_um"].as<int>());
   TEST_ASSERT_EQUAL_INT(1, feed["lead"].as<int>());
 }
 

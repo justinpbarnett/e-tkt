@@ -73,7 +73,9 @@ parent: 🛠️ do it yourself!
 - A NEMA stepper driven by a A4988 breakout and a KY 003 hall sensor for homing the daisy wheel.
 
 ### Wifi reset
-- When this tactile button is pressed while booting the saved wifi credentials are cleared.
+- Held while the device boots, this button clears the saved wifi credentials and the device restarts.
+- The next boot opens the setup network, because nothing is saved.
+- A saved network is retried until it joins. A slow join does not need this button.
 
 ### Feeder
 - 12v reduced stepper motor (28BYJ-48) driven by a ULN2003 darlington array.
