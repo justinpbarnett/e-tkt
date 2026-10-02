@@ -308,6 +308,12 @@ class String {
     }
   }
 
+  void toLowerCase() {
+    for (size_t i = 0; i < this->value.length(); i++) {
+      this->value[i] = (char)tolower((unsigned char)this->value[i]);
+    }
+  }
+
   char charAt(unsigned int i) const { return this->value[i]; }
   char operator[](unsigned int i) const { return this->value[i]; }
 
