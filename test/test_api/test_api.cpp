@@ -1638,7 +1638,7 @@ void test_the_fullest_network_reply_has_every_field(void) {
   for (int i = 0; i < NetworkSettings::MAX_REMEMBERED; i++) {
     const std::string name = std::string(31, 'n') + std::to_string(i);
     TEST_ASSERT_TRUE(
-        Remembered::KEPT ==
+        RememberRefusal::NONE ==
         networkSettings->remember(name.c_str(), std::string(63, 'p').c_str()));
   }
   radio->phones = WIFI_OWN_CLIENTS;

@@ -705,8 +705,25 @@ Reply Api::log(const Request& /*request*/) {
   return reply;
 }
 
-// Where the machine has got to with the networks it remembers, by the name
-// the panel knows it under.
+// The mode, by the name the panel knows it under. modeNamed() is the same
+// two names read the other way.
+static const char* modeName(NetworkMode mode) {
+  return mode == NetworkMode::OWN ? "own" : "join";
+}
+
+// The mode the panel knows under this name. False, with `mode` left alone,
+// for anything that is not one of the two.
+static bool modeNamed(const JsonVariantConst& name, NetworkMode* mode) {
+  for (const NetworkMode one : {NetworkMode::JOIN, NetworkMode::OWN}) {
+    if (name == modeName(one)) {
+      *mode = one;
+      return true;
+    }
+  }
+  return false;
+}
+
+// Where the machine has got to with the networks it remembers, likewise.
 static const char* stationName(StationLink station) {
   switch (station) {
     case StationLink::JOINING:
@@ -747,8 +764,7 @@ Reply Api::network(const Request& /*request*/) {
   DynamicJsonDocument doc(NETWORK_JSON_BYTES);
   const LinkStatus link = this->linkSupervisor->status();
 
-  doc["mode"] =
-      this->networkSettings->mode() == NetworkMode::OWN ? "own" : "join";
+  doc["mode"] = modeName(this->networkSettings->mode());
   doc["station"] = stationName(link.station);
   // The network the machine is on, or the one it is trying, and its address
   // on the one it is on. Each is left out when there is none.
@@ -862,15 +878,12 @@ Reply Api::changeNetwork(const Request& request, NetworkChange change) {
 
 // Whether the machine joins a network or runs its own.
 bool Api::setNetworkMode(const JsonObjectConst& body, Reply* refused) {
-  const JsonVariantConst mode = body["mode"];
-  if (mode == "join") {
-    this->networkSettings->setMode(NetworkMode::JOIN);
-  } else if (mode == "own") {
-    this->networkSettings->setMode(NetworkMode::OWN);
-  } else {
+  NetworkMode mode;
+  if (!modeNamed(body["mode"], &mode)) {
     *refused = errorReply(400, "Please provide mode as join or own");
     return false;
   }
+  this->networkSettings->setMode(mode);
   return true;
 }
 
@@ -896,29 +909,29 @@ bool Api::rememberNetwork(const JsonObjectConst& body, Reply* refused) {
 
   String refusal;
   switch (this->networkSettings->remember(ssid, password)) {
-    case Remembered::KEPT:
+    case RememberRefusal::NONE:
       return true;
-    case Remembered::NAME_MISSING:
+    case RememberRefusal::NAME_MISSING:
       refusal = ASK_FOR_SSID;
       break;
-    case Remembered::NAME_TOO_LONG:
+    case RememberRefusal::NAME_TOO_LONG:
       refusal = String("A network's name may be at most ") +
                 (int)Radio::MAX_NAME_BYTES + " bytes, got " + (int)strlen(ssid);
       break;
-    case Remembered::NAME_NOT_TEXT:
+    case RememberRefusal::NAME_NOT_TEXT:
       refusal = "A network's name must be plain text";
       break;
-    case Remembered::PASSWORD_TOO_SHORT:
+    case RememberRefusal::PASSWORD_TOO_SHORT:
       refusal = String("A network's password must be at least ") +
                 (int)Radio::MIN_PASSWORD_LENGTH + " characters, got " +
                 (int)password.length();
       break;
-    case Remembered::PASSWORD_TOO_LONG:
+    case RememberRefusal::PASSWORD_TOO_LONG:
       refusal = String("A network's password may be at most ") +
                 (int)Radio::MAX_PASSWORD_LENGTH + " characters, got " +
                 (int)password.length();
       break;
-    case Remembered::FULL:
+    case RememberRefusal::FULL:
       // 409, not 400: the request was fine, and it is the machine that has
       // no room. Forgetting a network is what makes the same body pass.
       *refused = errorReply(409, String("The device remembers at most ") +

@@ -39,25 +39,25 @@ static const size_t NETWORKS_JSON_BYTES =
 
 // Whether the machine can keep a network under this name and password, and
 // what is wrong with them if it cannot.
-static Remembered judged(const String& ssid, const String& password) {
+static RememberRefusal judged(const String& ssid, const String& password) {
   if (ssid.length() == 0) {
-    return Remembered::NAME_MISSING;
+    return RememberRefusal::NAME_MISSING;
   }
   if (ssid.length() > (unsigned int)Radio::MAX_NAME_BYTES) {
-    return Remembered::NAME_TOO_LONG;
+    return RememberRefusal::NAME_TOO_LONG;
   }
   if (!NetworkSettings::nameIsText(ssid)) {
-    return Remembered::NAME_NOT_TEXT;
+    return RememberRefusal::NAME_NOT_TEXT;
   }
   // No password at all is an open network.
   if (password.length() > 0 &&
       password.length() < (unsigned int)Radio::MIN_PASSWORD_LENGTH) {
-    return Remembered::PASSWORD_TOO_SHORT;
+    return RememberRefusal::PASSWORD_TOO_SHORT;
   }
   if (password.length() > (unsigned int)Radio::MAX_PASSWORD_LENGTH) {
-    return Remembered::PASSWORD_TOO_LONG;
+    return RememberRefusal::PASSWORD_TOO_LONG;
   }
-  return Remembered::KEPT;
+  return RememberRefusal::NONE;
 }
 
 // The networks as they are stored.
@@ -97,24 +97,12 @@ static bool readStored(const String& text,
     RememberedNetwork network;
     network.ssid = String(entry["ssid"].as<const char*>());
     network.password = String(entry["password"].as<const char*>());
-    if (judged(network.ssid, network.password) == Remembered::KEPT &&
+    if (judged(network.ssid, network.password) == RememberRefusal::NONE &&
         networks->size() < (size_t)NetworkSettings::MAX_REMEMBERED) {
       networks->push_back(network);
     }
   }
   return true;
-}
-
-// The names of these networks, for the log: "Church, Basement".
-static String namesOf(const std::vector<RememberedNetwork>& networks) {
-  String names = "";
-  for (const RememberedNetwork& network : networks) {
-    if (names.length() > 0) {
-      names += ", ";
-    }
-    names += network.ssid;
-  }
-  return names;
 }
 
 // A password for the machine's own network.
@@ -130,6 +118,18 @@ static String madePassword() {
 }
 
 NetworkSettings::NetworkSettings(Logger* logger) { this->logger = logger; }
+
+String NetworkSettings::namesOf(
+    const std::vector<RememberedNetwork>& networks) {
+  String names = "";
+  for (size_t i = 0; i < networks.size(); i++) {
+    if (i > 0) {
+      names += i + 1 == networks.size() ? " or " : ", ";
+    }
+    names += networks[i].ssid;
+  }
+  return names;
+}
 
 bool NetworkSettings::nameIsText(const String& name) {
   const unsigned int length = name.length();
@@ -187,8 +187,8 @@ void NetworkSettings::initialize(const String& machineId) {
   this->current = this->preferences.getUInt(MODE_KEY, STORED_JOIN) == STORED_OWN
                       ? NetworkMode::OWN
                       : NetworkMode::JOIN;
-  this->router = this->preferences.getBool(ROUTER_KEY, true);
-  this->password = this->preferences.getString(PASSWORD_KEY, "");
+  this->offersRouter = this->preferences.getBool(ROUTER_KEY, true);
+  this->ownNetworkPassword = this->preferences.getString(PASSWORD_KEY, "");
   this->importDone = this->preferences.getBool(IMPORTED_KEY, false);
   this->preferences.end();
 
@@ -196,9 +196,11 @@ void NetworkSettings::initialize(const String& machineId) {
   const bool read = found && readStored(text, &this->remembered);
   // One that WPA2 could not use is not a password this code made. The next
   // one asked for is made new.
-  if (this->password.length() < (unsigned int)Radio::MIN_PASSWORD_LENGTH ||
-      this->password.length() > (unsigned int)Radio::MAX_PASSWORD_LENGTH) {
-    this->password = "";
+  if (this->ownNetworkPassword.length() <
+          (unsigned int)Radio::MIN_PASSWORD_LENGTH ||
+      this->ownNetworkPassword.length() >
+          (unsigned int)Radio::MAX_PASSWORD_LENGTH) {
+    this->ownNetworkPassword = "";
   }
   const NetworkMode mode = this->current;
   const String names = namesOf(this->remembered);
@@ -229,7 +231,7 @@ void NetworkSettings::setMode(NetworkMode mode) {
   const bool changed = this->current != mode;
   if (changed) {
     this->current = mode;
-    this->changes++;
+    this->changeCount++;
     this->preferences.begin(NETWORK_NAMESPACE, false);
     this->preferences.putUInt(
         MODE_KEY, mode == NetworkMode::OWN ? STORED_OWN : STORED_JOIN);
@@ -244,10 +246,10 @@ void NetworkSettings::setMode(NetworkMode mode) {
   }
 }
 
-Remembered NetworkSettings::remember(const String& ssid,
-                                     const String& password) {
-  const Remembered refusal = judged(ssid, password);
-  if (refusal != Remembered::KEPT) {
+RememberRefusal NetworkSettings::remember(const String& ssid,
+                                          const String& password) {
+  const RememberRefusal refusal = judged(ssid, password);
+  if (refusal != RememberRefusal::NONE) {
     return refusal;
   }
 
@@ -265,7 +267,7 @@ Remembered NetworkSettings::remember(const String& ssid,
   }
   if (next.size() > (size_t)MAX_REMEMBERED) {
     this->lock.unlock();
-    return Remembered::FULL;
+    return RememberRefusal::FULL;
   }
   // A network typed in again as it is kept already, and first, is the panel
   // sending it again over a slow link, or somebody asking for another try.
@@ -277,11 +279,11 @@ Remembered NetworkSettings::remember(const String& ssid,
     this->remembered = next;
     this->storeNetworks();
   }
-  this->changes++;
+  this->changeCount++;
   this->lock.unlock();
 
   this->logger->log("Remembered the network " + ssid);
-  return Remembered::KEPT;
+  return RememberRefusal::NONE;
 }
 
 void NetworkSettings::forget(const String& ssid) {
@@ -295,7 +297,7 @@ void NetworkSettings::forget(const String& ssid) {
   const bool changed = next.size() != this->remembered.size();
   if (changed) {
     this->remembered = next;
-    this->changes++;
+    this->changeCount++;
     this->storeNetworks();
   }
   this->lock.unlock();
@@ -345,30 +347,30 @@ String NetworkSettings::hostName() {
 
 String NetworkSettings::ownPassword() {
   this->lock.lock();
-  if (this->password.length() == 0) {
-    this->password = madePassword();
+  if (this->ownNetworkPassword.length() == 0) {
+    this->ownNetworkPassword = madePassword();
     this->preferences.begin(NETWORK_NAMESPACE, false);
-    this->preferences.putString(PASSWORD_KEY, this->password.c_str());
+    this->preferences.putString(PASSWORD_KEY, this->ownNetworkPassword.c_str());
     this->preferences.end();
   }
-  const String password = this->password;
+  const String password = this->ownNetworkPassword;
   this->lock.unlock();
   return password;
 }
 
 bool NetworkSettings::routerOffered() {
   this->lock.lock();
-  const bool offered = this->router;
+  const bool offered = this->offersRouter;
   this->lock.unlock();
   return offered;
 }
 
 void NetworkSettings::setRouterOffered(bool offered) {
   this->lock.lock();
-  const bool changed = this->router != offered;
+  const bool changed = this->offersRouter != offered;
   if (changed) {
-    this->router = offered;
-    this->changes++;
+    this->offersRouter = offered;
+    this->changeCount++;
     this->preferences.begin(NETWORK_NAMESPACE, false);
     this->preferences.putBool(ROUTER_KEY, offered);
     this->preferences.end();
@@ -401,7 +403,7 @@ void NetworkSettings::markImported() {
 
 uint32_t NetworkSettings::revision() {
   this->lock.lock();
-  const uint32_t revision = this->changes;
+  const uint32_t revision = this->changeCount;
   this->lock.unlock();
   return revision;
 }
@@ -410,10 +412,10 @@ void NetworkSettings::reset() {
   this->lock.lock();
   this->remembered.clear();
   this->current = NetworkMode::JOIN;
-  this->router = true;
-  this->password = "";
+  this->offersRouter = true;
+  this->ownNetworkPassword = "";
   this->importDone = true;
-  this->changes++;
+  this->changeCount++;
   this->storeNetworks();
   this->preferences.begin(NETWORK_NAMESPACE, false);
   this->preferences.putUInt(MODE_KEY, STORED_JOIN);

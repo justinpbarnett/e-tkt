@@ -476,6 +476,6 @@ void Network::initialize() {
   // remembers to flash and listens for a quiet channel, so the stack is the
   // size of the one setup() runs on, twice the 4 KB the event task gets by
   // on.
-  xTaskCreatePinnedToCore(Network::supervisorTask, "wifi-join", 8192, this, 1,
-                          NULL, 0);
+  xTaskCreatePinnedToCore(Network::supervisorTask, "link", 8192, this, 1, NULL,
+                          0);
 }

@@ -76,24 +76,13 @@ JoinFailure failureOf(uint8_t reason) {
   }
 }
 
-// "Church", "Church or Basement", "Church, Basement or Garage".
-String namesOf(const std::vector<RememberedNetwork>& networks) {
-  String names = "";
-  for (size_t i = 0; i < networks.size(); i++) {
-    if (i > 0) {
-      names += i + 1 == networks.size() ? " or " : ", ";
-    }
-    names += networks[i].ssid;
-  }
-  return names;
-}
-
-// What the panel lists of the networks the radio heard: each name once, as
-// loud as its loudest access point, the loudest first, and no more than the
-// reply that lists them has room for. A network that hides its name is left
-// out, and its name can still be typed in. So is one whose name is not text,
+// The networks in reach, from what the radio heard: each name once, as loud
+// as its loudest access point, the loudest first, and no more than the reply
+// that lists them has room for. A network that hides its name is left out,
+// and its name can still be typed in. So is one whose name is not text,
 // which the machine would not remember.
-std::vector<HeardNetwork> toPickFrom(const std::vector<HeardNetwork>& heard) {
+std::vector<HeardNetwork> networksInReach(
+    const std::vector<HeardNetwork>& heard) {
   std::vector<HeardNetwork> networks;
   for (const HeardNetwork& one : heard) {
     if (one.ssid.length() == 0 || !NetworkSettings::nameIsText(one.ssid)) {
@@ -172,15 +161,15 @@ LinkStatus LinkSupervisor::status() {
 
 uint32_t LinkSupervisor::listen() {
   this->lock.lock();
-  this->heard.listening = true;
-  const uint32_t listens = this->heard.listens;
+  this->nearbyNetworks.listening = true;
+  const uint32_t listens = this->nearbyNetworks.listens;
   this->lock.unlock();
   return listens;
 }
 
 NearbyNetworks LinkSupervisor::nearby() {
   this->lock.lock();
-  const NearbyNetworks nearby = this->heard;
+  const NearbyNetworks nearby = this->nearbyNetworks;
   this->lock.unlock();
   return nearby;
 }
@@ -194,7 +183,7 @@ void LinkSupervisor::start(uint32_t nowMs) {
     if (this->radio->inherited(&ssid, &password)) {
       this->logger->log(String("found ") + ssid +
                         ", saved by the firmware before this one");
-      if (this->settings->remember(ssid, password) != Remembered::KEPT) {
+      if (this->settings->remember(ssid, password) != RememberRefusal::NONE) {
         this->logger->warn(String("could not keep ") + ssid +
                            ", which has to be typed in again");
       }
@@ -483,7 +472,8 @@ void LinkSupervisor::noteOffline(uint32_t nowMs) {
     last = this->failedTry.reason == 0 ? String("no answer")
                                        : reasonText(this->failedTry.reason);
   }
-  this->logger->log(String("still joining ") + namesOf(this->networks) + ", " +
+  this->logger->log(String("still joining ") +
+                    NetworkSettings::namesOf(this->networks) + ", " +
                     String(this->tries) +
                     (this->tries == 1 ? " try in " : " tries in ") +
                     String((nowMs - this->outageBeganMs) / 1000) +
@@ -666,7 +656,7 @@ void LinkSupervisor::countClients(uint32_t nowMs) {
 
 bool LinkSupervisor::listenIfAsked(uint32_t nowMs) {
   this->lock.lock();
-  const bool asked = this->heard.listening;
+  const bool asked = this->nearbyNetworks.listening;
   this->lock.unlock();
   // The radio cannot listen and try a network at once, and a machine that is
   // waiting for its address has to be there to be given it. Whatever has
@@ -694,12 +684,12 @@ bool LinkSupervisor::listenIfAsked(uint32_t nowMs) {
   } else {
     this->logger->warn("could not listen for the networks in reach");
   }
-  const std::vector<HeardNetwork> networks = toPickFrom(heard);
+  const std::vector<HeardNetwork> networks = networksInReach(heard);
 
   this->lock.lock();
-  this->heard.networks = networks;
-  this->heard.listens++;
-  this->heard.listening = false;
+  this->nearbyNetworks.networks = networks;
+  this->nearbyNetworks.listens++;
+  this->nearbyNetworks.listening = false;
   this->lock.unlock();
   // The step is spent: the clock it was given is seconds behind by now.
   return true;

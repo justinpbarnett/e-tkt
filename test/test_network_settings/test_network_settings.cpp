@@ -75,7 +75,17 @@ static std::string passwordOf(const char* ssid) {
 }
 
 static bool takes(const char* ssid, const char* password) {
-  return settings->remember(ssid, password) == Remembered::KEPT;
+  return settings->remember(ssid, password) == RememberRefusal::NONE;
+}
+
+// Whether the log has this line, whole.
+static bool logged(const char* line) {
+  for (const std::string& one : stubSerialLines()) {
+    if (one == line) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // --- a machine as it is first switched on ----------------------------------
@@ -135,7 +145,8 @@ void test_no_more_networks_are_remembered_than_there_is_room_for(void) {
   takes("Three", "password3");
   takes("Four", "password4");
 
-  TEST_ASSERT_TRUE(Remembered::FULL == settings->remember("Five", "password5"));
+  TEST_ASSERT_TRUE(RememberRefusal::FULL ==
+                   settings->remember("Five", "password5"));
 
   TEST_ASSERT_EQUAL_INT(NetworkSettings::MAX_REMEMBERED,
                         (int)settings->networks().size());
@@ -150,9 +161,9 @@ void test_a_network_without_a_name_or_with_too_long_a_one_is_refused(void) {
   const std::string longest(32, 'n');
   const std::string tooLong(33, 'n');
 
-  TEST_ASSERT_TRUE(Remembered::NAME_MISSING ==
+  TEST_ASSERT_TRUE(RememberRefusal::NAME_MISSING ==
                    settings->remember("", "correct horse"));
-  TEST_ASSERT_TRUE(Remembered::NAME_TOO_LONG ==
+  TEST_ASSERT_TRUE(RememberRefusal::NAME_TOO_LONG ==
                    settings->remember(tooLong.c_str(), "correct horse"));
   TEST_ASSERT_EQUAL_STRING("", remembered().c_str());
 
@@ -163,9 +174,9 @@ void test_a_network_whose_name_is_not_text_is_refused(void) {
   // On the air a name is 32 bytes of anything. The panel is what shows the
   // names the machine remembers, and what sends one back to have it
   // forgotten, and it can do neither with a name that is not text.
-  TEST_ASSERT_TRUE(Remembered::NAME_NOT_TEXT ==
+  TEST_ASSERT_TRUE(RememberRefusal::NAME_NOT_TEXT ==
                    settings->remember("Line\nbreak", "correct horse"));
-  TEST_ASSERT_TRUE(Remembered::NAME_NOT_TEXT ==
+  TEST_ASSERT_TRUE(RememberRefusal::NAME_NOT_TEXT ==
                    settings->remember("Caf\xE9", "correct horse"));
   TEST_ASSERT_EQUAL_STRING("", remembered().c_str());
 
@@ -178,9 +189,9 @@ void test_a_password_wpa2_cannot_use_is_refused(void) {
   const std::string longest(63, 'p');
   const std::string tooLong(64, 'p');
 
-  TEST_ASSERT_TRUE(Remembered::PASSWORD_TOO_SHORT ==
+  TEST_ASSERT_TRUE(RememberRefusal::PASSWORD_TOO_SHORT ==
                    settings->remember("Basement", "seven77"));
-  TEST_ASSERT_TRUE(Remembered::PASSWORD_TOO_LONG ==
+  TEST_ASSERT_TRUE(RememberRefusal::PASSWORD_TOO_LONG ==
                    settings->remember("Basement", tooLong.c_str()));
   TEST_ASSERT_EQUAL_STRING("", remembered().c_str());
 
@@ -242,6 +253,22 @@ void test_a_stored_network_the_radio_could_not_use_is_left_out(void) {
   restart();
 
   TEST_ASSERT_EQUAL_STRING("Church", remembered().c_str());
+}
+
+void test_a_start_says_which_networks_the_machine_joins(void) {
+  // The machine joins one of them, whichever it finds, and the log says so
+  // in the words the link uses while it is still looking for one.
+  takes("Basement", "correct horse");
+  restart();
+  TEST_ASSERT_TRUE(logged("Network: joins Basement"));
+
+  takes("Church", "battery staple");
+  restart();
+  TEST_ASSERT_TRUE(logged("Network: joins Church or Basement"));
+
+  takes("Garage", "open sesame");
+  restart();
+  TEST_ASSERT_TRUE(logged("Network: joins Garage, Church or Basement"));
 }
 
 // --- joining a network, or running its own ---------------------------------
@@ -426,6 +453,7 @@ int main(int, char**) {
   RUN_TEST(test_the_network_it_last_joined_is_tried_first_from_then_on);
   RUN_TEST(test_a_list_of_networks_that_cannot_be_read_is_ignored);
   RUN_TEST(test_a_stored_network_the_radio_could_not_use_is_left_out);
+  RUN_TEST(test_a_start_says_which_networks_the_machine_joins);
   RUN_TEST(test_the_mode_is_kept_across_a_restart);
   RUN_TEST(
       test_whether_its_own_network_offers_a_router_is_kept_across_a_restart);

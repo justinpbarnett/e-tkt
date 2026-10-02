@@ -117,11 +117,11 @@ class LinkSupervisor {
   NetworkSettings* settings;
   Display* display;
 
-  // Covers `published` and `heard`, which the webserver's task reads, and
-  // asks a listen of. Everything else here is step()'s alone.
+  // Covers `published` and `nearbyNetworks`, which the webserver's task
+  // reads, and asks a listen of. Everything else here is step()'s alone.
   std::mutex lock;
   LinkStatus published;
-  NearbyNetworks heard;
+  NearbyNetworks nearbyNetworks;
 
   bool started = false;
 

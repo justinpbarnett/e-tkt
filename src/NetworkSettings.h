@@ -25,10 +25,11 @@ struct RememberedNetwork {
 };
 
 /**
- * @brief What became of a network the machine was asked to remember.
+ * @brief Why the machine does not keep a network it was asked to remember.
  */
-enum class Remembered {
-  KEPT,
+enum class RememberRefusal {
+  // It keeps it.
+  NONE,
   NAME_MISSING,
   NAME_TOO_LONG,
   // See NetworkSettings::nameIsText().
@@ -63,12 +64,14 @@ class NetworkSettings {
   NetworkMode current = NetworkMode::JOIN;
   // In the order they are tried.
   std::vector<RememberedNetwork> remembered;
-  // Empty until ownPassword() has made one.
-  String password = "";
-  bool router = true;
+  // Of its own network. Empty until ownPassword() has made one.
+  String ownNetworkPassword = "";
+  // Whether its own network says it is the way to the internet.
+  bool offersRouter = true;
   // Whether the network of the firmware before this one has been looked for.
   bool importDone = false;
-  uint32_t changes = 0;
+  // What revision() says.
+  uint32_t changeCount = 0;
 
   // Writes the list of networks. Under the lock.
   void storeNetworks();
@@ -92,6 +95,13 @@ class NetworkSettings {
   static bool nameIsText(const String& name);
 
   /**
+   * @brief The names of these networks, as the log says them: "Church",
+   * "Church or Basement", "Church, Basement or Garage". The machine joins
+   * one of them, whichever it finds.
+   */
+  static String namesOf(const std::vector<RememberedNetwork>& networks);
+
+  /**
    * @brief Reads everything back from EEPROM. A machine that was never set
    * up joins a network, and remembers none.
    *
@@ -109,11 +119,10 @@ class NetworkSettings {
    * remembered under that name is replaced, which is how a password is put
    * right.
    *
-   * Nothing is kept unless the answer is KEPT.
-   *
    * @param password empty for an open network.
+   * @return why it is not kept, and NONE when it is.
    */
-  Remembered remember(const String& ssid, const String& password);
+  RememberRefusal remember(const String& ssid, const String& password);
 
   /**
    * @brief Forgets a network. One that is not remembered is forgotten
