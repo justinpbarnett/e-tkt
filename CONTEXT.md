@@ -319,7 +319,7 @@ The panel changes it under Setup, and it is kept in EEPROM.
 
 **Remembered network** - a network the machine has been given the name and the password of.
 It keeps up to `MAX_REMEMBERED`, in the order they are tried, and a network added again takes the place of the one of its name, at the front.
-A name is 1 to 32 bytes of text, and a password is nothing, for an open network, or 8 to 63 bytes, which is what WPA2 takes.
+A name is 1 to `Radio::MAX_NAME_BYTES` bytes of text, and a password is nothing, for an open network, or `Radio::MIN_PASSWORD_LENGTH` to `Radio::MAX_PASSWORD_LENGTH` bytes, which is what WPA2 takes.
 A network sent again exactly as it is kept is still followed with a try at once, which is the panel asking for one.
 The same request come again under its **command id** is not: that is the panel making sure the first one arrived, and a try under way is left alone.
 The first start of this firmware takes over the one network the firmware before it kept in the radio itself.
@@ -376,6 +376,8 @@ It turns each HTTP request under `/api/` into a `Request`, sends the `Reply` bac
 A reply too large for its document is a 500 and not a reply with fields missing, and every 500 also goes in the **log**.
 The routes under `/api/network` are how the panel reads and changes the **link**.
 `GET /api/network` says how the machine is reached, and `GET /api/network/nearby` the **networks in reach**, after a `POST` to `listen`.
+The first also says the numbers the machine goes by there: how long a network's name and password may be, how many networks it remembers, and how long its **own network** takes to open and to close.
+The panel checks a network against them and words them, and keeps no copy of its own.
 `POST` to `mode`, `remember`, `forget` and `router` changes the **network mode**, a **remembered network** and the **router option**.
 Each of those is made once however often it comes under its **command id**, and so is a listen.
 A request to remember a network carries its password in, and nothing carries one out.

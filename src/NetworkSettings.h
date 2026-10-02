@@ -88,9 +88,10 @@ class NetworkSettings {
    * @brief Whether a network's name is text: UTF-8, with nothing in it that
    * does not print.
    *
-   * On the air a name is up to 32 bytes of anything. The panel is what shows
-   * a name and sends it back, and it can do neither with one that is not
-   * text, so the machine remembers none, and lists none as in reach.
+   * On the air a name is up to Radio::MAX_NAME_BYTES bytes of anything. The
+   * panel is what shows a name and sends it back, and it can do neither with
+   * one that is not text, so the machine remembers none, and lists none as
+   * in reach.
    */
   static bool nameIsText(const String& name);
 

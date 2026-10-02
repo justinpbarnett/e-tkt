@@ -22,7 +22,13 @@ import { nearbyReply, networkReply } from "./device.js";
 
 // The machine's own network, open, with this many phones on it.
 function ownOpen(clients = 0) {
-  return { name: "E-TKT-9C4F", open: true, clients: clients, address: "192.168.4.1" };
+  return { ...networkReply().own, open: true, clients: clients };
+}
+
+// The machine's own network, closed, on a machine that takes this long to
+// open it and to close it, in milliseconds.
+function ownTimed(opensAfterMs, closesAfterMs = opensAfterMs) {
+  return { ...networkReply().own, opens_after_ms: opensAfterMs, closes_after_ms: closesAfterMs };
 }
 
 // What api/network says of a machine still trying the workshop's network.
@@ -86,9 +92,14 @@ test("a reply the card cannot read is not guessed at", () => {
   assert.equal(readNetwork(networkReply({ own: undefined })), null);
   assert.equal(readNetwork(networkReply({ own: { name: "E-TKT-9C4F" } })), null);
   assert.equal(readNetwork(networkReply({ own: { ...ownOpen(), clients: "2" } })), null);
+  assert.equal(readNetwork(networkReply({ own: { ...ownOpen(), opens_after_ms: undefined } })), null);
+  assert.equal(readNetwork(networkReply({ own: { ...ownOpen(), closes_after_ms: "60000" } })), null);
   assert.equal(readNetwork(networkReply({ remembered: "Workshop" })), null);
   assert.equal(readNetwork(networkReply({ remembered: [7] })), null);
   assert.equal(readNetwork(networkReply({ max_remembered: "4" })), null);
+  assert.equal(readNetwork(networkReply({ max_name_bytes: undefined })), null);
+  assert.equal(readNetwork(networkReply({ min_password_bytes: "8" })), null);
+  assert.equal(readNetwork(networkReply({ max_password_bytes: undefined })), null);
   assert.equal(readNetwork(networkReply({ router_offered: "yes" })), null);
   assert.equal(readNetwork(joining({ failure: "refused" })), null);
   assert.equal(readNetwork(joining({ failure: { cause: "refused" } })), null);
@@ -299,6 +310,49 @@ test("a closed network of its own says when it opens", () => {
   const closed = { ...ownOpen(), open: false };
   assert.equal(ownSummary(onItsOwn({ own: closed })).note, "It opens in a moment.");
   assert.equal(ownSummary(neverSetUp({ own: closed })).note, "It opens in a moment.");
+});
+
+test("how long its own network takes to open and to close is the device's to say", () => {
+  // Both times come with its reply, and the card words what it was told. A
+  // device that waits two minutes is not said to wait one.
+  const own = ownTimed(120000, 30000);
+  assert.deepEqual(reachSummary(joining({ own: own })).detail, [
+    "Its own network, E-TKT-9C4F, opens if this takes more than 2 minutes.",
+  ]);
+  assert.deepEqual(reachSummary(networkReply({ remembered: ["Church Guest"], own: own })).detail, [
+    "The label maker tries Church Guest next. " +
+      "Its own network, E-TKT-9C4F, opens if that takes more than 2 minutes.",
+  ]);
+  assert.equal(
+    ownSummary(networkReply({ own: own })).note,
+    "It opens when the label maker has been without a network for 2 minutes.",
+  );
+  assert.equal(
+    ownSummary(networkReply({ own: { ...own, open: true, clients: 1 } })).note,
+    "It closes 30 seconds after the last phone leaves it, now that the label maker is on a network.",
+  );
+  assert.equal(
+    modeNote(networkReply({ own: own })),
+    "It joins a network it remembers, and opens its own when it has found none for 2 minutes.",
+  );
+});
+
+test("a time is said the way a sentence says one", () => {
+  // In words for one of a thing, and in the larger unit only when it comes
+  // out whole: a minute and a half is 90 seconds, and not 1.5 minutes.
+  const after = (ms) =>
+    modeNote(networkReply({ own: ownTimed(ms) })).replace(
+      "It joins a network it remembers, and opens its own when it has found none for ",
+      "",
+    );
+  assert.equal(after(60000), "a minute.");
+  assert.equal(after(1000), "a second.");
+  assert.equal(after(45000), "45 seconds.");
+  assert.equal(after(90000), "90 seconds.");
+  assert.equal(after(300000), "5 minutes.");
+  // To the second: the device counts in milliseconds, and nobody waits in
+  // them.
+  assert.equal(after(59600), "a minute.");
 });
 
 test("the networks remembered are listed in the order they are tried, with the one in use marked", () => {
@@ -764,6 +818,25 @@ test("a name is held to the 32 bytes the radio takes", () => {
   assert.equal(add("x".repeat(33)).body, null);
   assert.notEqual(add("🎸".repeat(8)).body, null);
   assert.equal(add("🎸".repeat(9)).name.note, "A network’s name is at most 32 bytes long, and this is 36.");
+});
+
+test("the lengths a name and a password are held to are the device's own", () => {
+  // They come with its reply, as how many networks it remembers does. A
+  // device that takes other lengths is checked against those.
+  const device = neverSetUp({ max_name_bytes: 20, min_password_bytes: 10, max_password_bytes: 12 });
+  const add = (typed) => networkToAdd({ ssid: "Sanctuary", password: "", ...typed }, device, searched());
+  assert.notEqual(add({ ssid: "x".repeat(20) }).body, null);
+  assert.deepEqual(add({ ssid: "x".repeat(21) }).name, {
+    note: "A network’s name is at most 20 bytes long, and this is 21.",
+    invalid: true,
+  });
+  assert.equal(add({ password: "labelmake" }).password.note, "A password has at least 10 characters, and this has 9.");
+  assert.notEqual(add({ password: "labelmaker" }).body, null);
+  assert.notEqual(add({ password: "x".repeat(12) }).body, null);
+  assert.equal(
+    add({ password: "x".repeat(13) }).password.note,
+    "A password has at most 12 characters, and this has 13.",
+  );
 });
 
 test("an empty name is nothing to add, and no mistake either", () => {

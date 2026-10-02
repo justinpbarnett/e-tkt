@@ -1433,9 +1433,10 @@ input.stepper-value,
 /*  network  */
 /*-----------*/
 
-/* A network's name is whatever its owner typed: up to 32 bytes, with a
-   space in it or without one. So a line with a name in it breaks wherever
-   it has to, in the card and in the two dialogs that name networks. */
+/* A network's name is whatever its owner typed: as long as a name gets,
+   with a space in it or without one. So a line with a name in it breaks
+   wherever it has to, in the card and in the two dialogs that name
+   networks. */
 #network-card,
 #network-dialog,
 #network-confirm-dialog {

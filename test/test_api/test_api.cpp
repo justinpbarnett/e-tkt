@@ -1499,6 +1499,26 @@ void test_a_machine_on_a_network_says_how_it_is_reached(void) {
   TEST_ASSERT_FALSE(network.containsKey("failure"));
 }
 
+// The panel checks a network before it sends it, and says how long the
+// machine's own network takes to open and to close. What it checks against
+// and what it says are the machine's own numbers, said in the same reply, so
+// that the panel keeps no copy of them to fall behind.
+void test_the_network_reply_says_the_limits_and_the_times_the_machine_goes_by(
+    void) {
+  const JsonObject network = json(get("/api/network"));
+
+  TEST_ASSERT_EQUAL_INT(Radio::MAX_NAME_BYTES,
+                        network["max_name_bytes"].as<int>());
+  TEST_ASSERT_EQUAL_INT(Radio::MIN_PASSWORD_LENGTH,
+                        network["min_password_bytes"].as<int>());
+  TEST_ASSERT_EQUAL_INT(Radio::MAX_PASSWORD_LENGTH,
+                        network["max_password_bytes"].as<int>());
+  TEST_ASSERT_EQUAL_INT(WIFI_OWN_AFTER_MS,
+                        network["own"]["opens_after_ms"].as<int>());
+  TEST_ASSERT_EQUAL_INT(WIFI_OWN_LINGER_MS,
+                        network["own"]["closes_after_ms"].as<int>());
+}
+
 // A machine that remembers no network has its own open, and says so, with
 // how many phones are on it: the panel is then being read over that network.
 // There is no network to name, and no address on one.
@@ -2267,6 +2287,8 @@ int main(int, char**) {
   RUN_TEST(test_an_estimate_is_asked_for_with_a_post);
   RUN_TEST(test_only_a_run_of_labels_can_be_estimated);
   RUN_TEST(test_a_machine_on_a_network_says_how_it_is_reached);
+  RUN_TEST(
+      test_the_network_reply_says_the_limits_and_the_times_the_machine_goes_by);
   RUN_TEST(test_a_machine_that_remembers_no_network_says_its_own_is_open);
   RUN_TEST(test_a_machine_running_its_own_network_says_so);
   RUN_TEST(test_the_network_is_answered_for_before_the_link_has_started);

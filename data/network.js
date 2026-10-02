@@ -6,18 +6,18 @@
 //
 // A network's name comes off the air, from whoever named that network. It
 // leaves here only as text, for the page to set as text.
+//
+// The numbers the label maker goes by come with its reply: how long a name
+// and a password may be, how many networks it remembers, and how long its
+// own network takes to open and to close. None of them is written down here.
 
 import { NO_ANSWER_YET } from "./status.js";
+import { withUnit } from "./tape.js";
 
 // How long a listen may take before the dialog says why it might: a listen
 // itself takes a few seconds, and one asked for while the label maker is
 // trying a network waits for the try to end.
 export const SLOW_LISTEN_MS = 10000;
-
-// What a network's name and its password may be, as the device holds them:
-// what the radio takes for a name, and what WPA2 takes for a password.
-const NAME_BYTES = 32;
-const PASSWORD_BYTES = { fewest: 8, most: 63 };
 
 // The weakest signal, in dBm, that still counts as strong, and as fair, and
 // what each is called where the page cannot draw it.
@@ -43,9 +43,14 @@ export function readNetwork(reply) {
     typeof own.open === "boolean" &&
     Number.isInteger(own.clients) &&
     text(own.address) &&
+    Number.isInteger(own.opens_after_ms) &&
+    Number.isInteger(own.closes_after_ms) &&
     Array.isArray(reply.remembered) &&
     reply.remembered.every(text) &&
     Number.isInteger(reply.max_remembered) &&
+    Number.isInteger(reply.max_name_bytes) &&
+    Number.isInteger(reply.min_password_bytes) &&
+    Number.isInteger(reply.max_password_bytes) &&
     typeof reply.router_offered === "boolean" &&
     (failure === undefined ||
       (failure !== null && typeof failure === "object" && text(failure.network) && text(failure.cause)));
@@ -99,7 +104,7 @@ export function reachSummary(network) {
       headline: "Leaving " + network.network + "…",
       detail: own.open
         ? panelOnOwn(own, next + "Meanwhile its own network is open. ")
-        : [next + "Its own network, " + own.name + ", opens if that takes more than a minute."],
+        : [next + ownOpensIf(own, "that")],
     };
   }
   // The one it is trying, or the one it starts with once it has taken up a
@@ -107,10 +112,28 @@ export function reachSummary(network) {
   const trying = network.station === "joining" && network.remembered.includes(network.network);
   return {
     headline: "Joining " + (trying ? network.network : first) + "…",
-    detail: own.open
-      ? panelOnOwn(own, "Meanwhile its own network is open. ")
-      : ["Its own network, " + own.name + ", opens if this takes more than a minute."],
+    detail: own.open ? panelOnOwn(own, "Meanwhile its own network is open. ") : [ownOpensIf(own, "this")],
   };
+}
+
+// The sentence that says when the label maker's own network opens beside a
+// try at a network: if "this" try, or "that" one, takes long.
+function ownOpensIf(own, which) {
+  const after = timeInWords(own.opens_after_ms);
+  return "Its own network, " + own.name + ", opens if " + which + " takes more than " + after + ".";
+}
+
+// A length of time in milliseconds, as a sentence says one: "a minute",
+// "45 seconds", "2 minutes". To the second, and in minutes only where they
+// come out whole.
+function timeInWords(ms) {
+  const seconds = Math.round(ms / 1000);
+  const inMinutes = seconds > 0 && seconds % 60 === 0;
+  const count = inMinutes ? seconds / 60 : seconds;
+  if (count === 1) {
+    return inMinutes ? "a minute" : "a second";
+  }
+  return withUnit(count, inMinutes ? "minutes" : "seconds");
 }
 
 // Whether the label maker is on a network it joined, and staying: one it
@@ -186,7 +209,9 @@ export function ownSummary(network) {
     const soon = network.mode === "own" || network.remembered.length === 0;
     return {
       state: "Closed",
-      note: soon ? "It opens in a moment." : "It opens when the label maker has been without a network for a minute.",
+      note: soon
+        ? "It opens in a moment."
+        : "It opens when the label maker has been without a network for " + timeInWords(own.opens_after_ms) + ".",
     };
   }
   const state = "Open, " + phonesOn(own.clients);
@@ -194,7 +219,10 @@ export function ownSummary(network) {
     // The label maker's screen shows the network it joined by now.
     return {
       state: state,
-      note: "It closes a minute after the last phone leaves it, now that the label maker is on a network.",
+      note:
+        "It closes " +
+        timeInWords(own.closes_after_ms) +
+        " after the last phone leaves it, now that the label maker is on a network.",
     };
   }
   return {
@@ -242,7 +270,9 @@ export function modeNote(network) {
   return network.mode === "own"
     ? "It joins no network, and keeps its own open. Every label maker has its own, so a phone reaches one of them " +
         "at a time."
-    : "It joins a network it remembers, and opens its own when it has found none for a minute.";
+    : "It joins a network it remembers, and opens its own when it has found none for " +
+        timeInWords(network.own.opens_after_ms) +
+        ".";
 }
 
 // What the dialog says before the label maker is told to join a network, or
@@ -535,10 +565,8 @@ export function addingIntro(network) {
 //             nothing the device would take
 export function networkToAdd(typed, network, search) {
   const heard = search.named(typed.ssid);
-  const replaces = network.remembered.includes(typed.ssid);
-  const isFull = network.remembered.length >= network.max_remembered;
-  const name = nameCheck(typed.ssid, heard, replaces, isFull);
-  const password = passwordCheck(typed.password, heard);
+  const name = nameCheck(typed.ssid, heard, network);
+  const password = passwordCheck(typed.password, heard, network);
 
   let body = null;
   const nameReady = typed.ssid !== "" && !name.invalid;
@@ -550,7 +578,7 @@ export function networkToAdd(typed, network, search) {
     }
   }
   return {
-    full: isFull
+    full: remembersAll(network)
       ? "The label maker remembers " +
         network.remembered.length +
         " networks, which is all it can. Forget one first, or add one of them again to change its password."
@@ -561,18 +589,24 @@ export function networkToAdd(typed, network, search) {
   };
 }
 
+// Whether the label maker remembers as many networks as it can.
+function remembersAll(network) {
+  return network.remembered.length >= network.max_remembered;
+}
+
 // The note for under a network's name, and whether the name is one the
 // device would refuse: one too long for a network, or one more than the
 // device has room for.
-function nameCheck(ssid, heard, replaces, isFull) {
+function nameCheck(ssid, heard, network) {
   const length = utf8Length(ssid);
-  if (length > NAME_BYTES) {
+  if (length > network.max_name_bytes) {
     return {
-      note: "A network’s name is at most " + NAME_BYTES + " bytes long, and this is " + length + ".",
+      note: "A network’s name is at most " + network.max_name_bytes + " bytes long, and this is " + length + ".",
       invalid: true,
     };
   }
-  if (isFull && !replaces && ssid !== "") {
+  const replaces = network.remembered.includes(ssid);
+  if (remembersAll(network) && !replaces && ssid !== "") {
     return { note: "The label maker has no room for another network. Forget one first.", invalid: true };
   }
   let note = null;
@@ -586,7 +620,7 @@ function nameCheck(ssid, heard, replaces, isFull) {
 
 // Whether a network wants a password, the note for under the one typed, and
 // whether that one is of a length the device would refuse.
-function passwordCheck(password, heard) {
+function passwordCheck(password, heard, network) {
   if (heard !== null && !heard.secured) {
     return { wanted: "no", note: "This network has no password.", invalid: false };
   }
@@ -604,11 +638,11 @@ function passwordCheck(password, heard) {
     plain
       ? "A password has " + which + " " + bytes + " characters, and this has " + length + "."
       : "A password is " + which + " " + bytes + " bytes long, and this is " + length + ".";
-  if (length < PASSWORD_BYTES.fewest) {
-    return { wanted: wanted, note: limit("at least", PASSWORD_BYTES.fewest), invalid: true };
+  if (length < network.min_password_bytes) {
+    return { wanted: wanted, note: limit("at least", network.min_password_bytes), invalid: true };
   }
-  if (length > PASSWORD_BYTES.most) {
-    return { wanted: wanted, note: limit("at most", PASSWORD_BYTES.most), invalid: true };
+  if (length > network.max_password_bytes) {
+    return { wanted: wanted, note: limit("at most", network.max_password_bytes), invalid: true };
   }
   return { wanted: wanted, note: null, invalid: false };
 }

@@ -8,9 +8,14 @@
     "name": "E-TKT-9C4F",
     "open": false,
     "clients": 0,
-    "address": "192.168.4.1"
+    "address": "192.168.4.1",
+    "opens_after_ms": 60000,
+    "closes_after_ms": 60000
   },
   "remembered": ["Workshop"],
   "max_remembered": 4,
+  "max_name_bytes": 32,
+  "min_password_bytes": 8,
+  "max_password_bytes": 63,
   "router_offered": true
 }

@@ -755,6 +755,11 @@ static const char* failureName(JoinFailure failure) {
 // what the last try that failed came to. The panel's network card is drawn
 // from this, and asks for it again every few seconds while it is on screen.
 //
+// The numbers the machine goes by are in it too: what a network's name and
+// password may be, how many networks it remembers, and how long its own
+// network takes to open and to close. The panel checks a network against
+// them and says them, and keeps no copy of its own.
+//
 // No password is in it, and none is in any other reply. A remembered
 // network's is the operator's to type again, and the one of the machine's
 // own network is on the machine's screen, for whoever is stood at it.
@@ -781,6 +786,10 @@ Reply Api::network(const Request& /*request*/) {
   own["open"] = link.ownOpen;
   own["clients"] = link.clients;
   own["address"] = WIFI_OWN_ADDRESS;
+  // How long the machine is without a network before this one opens, and
+  // how long it stays open with nobody on it once the machine has one.
+  own["opens_after_ms"] = WIFI_OWN_AFTER_MS;
+  own["closes_after_ms"] = WIFI_OWN_LINGER_MS;
 
   // In the order they are tried.
   const JsonArray remembered = doc.createNestedArray("remembered");
@@ -788,6 +797,9 @@ Reply Api::network(const Request& /*request*/) {
     remembered.add(one.ssid);
   }
   doc["max_remembered"] = (int)NetworkSettings::MAX_REMEMBERED;
+  doc["max_name_bytes"] = (int)Radio::MAX_NAME_BYTES;
+  doc["min_password_bytes"] = (int)Radio::MIN_PASSWORD_LENGTH;
+  doc["max_password_bytes"] = (int)Radio::MAX_PASSWORD_LENGTH;
   doc["router_offered"] = this->networkSettings->routerOffered();
 
   // Left out when no try has failed since the machine was last on a network.
