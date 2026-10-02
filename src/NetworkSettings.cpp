@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "ArduinoJson.h"
+#include "JsonText.h"
 #include "Logger.h"
 
 // Where it all lives in EEPROM. The networks are one entry, written together
@@ -69,9 +70,7 @@ static String stored(const std::vector<RememberedNetwork>& networks) {
     entry["ssid"] = network.ssid.c_str();
     entry["password"] = network.password.c_str();
   }
-  std::vector<char> text(measureJson(doc) + 1);
-  serializeJson(doc, text.data(), text.size());
-  return String(text.data());
+  return jsonText(doc);
 }
 
 // Reads stored networks into `networks`. Returns false, with none read, for
@@ -80,12 +79,9 @@ static String stored(const std::vector<RememberedNetwork>& networks) {
 // is some other firmware's, or flash gone bad.
 static bool readStored(const String& text,
                        std::vector<RememberedNetwork>* networks) {
-  // Every string in the text is copied into the document, and none is longer
-  // there than it was in the text.
-  DynamicJsonDocument doc(NETWORKS_JSON_BYTES + text.length());
-  if (deserializeJson(doc, text.c_str(), text.length())) {
-    return false;
-  }
+  // A text that is not JSON reads as a document with nothing in it, which
+  // is no list.
+  const DynamicJsonDocument doc = parsedJson(text, NETWORKS_JSON_BYTES);
   if (!doc.is<JsonArrayConst>()) {
     return false;
   }

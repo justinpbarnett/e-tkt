@@ -4,9 +4,9 @@
 #include <Preferences.h>
 
 #include <mutex>
-#include <vector>
 
 #include "ArduinoJson.h"
+#include "JsonText.h"
 #include "Logger.h"
 #include "Tape.h"
 
@@ -24,9 +24,7 @@ static String stored(const Run& run, int printed) {
   doc["copies"] = run.copies;
   doc["cut"] = run.cut;
   doc["printed"] = printed;
-  std::vector<char> text(measureJson(doc) + 1);
-  serializeJson(doc, text.data(), text.size());
-  return String(text.data());
+  return jsonText(doc);
 }
 
 // Reads a stored run into `run`, and how many of its labels are printed into
@@ -35,12 +33,9 @@ static String stored(const Run& run, int printed) {
 // with nobody having typed it, so a run that is only partly understood is
 // not guessed at.
 static bool readStored(const String& text, Run* run, int* printed) {
-  // Every string in the text is copied into the document, and none is longer
-  // there than it was in the text.
-  DynamicJsonDocument doc(JSON_OBJECT_SIZE(4) + text.length());
-  if (deserializeJson(doc, text.c_str(), text.length())) {
-    return false;
-  }
+  // A text that is not JSON reads as a document with nothing in it, and so
+  // with no label.
+  const DynamicJsonDocument doc = parsedJson(text, JSON_OBJECT_SIZE(4));
   if (!doc["label"].is<const char*>() || !doc["copies"].is<int>() ||
       !doc["cut"].is<bool>()) {
     return false;

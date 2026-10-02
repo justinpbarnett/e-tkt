@@ -3,11 +3,10 @@
 #include <string.h>
 #include <strings.h>
 
-#include <vector>
-
 #include "ArduinoJson.h"
 #include "CharacterSet.h"
 #include "Configuration.h"
+#include "JsonText.h"
 #include "PressGeometry.h"
 #include "Tape.h"
 #include "Utility.h"
@@ -55,9 +54,7 @@ static Reply jsonReply(int code, const JsonDocument& doc) {
                      NULL};
     return failure;
   }
-  std::vector<char> text(measureJson(doc) + 1);
-  serializeJson(doc, text.data(), text.size());
-  Reply reply = {code, JSON_TYPE, String(text.data()), NULL};
+  Reply reply = {code, JSON_TYPE, jsonText(doc), NULL};
   return reply;
 }
 
