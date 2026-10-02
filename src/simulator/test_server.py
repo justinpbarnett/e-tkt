@@ -63,11 +63,12 @@ class RelayTestCase(unittest.IsolatedAsyncioTestCase):
     # How many times faster than the machine this case's runs.
     speed = SPEED
 
+    # Where what the machine prints down its serial port goes. Nowhere,
+    # unless a case reads it: it would bury the results.
+    serial = asyncio.subprocess.DEVNULL
+
     async def asyncSetUp(self):
-        # What the machine prints down its serial port would bury the
-        # results.
-        self.device = server.Server(PROGRAM, self.speed,
-                                    serial=asyncio.subprocess.DEVNULL,
+        self.device = server.Server(PROGRAM, self.speed, serial=self.serial,
                                     loses=self.loses)
         await self.device.start()
         self.client = TestClient(TestServer(self.device.application()))
@@ -87,18 +88,26 @@ class RelayTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(200, response.status)
         return await response.json()
 
-    async def until_idle(self):
-        """The status once the machine has finished what it is doing."""
+    async def until(self, path, there):
+        """What the device answers at `path`, once `there` says the answer
+        is the one a test is waiting for."""
         clock = asyncio.get_running_loop()
         deadline = clock.time() + JOB_SECONDS
         while True:
-            status = await self.status()
-            if not status["busy"]:
-                return status
+            response = await self.client.get(path)
+            self.assertEqual(200, response.status)
+            answer = await response.json()
+            if there(answer):
+                return answer
             if clock.time() > deadline:
-                self.fail("Still busy after %d seconds: %r"
-                          % (JOB_SECONDS, status))
+                self.fail("%s is still not there after %d seconds: %r"
+                          % (path, JOB_SECONDS, answer))
             await asyncio.sleep(0.01)
+
+    async def until_idle(self):
+        """The status once the machine has finished what it is doing."""
+        return await self.until("/api/status",
+                                lambda status: not status["busy"])
 
     async def press(self, tag, copies=1):
         """Asks for a run of labels, which the machine starts on."""
@@ -401,6 +410,112 @@ class Reboots(RelayTestCase):
         await self.restart_simulator()
         after = await self.stop_a_run()
         self.assertNotEqual(before["id"], after["id"])
+
+
+class Network(RelayTestCase):
+    # The link supervisor and the network settings are the firmware's own,
+    # on a radio with an air where the board has an antenna. main.cpp says
+    # which networks are in it. Nothing here waits for a job: the machine's
+    # link is looked at whatever the machine is doing, as on the board,
+    # where it has a task of its own.
+
+    async def network(self, there):
+        """How the machine is reached, once it is as a test waits for."""
+        return await self.until("/api/network", there)
+
+    async def remember(self, ssid, password):
+        """Has the machine remember a network, as the panel does."""
+        response = await self.client.post(
+            "/api/network/remember",
+            json={"ssid": ssid, "password": password})
+        self.assertEqual(200, response.status)
+
+    async def test_a_machine_never_set_up_opens_its_own_network(self):
+        # With no network to join, its own is the one way in. It is named
+        # after the machine, as the machine's host name is.
+        network = await self.network(lambda network: network["own"]["open"])
+        self.assertEqual("join", network["mode"])
+        self.assertEqual("off", network["station"])
+        self.assertEqual("E-TKT-9C4F", network["own"]["name"])
+        self.assertEqual("e-tkt-9c4f.local", network["host"])
+        self.assertEqual([], network["remembered"])
+
+    async def test_a_network_in_the_air_is_joined_once_it_is_remembered(
+            self):
+        await self.remember("Workshop", "labelmaker")
+        network = await self.network(
+            lambda network: network["station"] == "joined")
+        self.assertEqual("Workshop", network["network"])
+        self.assertEqual("192.168.1.50", network["address"])
+        self.assertNotIn("failure", network)
+
+    async def test_a_wrong_password_is_told_as_the_network_refusing(self):
+        # The radio's own reason for it comes with the cause: a handshake
+        # that the network never finished.
+        await self.remember("Workshop", "not the one")
+        network = await self.network(lambda network: "failure" in network)
+        self.assertEqual("joining", network["station"])
+        self.assertEqual(
+            {"network": "Workshop", "cause": "refused", "reason": 15,
+             "reason_name": "4WAY_HANDSHAKE_TIMEOUT"},
+            network["failure"])
+
+    async def test_a_listen_names_the_networks_in_the_air(self):
+        # Each name once and the loudest first, without the one that hides
+        # its name, which is the firmware's doing. A name comes through the
+        # relay as it is on the air: one that is not all ASCII, and one
+        # with markup in it, which is the panel's to show as text.
+        response = await self.client.post("/api/network/listen")
+        self.assertEqual(200, response.status)
+        after = (await response.json())["after"]
+        nearby = await self.until(
+            "/api/network/nearby", lambda nearby: nearby["listens"] > after)
+        self.assertEqual(
+            ["Workshop", "E-TKT-51B2", "Church Guest",
+             "<b>Cafe</b> & \"Friends\"", "Full House",
+             "The Longest Network Name Allowed", "Jugendcafé \U0001f3b8",
+             "Far Corner"],
+            [network["ssid"] for network in nearby["networks"]])
+        self.assertIn({"ssid": "Church Guest", "rssi": -63, "secured": False},
+                      nearby["networks"])
+
+    async def test_the_link_is_kept_up_while_a_run_is_pressed(self):
+        # A network remembered as a long run starts is joined well before
+        # the run ends: the link is looked at between the machine's
+        # milliseconds, and not only between its jobs.
+        await self.press(" HELLO ", copies=500)
+        await self.remember("Workshop", "labelmaker")
+        await self.network(lambda network: network["station"] == "joined")
+        self.assertTrue((await self.status())["busy"])
+
+    async def test_a_reboot_keeps_the_networks_the_machine_remembers(self):
+        # They are in the flash, beside the calibration a save reboots to
+        # take up, and the new boot joins the one it finds there.
+        await self.remember("Workshop", "labelmaker")
+        await self.save(align=5, force=5)
+        network = await self.network(
+            lambda network: network["station"] == "joined")
+        self.assertEqual(["Workshop"], network["remembered"])
+
+
+class Serial(RelayTestCase):
+    serial = asyncio.subprocess.PIPE
+
+    async def test_an_idle_machine_says_what_its_link_does_as_it_does_it(
+            self):
+        # The serial port is where the link tells its story, and most of it
+        # happens while the machine is idle. It is not kept back until the
+        # next job has something to say.
+        await self.until("/api/network",
+                         lambda network: network["own"]["open"])
+        said = self.device.process.stderr
+        try:
+            await asyncio.wait_for(
+                said.readuntil(b"its own network E-TKT-9C4F is open"),
+                JOB_SECONDS)
+        except asyncio.TimeoutError:
+            self.fail("Nothing about its own network after %d seconds"
+                      % JOB_SECONDS)
 
 
 class Loss(RelayTestCase):

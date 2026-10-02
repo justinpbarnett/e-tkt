@@ -1,5 +1,6 @@
 #include "Api.h"
 
+#include <string.h>
 #include <strings.h>
 
 #include <vector>
@@ -31,6 +32,12 @@ static const size_t CAPABILITIES_JSON_BYTES = 4096;
 // carrying the longest label of symbols -- three bytes each -- has room for
 // two more fields.
 static const size_t STATUS_JSON_BYTES = 2048;
+
+// Room for what the device says of the network: how it is reached, and the
+// networks in reach. The second is the larger, a dozen names of 32 bytes
+// with three facts each, and near 2.1 KB where the tests run, which is twice
+// what it takes on the board.
+static const size_t NETWORK_JSON_BYTES = 4096;
 
 // The longest id a request may be sent under: what a UUID takes. The device
 // keeps several at a time, so one is not allowed to be a page of text.
@@ -187,11 +194,11 @@ static bool readCommandOptions(const CommandSpec* spec,
   return true;
 }
 
-// Reads what a request for this command asks for: a JSON body that the
-// device can read whole, with the fields the command needs. Returns false
-// with the reply that refuses it written otherwise.
-static bool readCommandRequest(const CommandSpec* spec, const Request& request,
-                               CommandOptions* options, Reply* refused) {
+// Reads the body of a request into the document: a JSON object that the
+// device can read whole. Returns false with the reply that refuses it
+// written otherwise.
+static bool readJsonBody(const Request& request, JsonDocument* parsed,
+                         Reply* refused) {
   if (!isJson(request.contentType)) {
     *refused = errorReply(415, "Please send the body as application/json");
     return false;
@@ -202,16 +209,27 @@ static bool readCommandRequest(const CommandSpec* spec, const Request& request,
     return false;
   }
 
-  DynamicJsonDocument parsed(REQUEST_JSON_BYTES);
   const DeserializationError error =
-      deserializeJson(parsed, request.body.c_str(), request.body.length());
+      deserializeJson(*parsed, request.body.c_str(), request.body.length());
   if (error == DeserializationError::NoMemory) {
     *refused =
         errorReply(413, "The body has more fields than the device can read");
     return false;
   }
-  if (error || !parsed.is<JsonObject>()) {
+  if (error || !parsed->is<JsonObject>()) {
     *refused = errorReply(400, "The body must be a JSON object");
+    return false;
+  }
+  return true;
+}
+
+// Reads what a request for this command asks for: a body the device can
+// read, with the fields the command needs. Returns false with the reply that
+// refuses it written otherwise.
+static bool readCommandRequest(const CommandSpec* spec, const Request& request,
+                               CommandOptions* options, Reply* refused) {
+  DynamicJsonDocument parsed(REQUEST_JSON_BYTES);
+  if (!readJsonBody(request, &parsed, refused)) {
     return false;
   }
 
@@ -246,8 +264,11 @@ static bool readId(const Request& request, const char* name, String* id,
 const size_t Api::MAX_BODY_BYTES;
 const size_t Api::REMEMBERED_IDS;
 
-Api::Api(ETKT* etkt, Logger* logger) {
+Api::Api(ETKT* etkt, LinkSupervisor* linkSupervisor,
+         NetworkSettings* networkSettings, Logger* logger) {
   this->etkt = etkt;
+  this->linkSupervisor = linkSupervisor;
+  this->networkSettings = networkSettings;
   this->logger = logger;
 }
 
@@ -299,6 +320,13 @@ Reply Api::route(const Request& request) {
       {"/api/capabilities", Method::GET, &Api::capabilities},
       {"/api/status", Method::GET, &Api::status},
       {"/api/log", Method::GET, &Api::log},
+      {"/api/network", Method::GET, &Api::network},
+      {"/api/network/nearby", Method::GET, &Api::networksNearby},
+      {"/api/network/listen", Method::POST, &Api::listenForNetworks},
+      {"/api/network/mode", Method::POST, &Api::setNetworkMode},
+      {"/api/network/remember", Method::POST, &Api::rememberNetwork},
+      {"/api/network/forget", Method::POST, &Api::forgetNetwork},
+      {"/api/network/router", Method::POST, &Api::offerRouter},
   };
   for (const Route& route : routes) {
     if (request.path == route.path) {
@@ -659,4 +687,235 @@ Reply Api::capabilities(const Request& /*request*/) {
 Reply Api::log(const Request& /*request*/) {
   Reply reply = {200, TEXT_TYPE, this->logger->recent(), NULL};
   return reply;
+}
+
+// Where the machine has got to with the networks it remembers, by the name
+// the panel knows it under.
+static const char* stationName(StationLink station) {
+  switch (station) {
+    case StationLink::JOINING:
+      return "joining";
+    case StationLink::JOINED:
+      return "joined";
+    case StationLink::OFF:
+      break;
+  }
+  return "off";
+}
+
+// What a try that failed came to, likewise.
+static const char* failureName(JoinFailure failure) {
+  switch (failure) {
+    case JoinFailure::NOT_FOUND:
+      return "not_found";
+    case JoinFailure::REFUSED:
+      return "refused";
+    case JoinFailure::NO_ADDRESS:
+      return "no_address";
+    case JoinFailure::NONE:
+    case JoinFailure::OTHER:
+      break;
+  }
+  return "other";
+}
+
+// How the machine is reached: whether it joins a network or runs its own,
+// where it has got to with the networks it remembers, its own network, and
+// what the last try that failed came to. The panel's network card is drawn
+// from this, and asks for it again every few seconds while it is on screen.
+//
+// No password is in it, and none is in any other reply. A remembered
+// network's is the operator's to type again, and the one of the machine's
+// own network is on the machine's screen, for whoever is stood at it.
+Reply Api::network(const Request& /*request*/) {
+  DynamicJsonDocument doc(NETWORK_JSON_BYTES);
+  const LinkStatus link = this->linkSupervisor->status();
+
+  doc["mode"] =
+      this->networkSettings->mode() == NetworkMode::OWN ? "own" : "join";
+  doc["station"] = stationName(link.station);
+  // The network the machine is on, or the one it is trying, and its address
+  // on the one it is on. Each is left out when there is none.
+  if (link.network.length() > 0) {
+    doc["network"] = link.network;
+  }
+  if (link.address.length() > 0) {
+    doc["address"] = link.address;
+  }
+  doc["host"] = this->networkSettings->hostName() + ".local";
+
+  // Named from the settings. The link has no name to give until its first
+  // step, and the panel can ask before that.
+  const JsonObject own = doc.createNestedObject("own");
+  own["name"] = this->networkSettings->ownName();
+  own["open"] = link.ownOpen;
+  own["clients"] = link.clients;
+  own["address"] = WIFI_OWN_ADDRESS;
+
+  // In the order they are tried.
+  const JsonArray remembered = doc.createNestedArray("remembered");
+  for (const RememberedNetwork& one : this->networkSettings->networks()) {
+    remembered.add(one.ssid);
+  }
+  doc["max_remembered"] = (int)NetworkSettings::MAX_REMEMBERED;
+  doc["router_offered"] = this->networkSettings->routerOffered();
+
+  // Left out when no try has failed since the machine was last on a network.
+  // The radio's own number and name for it are left out when it gave none.
+  if (link.failure != JoinFailure::NONE) {
+    const JsonObject failure = doc.createNestedObject("failure");
+    failure["network"] = link.failedNetwork;
+    failure["cause"] = failureName(link.failure);
+    if (link.failureReason != 0) {
+      failure["reason"] = (int)link.failureReason;
+      failure["reason_name"] = LinkSupervisor::reasonText(link.failureReason);
+    }
+  }
+  return jsonReply(200, doc);
+}
+
+// The networks in reach, as the radio heard them at its last listen: the
+// names the panel offers when a network is to be remembered. `listens` is
+// how the panel tells this list from the one before it: see
+// listenForNetworks().
+Reply Api::networksNearby(const Request& /*request*/) {
+  DynamicJsonDocument doc(NETWORK_JSON_BYTES);
+  const NearbyNetworks nearby = this->linkSupervisor->nearby();
+  doc["listening"] = nearby.listening;
+  doc["listens"] = nearby.listens;
+  const JsonArray networks = doc.createNestedArray("networks");
+  for (const HeardNetwork& heard : nearby.networks) {
+    const JsonObject network = networks.createNestedObject();
+    network["ssid"] = heard.ssid;
+    network["rssi"] = heard.rssi;
+    network["secured"] = heard.secured;
+  }
+  return jsonReply(200, doc);
+}
+
+// Asks the radio to listen for the networks in reach, which takes it a few
+// seconds, and longer when a try at a network is under way. So this answers
+// at once with how many listens have ended, and what this one hears is the
+// list at /api/network/nearby once that count has gone up. Asked for twice,
+// it listens once.
+Reply Api::listenForNetworks(const Request& /*request*/) {
+  DynamicJsonDocument doc(SHORT_REPLY_JSON_BYTES);
+  doc["result"] = "listening";
+  doc["after"] = this->linkSupervisor->listen();
+  return jsonReply(200, doc);
+}
+
+// Whether the machine joins a network or runs its own. The link follows the
+// change a moment later, which is what lets this reply out first: a change
+// of mode can take away the network the panel is asking over.
+//
+// What changes the network answers with the network as it is afterwards, so
+// the panel shows what the machine made of the change without asking again.
+// Each of them does the same thing however often it is sent, so none is
+// kept under an id.
+Reply Api::setNetworkMode(const Request& request) {
+  DynamicJsonDocument parsed(REQUEST_JSON_BYTES);
+  Reply refused;
+  if (!readJsonBody(request, &parsed, &refused)) {
+    return refused;
+  }
+  const JsonVariantConst mode = parsed["mode"];
+  if (mode == "join") {
+    this->networkSettings->setMode(NetworkMode::JOIN);
+  } else if (mode == "own") {
+    this->networkSettings->setMode(NetworkMode::OWN);
+  } else {
+    return errorReply(400, "Please provide mode as join or own");
+  }
+  return this->network(request);
+}
+
+// Remembers a network, as the first to be tried. One already remembered
+// under that name is replaced, which is how a password is put right.
+Reply Api::rememberNetwork(const Request& request) {
+  DynamicJsonDocument parsed(REQUEST_JSON_BYTES);
+  Reply refused;
+  if (!readJsonBody(request, &parsed, &refused)) {
+    return refused;
+  }
+  const char* ssid = parsed["ssid"].as<const char*>();
+  if (ssid == NULL) {
+    return errorReply(400, "Please provide an ssid value");
+  }
+  // Left out, or null, for a network that asks for none. Anything else that
+  // is not text is refused: read as text, a number would be no password at
+  // all, and the machine would try the network without one.
+  const JsonVariantConst sent = parsed["password"];
+  if (!sent.isNull() && !sent.is<const char*>()) {
+    return errorReply(400,
+                      "Please provide password as text, or leave it out for "
+                      "a network without one");
+  }
+  const String password = sent.isNull() ? "" : sent.as<const char*>();
+
+  String refusal;
+  switch (this->networkSettings->remember(ssid, password)) {
+    case Remembered::KEPT:
+      return this->network(request);
+    case Remembered::NAME_MISSING:
+      refusal = "Please provide an ssid value";
+      break;
+    case Remembered::NAME_TOO_LONG:
+      refusal = String("A network's name may be at most ") +
+                (int)NetworkSettings::MAX_NAME_BYTES + " bytes, got " +
+                (int)strlen(ssid);
+      break;
+    case Remembered::NAME_NOT_TEXT:
+      refusal = "A network's name must be plain text";
+      break;
+    case Remembered::PASSWORD_TOO_SHORT:
+      refusal = String("A network's password must be at least ") +
+                (int)NetworkSettings::MIN_PASSWORD_LENGTH +
+                " characters, got " + (int)password.length();
+      break;
+    case Remembered::PASSWORD_TOO_LONG:
+      refusal = String("A network's password may be at most ") +
+                (int)NetworkSettings::MAX_PASSWORD_LENGTH +
+                " characters, got " + (int)password.length();
+      break;
+    case Remembered::FULL:
+      // 409, not 400: the request was fine, and it is the machine that has
+      // no room. Forgetting a network is what makes the same body pass.
+      return errorReply(409, String("The machine remembers at most ") +
+                                 (int)NetworkSettings::MAX_REMEMBERED +
+                                 " networks, so forget one first");
+  }
+  return errorReply(400, refusal);
+}
+
+// Forgets a network. One that is not remembered is forgotten already, so
+// that is no refusal.
+Reply Api::forgetNetwork(const Request& request) {
+  DynamicJsonDocument parsed(REQUEST_JSON_BYTES);
+  Reply refused;
+  if (!readJsonBody(request, &parsed, &refused)) {
+    return refused;
+  }
+  const char* ssid = parsed["ssid"].as<const char*>();
+  if (ssid == NULL || ssid[0] == '\0') {
+    return errorReply(400, "Please provide an ssid value");
+  }
+  this->networkSettings->forget(ssid);
+  return this->network(request);
+}
+
+// Whether the machine's own network says it is the way to the internet: see
+// NetworkSettings::routerOffered().
+Reply Api::offerRouter(const Request& request) {
+  DynamicJsonDocument parsed(REQUEST_JSON_BYTES);
+  Reply refused;
+  if (!readJsonBody(request, &parsed, &refused)) {
+    return refused;
+  }
+  // Read strictly, as a command's cut is.
+  if (!parsed["offered"].is<bool>()) {
+    return errorReply(400, "Please provide offered as true or false");
+  }
+  this->networkSettings->setRouterOffered(parsed["offered"].as<bool>());
+  return this->network(request);
 }

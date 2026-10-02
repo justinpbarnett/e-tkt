@@ -6,7 +6,9 @@
 #include <mutex>
 
 #include "ETKT.h"
+#include "LinkSupervisor.h"
 #include "Logger.h"
+#include "NetworkSettings.h"
 
 /**
  * @brief The HTTP methods a route can answer to. An adapter reads any other
@@ -32,7 +34,8 @@ struct Request {
 
   // The body. An adapter can cut a long body off after Api::MAX_BODY_BYTES
   // + 1 bytes rather than hold all of it, because a body that long is
-  // refused either way.
+  // refused either way. It can hold a network's password, so no adapter
+  // logs it.
   String body;
 };
 
@@ -65,6 +68,8 @@ struct Reply {
 class Api {
  private:
   ETKT* etkt;
+  LinkSupervisor* linkSupervisor;
+  NetworkSettings* networkSettings;
   Logger* logger;
 
   // How many command ids the device remembers. A panel sends one command at
@@ -124,19 +129,29 @@ class Api {
   Reply stopRunning(const Request& request);
   Reply capabilities(const Request& request);
   Reply log(const Request& request);
+  Reply network(const Request& request);
+  Reply networksNearby(const Request& request);
+  Reply listenForNetworks(const Request& request);
+  Reply setNetworkMode(const Request& request);
+  Reply rememberNetwork(const Request& request);
+  Reply forgetNetwork(const Request& request);
+  Reply offerRouter(const Request& request);
 
  public:
-  // The longest body a command may send. Several times what the longest label
+  // The longest body a request may send. Several times what the longest label
   // takes, even written as escapes, and small enough to read into RAM whole.
   static const size_t MAX_BODY_BYTES = 2048;
 
-  Api(ETKT* etkt, Logger* logger);
+  Api(ETKT* etkt, LinkSupervisor* linkSupervisor,
+      NetworkSettings* networkSettings, Logger* logger);
 
   /**
    * @brief Answers one request.
    *
-   * Safe to call from the webserver's task while the command loop runs:
-   * everything it asks the job runner goes through the job runner's lock.
+   * Safe to call from the webserver's task while the command loop runs and
+   * the link is kept up: everything it asks the job runner goes through the
+   * job runner's lock, and the link and the network settings each have
+   * their own.
    */
   Reply handle(const Request& request);
 };

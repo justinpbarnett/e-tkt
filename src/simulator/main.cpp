@@ -26,7 +26,31 @@
 //
 // Reboots. A save ends in ESP.restart(), which the stubs count and return
 // from. The simulator then builds the machine again, and keeps the flash,
-// which is where the save put the calibration.
+// which is where the save put the calibration, and where the networks the
+// machine remembers are.
+//
+// The network. The link supervisor and the network settings are the
+// firmware's own too, on the radio in test/fakes, which has an air where the
+// board has an antenna: a list of networks, and how each one answers a machine
+// that tries it. So the panel's network card can be tried against whatever a
+// network does, and the host joins and opens nothing. The machine is
+// E-TKT-9C4F, and it hears
+//
+//   Workshop                          which lets it in
+//   E-TKT-51B2                        another label maker's own network
+//   Church Guest                      no password, and two access points
+//   <b>Cafe</b> & "Friends"           a name a page has to show as it is
+//   Full House                        no password, and no address to give
+//   The Longest Network Name Allowed  as long as a name gets
+//   Jugendcafé 🎸                      a name that is not all ASCII
+//   Far Corner                        weak, and turns it away twice first
+//
+// and one that hides its name. Every one with a password has the same
+// password: labelmaker. A network takes two seconds to let the machine in,
+// and one more to give it an address. Listening on every channel takes no
+// time, where the radio takes a few seconds over it: the board listens
+// beside its job runner, and here it would be time taken out of a label.
+// Nobody joins the machine's own network.
 //
 // server.py builds and runs it. By hand:
 //   pio run -e simulator
@@ -50,12 +74,62 @@
 
 #include "Api.h"
 #include "Arduino.h"
+#include "Configuration.h"
+#include "FakeRadio.h"
 #include "HostMachine.h"
+#include "LinkSupervisor.h"
+#include "NetworkSettings.h"
 
 // What the heap reports free. The panel does not read either number. They
 // are what a machine reports between jobs, so the status looks like one.
 static const size_t HEAP_FREE_BYTES = 200000;
 static const size_t HEAP_LARGEST_FREE_BLOCK_BYTES = 110000;
+
+// What tells this machine from the others, as the end of its MAC address
+// does on the board. Its own network and its host name are named after it.
+static const char MACHINE_ID[] = "9C4F";
+
+// The password of every network in the air that has one.
+static const char AIR_PASSWORD[] = "labelmaker";
+
+// --- The air ---
+
+static FakeNetwork* broadcast(FakeRadio* radio, const char* ssid,
+                              const char* password, int channel, int rssi) {
+  FakeNetwork* network = radio->add(ssid, password);
+  network->channel = channel;
+  network->rssi = rssi;
+  return network;
+}
+
+/**
+ * @brief Puts in the air the networks the machine hears. The top of this
+ * file says what each one is there for.
+ */
+static void fillAir(FakeRadio* radio) {
+  // The board listens beside its job runner. Here a listen that took time
+  // would take it out of a label.
+  radio->surveyMs = 0;
+
+  broadcast(radio, "Workshop", AIR_PASSWORD, 6, -48);
+  broadcast(radio, "", AIR_PASSWORD, 6, -55);
+  broadcast(radio, "E-TKT-51B2", AIR_PASSWORD, 1, -58)->address = "192.168.4.2";
+  // Two access points under one name. The fake radio joins the one put in
+  // the air last, so that is the louder one, as it is for a real radio.
+  broadcast(radio, "Church Guest", "", 11, -71)->address = "10.20.4.87";
+  broadcast(radio, "Church Guest", "", 1, -63)->address = "10.20.4.87";
+  broadcast(radio, "<b>Cafe</b> & \"Friends\"", AIR_PASSWORD, 11, -67)
+      ->address = "192.168.0.14";
+  broadcast(radio, "Full House", "", 6, -70)->givesAddress = false;
+  broadcast(radio, "The Longest Network Name Allowed", AIR_PASSWORD, 1, -77)
+      ->address = "172.16.30.5";
+  broadcast(radio, "Jugendcafé 🎸", AIR_PASSWORD, 6, -81)->address =
+      "192.168.178.61";
+  FakeNetwork* farCorner =
+      broadcast(radio, "Far Corner", AIR_PASSWORD, 11, -86);
+  farCorner->address = "192.168.7.23";
+  farCorner->refusals = 2;
+}
 
 // --- Requests ---
 
@@ -215,11 +289,17 @@ class Simulator {
 
   Requests requests;
 
-  // The machine, and the Api in front of it. Both NULL while it boots:
-  // requests that arrive meanwhile wait on stdin, as on the board, where no
-  // webserver is up yet to take them.
+  // The machine, how it is reached, and the Api in front of both. All NULL
+  // while it boots: requests that arrive meanwhile wait on stdin, as on the
+  // board, where no webserver is up yet to take them.
   HostMachine* machine = NULL;
+  FakeRadio* radio = NULL;
+  NetworkSettings* networkSettings = NULL;
+  LinkSupervisor* linkSupervisor = NULL;
   Api* api = NULL;
+
+  // When the link was last looked at, by the machine's clock.
+  unsigned long linkSteppedMs = 0;
 
   std::mt19937 generator;
 
@@ -248,6 +328,36 @@ class Simulator {
   }
 
   /**
+   * @brief Looks at the link, once WIFI_STEP_MS of the machine's time have
+   * gone by since the last look.
+   *
+   * On the board the link supervisor has a task of its own, which looks
+   * every WIFI_STEP_MS whatever the job runner is doing. Here there is one
+   * thread, so the look is taken between two of the machine's milliseconds
+   * while it works, and between two requests while it is idle. A look that
+   * comes late is not made up for: the supervisor goes by the time that has
+   * passed, and not by how often it was asked.
+   */
+  void keepLink() {
+    if (this->linkSupervisor == NULL ||
+        stubClockMs() - this->linkSteppedMs < WIFI_STEP_MS) {
+      return;
+    }
+    this->linkSteppedMs = stubClockMs();
+    this->linkSupervisor->step();
+  }
+
+  /**
+   * @brief How long the wall clock takes to bring the machine to its next
+   * look at the link, in microseconds.
+   */
+  long untilLinkStepUs() const {
+    const double leftMs =
+        (double)(this->linkSteppedMs + WIFI_STEP_MS) - this->dueMs();
+    return leftMs > 0 ? (long)std::ceil(leftMs * 1000.0 / this->speed) : 0;
+  }
+
+  /**
    * @brief Called each time the virtual clock reaches a new millisecond,
    * waiting or moving a motor. Holds the machine until the wall clock
    * catches up, and answers requests meanwhile.
@@ -257,7 +367,8 @@ class Simulator {
    * clock is never moved on to make up the difference, which would bend
    * every move under way, so a label takes the machine's own time. A
    * request is answered all the same, as the board's webserver task
-   * answers one whatever the job runner is doing.
+   * answers one whatever the job runner is doing, and the link is looked
+   * at, as its task looks at it.
    */
   void pace() {
     if (stubRestarts() > 0) {
@@ -289,6 +400,7 @@ class Simulator {
         break;
       }
     }
+    this->keepLink();
     this->forget();
     this->drainSerial();
   }
@@ -325,6 +437,10 @@ class Simulator {
     if (this->machine != NULL) {
       this->machine->forget();
     }
+    if (this->radio != NULL) {
+      this->radio->joins.clear();
+      this->radio->openings.clear();
+    }
     stubAnalogWrites().clear();
     stubDigitalWrites().clear();
     stubTones().clear();
@@ -350,6 +466,12 @@ class Simulator {
   void boot() {
     delete this->api;
     this->api = NULL;
+    delete this->linkSupervisor;
+    this->linkSupervisor = NULL;
+    delete this->networkSettings;
+    this->networkSettings = NULL;
+    delete this->radio;
+    this->radio = NULL;
     // The old magnet goes with the old machine, and the new one installs its
     // own.
     stubAnalogRead() = nullptr;
@@ -361,7 +483,18 @@ class Simulator {
     this->wallStart = std::chrono::steady_clock::now();
 
     this->machine = new HostMachine();
-    this->api = new Api(&this->machine->etkt, &this->machine->logger);
+    this->radio = new FakeRadio();
+    fillAir(this->radio);
+    this->networkSettings = new NetworkSettings(&this->machine->logger);
+    this->networkSettings->initialize(MACHINE_ID);
+    this->linkSupervisor =
+        new LinkSupervisor(&this->machine->logger, this->radio,
+                           this->networkSettings, &this->machine->display);
+    this->api = new Api(&this->machine->etkt, this->linkSupervisor,
+                        this->networkSettings, &this->machine->logger);
+    // The first look is the one the board takes as its webserver starts.
+    this->linkSupervisor->step();
+    this->linkSteppedMs = stubClockMs();
     this->forget();
     this->drainSerial();
   }
@@ -409,11 +542,19 @@ class Simulator {
         this->machine->etkt.loop();
         this->afterJob();
       }
-      if (!this->requests.next(line, -1)) {
+      // Idle, it waits for a request, and for no longer than the link can
+      // go without a look.
+      const bool asked = this->requests.next(line, this->untilLinkStepUs());
+      if (!asked && this->requests.over()) {
         return 0;
       }
       this->keepTime();
-      this->answer(line);
+      if (asked) {
+        this->answer(line);
+      }
+      this->keepLink();
+      this->forget();
+      this->drainSerial();
     }
   }
 };

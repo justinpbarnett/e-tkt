@@ -6,28 +6,47 @@
 // carries. Until these tests none of that could be checked without a board
 // on wifi. The machine behind the Api is the real one, built by HostMachine
 // with fakes where it meets the hardware, so a command the Api accepts is one
-// the job runner really took.
+// the job runner really took. Its link is the real one too, on a FakeRadio,
+// so what the Api says of the network is what the link came to.
 //
 // Run with:  pio test -e native
 #include <unity.h>
 
+#include <cstring>
 #include <string>
+#include <vector>
 
 #include "Api.h"
 #include "ArduinoJson.h"
+#include "Configuration.h"
+#include "FakeRadio.h"
 #include "HostMachine.h"
+#include "LinkSupervisor.h"
+#include "NetworkSettings.h"
 
 static HostMachine* machine;
+static FakeRadio* radio;
+static NetworkSettings* networkSettings;
+// Stepped only by the tests that are about the network: see runLink().
+static LinkSupervisor* supervisor;
 static Api* api;
 
 void setUp(void) {
   stubReset();
   machine = new HostMachine();
-  api = new Api(&machine->etkt, &machine->logger);
+  radio = new FakeRadio();
+  networkSettings = new NetworkSettings(&machine->logger);
+  networkSettings->initialize("9C4F");
+  supervisor = new LinkSupervisor(&machine->logger, radio, networkSettings,
+                                  &machine->display);
+  api = new Api(&machine->etkt, supervisor, networkSettings, &machine->logger);
 }
 
 void tearDown(void) {
   delete api;
+  delete supervisor;
+  delete networkSettings;
+  delete radio;
   delete machine;
 }
 
@@ -57,6 +76,14 @@ static Reply postAs(const char* contentType, const char* path,
   request.path = path;
   request.contentType = contentType;
   request.body = body;
+  return api->handle(request);
+}
+
+// A post with no body and no type, for a route that reads neither.
+static Reply postBare(const char* path) {
+  Request request;
+  request.method = Method::POST;
+  request.path = path;
   return api->handle(request);
 }
 
@@ -1405,6 +1432,585 @@ void test_only_a_run_of_labels_can_be_estimated(void) {
   }
 }
 
+// --- network ----------------------------------------------------------------
+
+static const char* CHURCH_KEY = "battery staple";
+static const char* BASEMENT_KEY = "correct horse";
+
+// Lets time pass for the link, stepped as its task steps it on the board.
+static void runLink(unsigned long ms) {
+  for (unsigned long elapsed = 0; elapsed < ms; elapsed += WIFI_STEP_MS) {
+    delay(WIFI_STEP_MS);
+    supervisor->step();
+  }
+}
+
+// A machine on the church's network, which is the one network it remembers.
+static void joinChurch(void) {
+  networkSettings->remember("Church", CHURCH_KEY);
+  radio->add("Church", CHURCH_KEY);
+  runLink(4000);
+}
+
+// The names in a list of them, separated by commas.
+static std::string namesIn(JsonArrayConst list) {
+  std::string names;
+  for (JsonVariantConst name : list) {
+    names += (names.empty() ? "" : ",") + std::string(name.as<const char*>());
+  }
+  return names;
+}
+
+// Everything the panel says about how the machine is reached is in one
+// reply: the network it is on and its address there, the name it answers to,
+// its own network, and the networks it remembers.
+void test_a_machine_on_a_network_says_how_it_is_reached(void) {
+  joinChurch();
+
+  const Reply reply = get("/api/network");
+
+  TEST_ASSERT_EQUAL_INT(200, reply.code);
+  const JsonObject network = json(reply);
+  TEST_ASSERT_EQUAL_STRING("join", network["mode"].as<const char*>());
+  TEST_ASSERT_EQUAL_STRING("joined", network["station"].as<const char*>());
+  TEST_ASSERT_EQUAL_STRING("Church", network["network"].as<const char*>());
+  TEST_ASSERT_EQUAL_STRING("192.168.1.50",
+                           network["address"].as<const char*>());
+  TEST_ASSERT_EQUAL_STRING("e-tkt-9c4f.local",
+                           network["host"].as<const char*>());
+  TEST_ASSERT_EQUAL_STRING("E-TKT-9C4F",
+                           network["own"]["name"].as<const char*>());
+  TEST_ASSERT_FALSE(network["own"]["open"].as<bool>());
+  TEST_ASSERT_EQUAL_INT(0, network["own"]["clients"].as<int>());
+  TEST_ASSERT_EQUAL_STRING("192.168.4.1",
+                           network["own"]["address"].as<const char*>());
+  TEST_ASSERT_EQUAL_STRING("Church", namesIn(network["remembered"]).c_str());
+  TEST_ASSERT_EQUAL_INT(4, network["max_remembered"].as<int>());
+  TEST_ASSERT_TRUE(network["router_offered"].as<bool>());
+  TEST_ASSERT_FALSE(network.containsKey("failure"));
+}
+
+// A machine that remembers no network has its own open, and says so, with
+// how many phones are on it: the panel is then being read over that network.
+// There is no network to name, and no address on one.
+void test_a_machine_that_remembers_no_network_says_its_own_is_open(void) {
+  radio->phones = 2;
+  runLink(4000);
+
+  const JsonObject network = json(get("/api/network"));
+
+  TEST_ASSERT_EQUAL_STRING("join", network["mode"].as<const char*>());
+  TEST_ASSERT_EQUAL_STRING("off", network["station"].as<const char*>());
+  TEST_ASSERT_FALSE(network.containsKey("network"));
+  TEST_ASSERT_FALSE(network.containsKey("address"));
+  TEST_ASSERT_TRUE(network["own"]["open"].as<bool>());
+  TEST_ASSERT_EQUAL_INT(2, network["own"]["clients"].as<int>());
+  TEST_ASSERT_EQUAL_STRING("", namesIn(network["remembered"]).c_str());
+}
+
+// A machine set to run its own network says so, and tries none of the
+// networks it still remembers.
+void test_a_machine_running_its_own_network_says_so(void) {
+  networkSettings->remember("Church", CHURCH_KEY);
+  radio->add("Church", CHURCH_KEY);
+  networkSettings->setMode(NetworkMode::OWN);
+  runLink(4000);
+
+  const JsonObject network = json(get("/api/network"));
+
+  TEST_ASSERT_EQUAL_STRING("own", network["mode"].as<const char*>());
+  TEST_ASSERT_EQUAL_STRING("off", network["station"].as<const char*>());
+  TEST_ASSERT_TRUE(network["own"]["open"].as<bool>());
+  TEST_ASSERT_EQUAL_STRING("Church", namesIn(network["remembered"]).c_str());
+}
+
+// The webserver is up before the link has taken its first step, and a
+// request that gets in ahead of it is still answered: with what the machine
+// keeps, and nothing joined or open yet.
+void test_the_network_is_answered_for_before_the_link_has_started(void) {
+  networkSettings->remember("Church", CHURCH_KEY);
+
+  const Reply reply = get("/api/network");
+
+  TEST_ASSERT_EQUAL_INT(200, reply.code);
+  const JsonObject network = json(reply);
+  TEST_ASSERT_EQUAL_STRING("off", network["station"].as<const char*>());
+  TEST_ASSERT_EQUAL_STRING("E-TKT-9C4F",
+                           network["own"]["name"].as<const char*>());
+  TEST_ASSERT_FALSE(network["own"]["open"].as<bool>());
+  TEST_ASSERT_EQUAL_STRING("Church", namesIn(network["remembered"]).c_str());
+}
+
+// The networks it remembers are named in the order it tries them, which is
+// the one typed in last first.
+void test_the_networks_it_remembers_are_named_in_the_order_they_are_tried(
+    void) {
+  networkSettings->remember("Basement", BASEMENT_KEY);
+  networkSettings->remember("Church", CHURCH_KEY);
+
+  const JsonObject network = json(get("/api/network"));
+
+  TEST_ASSERT_EQUAL_STRING("Church,Basement",
+                           namesIn(network["remembered"]).c_str());
+}
+
+// A machine that cannot get onto its network says which one it is trying,
+// and what became of the last try as far as the radio could tell: the cause
+// the panel has words for, and the radio's own number and name for it, which
+// is what tells a wrong password from a weak signal for whoever knows them.
+void test_a_machine_that_cannot_join_says_what_the_last_try_came_to(void) {
+  networkSettings->remember("Basement", "wrong horse");
+  radio->add("Basement", BASEMENT_KEY);
+  runLink(4000);
+
+  const JsonObject network = json(get("/api/network"));
+
+  TEST_ASSERT_EQUAL_STRING("joining", network["station"].as<const char*>());
+  TEST_ASSERT_EQUAL_STRING("Basement", network["network"].as<const char*>());
+  TEST_ASSERT_FALSE(network.containsKey("address"));
+  const JsonObject failure = network["failure"];
+  TEST_ASSERT_EQUAL_STRING("Basement", failure["network"].as<const char*>());
+  TEST_ASSERT_EQUAL_STRING("refused", failure["cause"].as<const char*>());
+  TEST_ASSERT_EQUAL_INT(15, failure["reason"].as<int>());
+  TEST_ASSERT_EQUAL_STRING("4WAY_HANDSHAKE_TIMEOUT",
+                           failure["reason_name"].as<const char*>());
+}
+
+// A network that is not there: the commonest cause there is, for a machine
+// that has been carried somewhere else, or a name typed wrong.
+void test_a_network_that_is_not_there_is_named_as_the_cause(void) {
+  networkSettings->remember("Garage", "password1");
+  runLink(4000);
+
+  const JsonObject failure = json(get("/api/network"))["failure"];
+
+  TEST_ASSERT_EQUAL_STRING("Garage", failure["network"].as<const char*>());
+  TEST_ASSERT_EQUAL_STRING("not_found", failure["cause"].as<const char*>());
+  TEST_ASSERT_EQUAL_INT(201, failure["reason"].as<int>());
+  TEST_ASSERT_EQUAL_STRING("NO_AP_FOUND",
+                           failure["reason_name"].as<const char*>());
+}
+
+// A network that took the machine on and gave it no address. The radio has
+// no number for that, so none is given.
+void test_a_network_that_gives_no_address_is_named_as_the_cause(void) {
+  networkSettings->remember("Garage", "password1");
+  radio->add("Garage", "password1")->givesAddress = false;
+  runLink(WIFI_DHCP_MS + 4000);
+
+  const JsonObject failure = json(get("/api/network"))["failure"];
+
+  TEST_ASSERT_EQUAL_STRING("no_address", failure["cause"].as<const char*>());
+  TEST_ASSERT_FALSE(failure.containsKey("reason"));
+  TEST_ASSERT_FALSE(failure.containsKey("reason_name"));
+}
+
+// A cause the panel has no words for still comes with what the radio said.
+void test_a_cause_with_no_name_of_its_own_still_has_what_the_radio_said(void) {
+  networkSettings->remember("Garage", "password1");
+  FakeNetwork* garage = radio->add("Garage", "password1");
+  garage->refusals = 5;
+  garage->refusal = 2;
+  runLink(4000);
+
+  const JsonObject failure = json(get("/api/network"))["failure"];
+
+  TEST_ASSERT_EQUAL_STRING("other", failure["cause"].as<const char*>());
+  TEST_ASSERT_EQUAL_INT(2, failure["reason"].as<int>());
+  TEST_ASSERT_EQUAL_STRING("AUTH_EXPIRE",
+                           failure["reason_name"].as<const char*>());
+}
+
+// The fullest reply there is: as many networks as the machine remembers,
+// with names as long as a name gets, the machine trying one of them after a
+// try that failed, and its own network open with phones on it. Every field
+// still fits.
+void test_the_fullest_network_reply_has_every_field(void) {
+  for (int i = 0; i < NetworkSettings::MAX_REMEMBERED; i++) {
+    const std::string name = std::string(31, 'n') + std::to_string(i);
+    TEST_ASSERT_TRUE(
+        Remembered::KEPT ==
+        networkSettings->remember(name.c_str(), std::string(63, 'p').c_str()));
+  }
+  radio->phones = WIFI_OWN_CLIENTS;
+  runLink(WIFI_OWN_AFTER_MS + 10000);
+
+  const Reply reply = get("/api/network");
+
+  TEST_ASSERT_EQUAL_INT(200, reply.code);
+  const JsonObject network = json(reply);
+  TEST_ASSERT_EQUAL_STRING("joining", network["station"].as<const char*>());
+  TEST_ASSERT_EQUAL_INT(32, strlen(network["network"].as<const char*>()));
+  TEST_ASSERT_TRUE(network["own"]["open"].as<bool>());
+  TEST_ASSERT_EQUAL_INT(WIFI_OWN_CLIENTS, network["own"]["clients"].as<int>());
+  TEST_ASSERT_EQUAL_INT(NetworkSettings::MAX_REMEMBERED,
+                        network["remembered"].size());
+  for (JsonVariantConst name : network["remembered"].as<JsonArrayConst>()) {
+    TEST_ASSERT_EQUAL_INT(32, strlen(name.as<const char*>()));
+  }
+  TEST_ASSERT_TRUE(network["router_offered"].is<bool>());
+  const JsonObject failure = network["failure"];
+  TEST_ASSERT_EQUAL_INT(32, strlen(failure["network"].as<const char*>()));
+  TEST_ASSERT_EQUAL_STRING("NO_AP_FOUND",
+                           failure["reason_name"].as<const char*>());
+}
+
+// A password goes into the machine and never comes out of it: not a
+// network's, and not the one of its own network, which is read off its
+// screen by somebody stood at it. Every reply that could carry one is looked
+// through, and the log with them.
+void test_no_reply_carries_a_password(void) {
+  // A generator in place of the board's hardware one, so that the password
+  // of its own network is not ten of one letter.
+  static unsigned long state;
+  state = 12345;
+  stubRandom() = [](long howsmall, long howbig) {
+    state = state * 1103515245UL + 12345UL;
+    return howsmall +
+           (long)((state >> 16) % (unsigned long)(howbig - howsmall));
+  };
+  radio->add("Church", CHURCH_KEY);
+  radio->add("Basement", BASEMENT_KEY);
+  std::vector<Reply> replies;
+
+  replies.push_back(post("/api/network/remember",
+                         "{\"ssid\":\"Basement\","
+                         "\"password\":\"correct horse\"}"));
+  replies.push_back(post("/api/network/remember",
+                         "{\"ssid\":\"Church\","
+                         "\"password\":\"battery staple\"}"));
+  runLink(8000);
+  replies.push_back(get("/api/network"));
+  replies.push_back(postBare("/api/network/listen"));
+  runLink(4000);
+  replies.push_back(get("/api/network/nearby"));
+  replies.push_back(post("/api/network/router", "{\"offered\":false}"));
+  replies.push_back(post("/api/network/forget", "{\"ssid\":\"Basement\"}"));
+  replies.push_back(post("/api/network/mode", "{\"mode\":\"own\"}"));
+  runLink(8000);
+  replies.push_back(get("/api/network"));
+  replies.push_back(get("/api/status"));
+  replies.push_back(get("/api/log"));
+
+  const std::string own = networkSettings->ownPassword().str();
+  TEST_ASSERT_EQUAL_INT(10, own.size());
+  TEST_ASSERT_TRUE(radio->accessPointOpen);
+  for (const Reply& reply : replies) {
+    const std::string body = reply.body.str();
+    TEST_ASSERT_EQUAL_INT(200, reply.code);
+    TEST_ASSERT_TRUE(body.find(CHURCH_KEY) == std::string::npos);
+    TEST_ASSERT_TRUE(body.find(BASEMENT_KEY) == std::string::npos);
+    TEST_ASSERT_TRUE(body.find(own) == std::string::npos);
+  }
+}
+
+// How the machine is reached is read, never written, so a post is told to
+// get.
+void test_what_says_how_the_machine_is_reached_is_asked_for_with_a_get(void) {
+  const char* paths[] = {"/api/network", "/api/network/nearby"};
+  for (const char* path : paths) {
+    const Reply reply = post(path, "{}");
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(405, reply.code, path);
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("GET", reply.allow, path);
+  }
+}
+
+// The panel asks the machine to listen, and reads what it heard once the
+// count of listens has gone past the one it was answered with: a listen
+// takes seconds, and waits for a try that is under way. A bare post, as a
+// stop is.
+void test_a_listen_is_asked_for_and_what_it_heard_is_read_afterwards(void) {
+  joinChurch();
+  radio->add("Hall", "password1")->rssi = -45;
+  radio->add("Cafe", "")->rssi = -80;
+
+  const Reply asked = postBare("/api/network/listen");
+
+  TEST_ASSERT_EQUAL_INT(200, asked.code);
+  TEST_ASSERT_EQUAL_STRING("listening",
+                           json(asked)["result"].as<const char*>());
+  TEST_ASSERT_EQUAL_INT(0, json(asked)["after"].as<int>());
+  JsonObject nearby = json(get("/api/network/nearby"));
+  TEST_ASSERT_TRUE(nearby["listening"].as<bool>());
+  TEST_ASSERT_EQUAL_INT(0, nearby["listens"].as<int>());
+  TEST_ASSERT_EQUAL_INT(0, nearby["networks"].size());
+
+  runLink(WIFI_STEP_MS);
+
+  nearby = json(get("/api/network/nearby"));
+  TEST_ASSERT_FALSE(nearby["listening"].as<bool>());
+  TEST_ASSERT_EQUAL_INT(1, nearby["listens"].as<int>());
+  const JsonArray networks = nearby["networks"];
+  TEST_ASSERT_EQUAL_INT(3, networks.size());
+  TEST_ASSERT_EQUAL_STRING("Hall", networks[0]["ssid"].as<const char*>());
+  TEST_ASSERT_EQUAL_INT(-45, networks[0]["rssi"].as<int>());
+  TEST_ASSERT_TRUE(networks[0]["secured"].as<bool>());
+  TEST_ASSERT_EQUAL_STRING("Church", networks[1]["ssid"].as<const char*>());
+  TEST_ASSERT_EQUAL_STRING("Cafe", networks[2]["ssid"].as<const char*>());
+  TEST_ASSERT_EQUAL_INT(-80, networks[2]["rssi"].as<int>());
+  TEST_ASSERT_FALSE(networks[2]["secured"].as<bool>());
+}
+
+// The fullest list there is: as many networks as are listed, each with a
+// name as long as a name gets. Every one still has every field.
+void test_the_fullest_list_of_networks_in_reach_has_every_field(void) {
+  joinChurch();
+  for (int i = 0; i < 20; i++) {
+    const std::string name =
+        std::string(30, 'n') + (i < 10 ? "0" : "") + std::to_string(i);
+    radio->add(name.c_str(), "password1")->rssi = -30 - i;
+  }
+  postBare("/api/network/listen");
+  runLink(WIFI_STEP_MS);
+
+  const Reply reply = get("/api/network/nearby");
+
+  TEST_ASSERT_EQUAL_INT(200, reply.code);
+  const JsonArray networks = json(reply)["networks"];
+  TEST_ASSERT_EQUAL_INT(LinkSupervisor::MAX_NEARBY, networks.size());
+  for (JsonObject network : networks) {
+    TEST_ASSERT_EQUAL_INT(32, strlen(network["ssid"].as<const char*>()));
+    TEST_ASSERT_TRUE(network["rssi"].is<int>());
+    TEST_ASSERT_TRUE(network["secured"].is<bool>());
+  }
+}
+
+// The mode is changed by name. The reply is how the machine is reached as
+// /api/network gives it, so the panel shows the change without asking again.
+void test_the_mode_is_changed_by_name(void) {
+  const Reply reply = post("/api/network/mode", "{\"mode\":\"own\"}");
+
+  TEST_ASSERT_EQUAL_INT(200, reply.code);
+  TEST_ASSERT_EQUAL_STRING("own", json(reply)["mode"].as<const char*>());
+  TEST_ASSERT_TRUE(NetworkMode::OWN == networkSettings->mode());
+
+  post("/api/network/mode", "{\"mode\":\"join\"}");
+
+  TEST_ASSERT_TRUE(NetworkMode::JOIN == networkSettings->mode());
+}
+
+// A mode the machine does not have is refused with the two it has, and the
+// mode it is in stays.
+void test_a_mode_the_machine_does_not_have_is_refused(void) {
+  networkSettings->setMode(NetworkMode::OWN);
+  const char* bodies[] = {"{\"mode\":\"both\"}", "{\"mode\":1}", "{}"};
+  for (const char* body : bodies) {
+    const Reply reply = post("/api/network/mode", body);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(400, reply.code, body);
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("Please provide mode as join or own",
+                                     errorOf(reply), body);
+  }
+  TEST_ASSERT_TRUE(NetworkMode::OWN == networkSettings->mode());
+}
+
+// A network is remembered from its name and password, and is the first one
+// tried from then on. Sent again, as the panel sends it when it hears nothing
+// back, it is still remembered once.
+void test_a_network_is_remembered_from_its_name_and_password(void) {
+  networkSettings->remember("Church", CHURCH_KEY);
+  const char* body = "{\"ssid\":\"Basement\",\"password\":\"correct horse\"}";
+
+  const Reply reply = post("/api/network/remember", body);
+  const Reply again = post("/api/network/remember", body);
+
+  TEST_ASSERT_EQUAL_INT(200, reply.code);
+  TEST_ASSERT_EQUAL_STRING("Basement,Church",
+                           namesIn(json(reply)["remembered"]).c_str());
+  TEST_ASSERT_EQUAL_INT(200, again.code);
+  const std::vector<RememberedNetwork> networks = networkSettings->networks();
+  TEST_ASSERT_EQUAL_INT(2, networks.size());
+  TEST_ASSERT_EQUAL_STRING("Basement", networks[0].ssid.c_str());
+  TEST_ASSERT_EQUAL_STRING(BASEMENT_KEY, networks[0].password.c_str());
+}
+
+// A network sent with no password is one that has none, whether the password
+// is left out, empty or null.
+void test_a_network_sent_without_a_password_is_one_that_has_none(void) {
+  const char* bodies[] = {"{\"ssid\":\"Cafe\"}",
+                          "{\"ssid\":\"Cafe\",\"password\":\"\"}",
+                          "{\"ssid\":\"Cafe\",\"password\":null}"};
+  for (const char* body : bodies) {
+    networkSettings->forget("Cafe");
+
+    const Reply reply = post("/api/network/remember", body);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(200, reply.code, body);
+    const std::vector<RememberedNetwork> networks = networkSettings->networks();
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, networks.size(), body);
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("", networks[0].password.c_str(), body);
+  }
+}
+
+// A name comes back as it went in, whatever JSON has to escape in it.
+void test_a_name_json_has_to_escape_comes_back_as_it_went_in(void) {
+  post("/api/network/remember",
+       "{\"ssid\":\"Dad's \\\"fast\\\" \\\\ Caf\xC3\xA9\","
+       "\"password\":\"correct horse\"}");
+
+  const JsonObject network = json(get("/api/network"));
+
+  TEST_ASSERT_EQUAL_STRING("Dad's \"fast\" \\ Caf\xC3\xA9",
+                           network["remembered"][0].as<const char*>());
+}
+
+// A network the machine cannot keep is refused in words the panel shows as
+// they are, and nothing is remembered. A password that is not text is not
+// read as no password: that would remember an open network nobody asked for.
+void test_a_network_the_machine_cannot_keep_is_refused_in_words(void) {
+  const std::string longName = "{\"ssid\":\"" + std::string(33, 'n') + "\"}";
+  const std::string longPassword =
+      "{\"ssid\":\"Church\",\"password\":\"" + std::string(64, 'p') + "\"}";
+  const struct {
+    const char* body;
+    const char* refusal;
+  } cases[] = {
+      {"{}", "Please provide an ssid value"},
+      {"{\"ssid\":\"\"}", "Please provide an ssid value"},
+      {"{\"ssid\":7}", "Please provide an ssid value"},
+      {longName.c_str(), "A network's name may be at most 32 bytes, got 33"},
+      {"{\"ssid\":\"Line\\nbreak\"}", "A network's name must be plain text"},
+      {"{\"ssid\":\"Church\",\"password\":\"seven77\"}",
+       "A network's password must be at least 8 characters, got 7"},
+      {longPassword.c_str(),
+       "A network's password may be at most 63 characters, got 64"},
+      {"{\"ssid\":\"Church\",\"password\":12345678}",
+       "Please provide password as text, or leave it out for a network "
+       "without one"},
+  };
+  for (const auto& one : cases) {
+    const Reply reply = post("/api/network/remember", one.body);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(400, reply.code, one.body);
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(one.refusal, errorOf(reply), one.body);
+  }
+  TEST_ASSERT_EQUAL_INT(0, networkSettings->networks().size());
+}
+
+// The machine remembers only so many, and says so when it is full: a 409,
+// since the same network is taken once another is forgotten. A network it
+// remembers already can still have its password put right.
+void test_one_network_more_than_it_remembers_is_refused_as_a_conflict(void) {
+  for (int i = 0; i < NetworkSettings::MAX_REMEMBERED; i++) {
+    networkSettings->remember(("Network " + std::to_string(i)).c_str(),
+                              "password1");
+  }
+
+  const Reply reply = post("/api/network/remember",
+                           "{\"ssid\":\"Church\","
+                           "\"password\":\"battery staple\"}");
+
+  TEST_ASSERT_EQUAL_INT(409, reply.code);
+  TEST_ASSERT_EQUAL_STRING(
+      "The machine remembers at most 4 networks, so forget one first",
+      errorOf(reply));
+
+  const Reply putRight = post("/api/network/remember",
+                              "{\"ssid\":\"Network 0\","
+                              "\"password\":\"password2\"}");
+
+  TEST_ASSERT_EQUAL_INT(200, putRight.code);
+}
+
+// A network is forgotten by its name. One the machine does not remember is
+// forgotten already, so a forget sent again does no harm.
+void test_a_network_is_forgotten_by_its_name(void) {
+  networkSettings->remember("Basement", BASEMENT_KEY);
+  networkSettings->remember("Church", CHURCH_KEY);
+  const char* body = "{\"ssid\":\"Basement\"}";
+
+  const Reply reply = post("/api/network/forget", body);
+  const Reply again = post("/api/network/forget", body);
+
+  TEST_ASSERT_EQUAL_INT(200, reply.code);
+  TEST_ASSERT_EQUAL_STRING("Church",
+                           namesIn(json(reply)["remembered"]).c_str());
+  TEST_ASSERT_EQUAL_INT(200, again.code);
+  TEST_ASSERT_EQUAL_INT(1, networkSettings->networks().size());
+}
+
+// A forget that names no network forgets none.
+void test_a_forget_that_names_no_network_is_refused(void) {
+  networkSettings->remember("Church", CHURCH_KEY);
+  const char* bodies[] = {"{}", "{\"ssid\":\"\"}", "{\"ssid\":true}"};
+  for (const char* body : bodies) {
+    const Reply reply = post("/api/network/forget", body);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(400, reply.code, body);
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("Please provide an ssid value",
+                                     errorOf(reply), body);
+  }
+  TEST_ASSERT_EQUAL_INT(1, networkSettings->networks().size());
+}
+
+// Whether its own network offers a router is set with true or false and
+// nothing else. ArduinoJson reads any value as a bool, "no" as true.
+void test_whether_its_own_network_offers_a_router_is_set_strictly(void) {
+  const Reply reply = post("/api/network/router", "{\"offered\":false}");
+
+  TEST_ASSERT_EQUAL_INT(200, reply.code);
+  TEST_ASSERT_FALSE(json(reply)["router_offered"].as<bool>());
+  TEST_ASSERT_FALSE(networkSettings->routerOffered());
+
+  const char* bodies[] = {"{\"offered\":\"yes\"}", "{\"offered\":1}", "{}"};
+  for (const char* body : bodies) {
+    const Reply refused = post("/api/network/router", body);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(400, refused.code, body);
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("Please provide offered as true or false",
+                                     errorOf(refused), body);
+  }
+  TEST_ASSERT_FALSE(networkSettings->routerOffered());
+}
+
+// What changes the network reads its body as a command's is read: sent as
+// JSON, an object, and no longer than the device reads whole. Nothing changes
+// for a body that is refused.
+void test_what_changes_the_network_reads_its_body_as_a_command_does(void) {
+  const char* paths[] = {"/api/network/mode", "/api/network/remember",
+                         "/api/network/forget", "/api/network/router"};
+  const std::string tooLong =
+      "{\"ssid\":\"" + std::string(Api::MAX_BODY_BYTES, 'n') + "\"}";
+  for (const char* path : paths) {
+    const Reply typed = postAs("text/plain", path, "{\"mode\":\"own\"}");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(415, typed.code, path);
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("Please send the body as application/json",
+                                     errorOf(typed), path);
+
+    const Reply list = post(path, "[]");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(400, list.code, path);
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("The body must be a JSON object",
+                                     errorOf(list), path);
+
+    const Reply cutShort = post(path, "{\"ssid\":\"Church\",\"offered\":fa");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(400, cutShort.code, path);
+
+    const Reply large = post(path, tooLong.c_str());
+    TEST_ASSERT_EQUAL_INT_MESSAGE(413, large.code, path);
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("The body may be at most 2048 bytes",
+                                     errorOf(large), path);
+  }
+  TEST_ASSERT_TRUE(NetworkMode::JOIN == networkSettings->mode());
+  TEST_ASSERT_EQUAL_INT(0, networkSettings->networks().size());
+  TEST_ASSERT_TRUE(networkSettings->routerOffered());
+}
+
+// Each of them changes something, or sets the radio to work, so each is a
+// post, and a get is told so.
+void test_what_changes_the_network_is_asked_for_with_a_post(void) {
+  const char* paths[] = {"/api/network/listen", "/api/network/mode",
+                         "/api/network/remember", "/api/network/forget",
+                         "/api/network/router"};
+  for (const char* path : paths) {
+    const Reply reply = get(path);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(405, reply.code, path);
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("POST", reply.allow, path);
+  }
+  TEST_ASSERT_FALSE(supervisor->nearby().listening);
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_a_path_nothing_answers_is_not_found);
@@ -1493,5 +2099,32 @@ int main(int, char**) {
   RUN_TEST(test_an_estimate_refuses_what_the_run_would_refuse);
   RUN_TEST(test_an_estimate_is_asked_for_with_a_post);
   RUN_TEST(test_only_a_run_of_labels_can_be_estimated);
+  RUN_TEST(test_a_machine_on_a_network_says_how_it_is_reached);
+  RUN_TEST(test_a_machine_that_remembers_no_network_says_its_own_is_open);
+  RUN_TEST(test_a_machine_running_its_own_network_says_so);
+  RUN_TEST(test_the_network_is_answered_for_before_the_link_has_started);
+  RUN_TEST(
+      test_the_networks_it_remembers_are_named_in_the_order_they_are_tried);
+  RUN_TEST(test_a_machine_that_cannot_join_says_what_the_last_try_came_to);
+  RUN_TEST(test_a_network_that_is_not_there_is_named_as_the_cause);
+  RUN_TEST(test_a_network_that_gives_no_address_is_named_as_the_cause);
+  RUN_TEST(test_a_cause_with_no_name_of_its_own_still_has_what_the_radio_said);
+  RUN_TEST(test_the_fullest_network_reply_has_every_field);
+  RUN_TEST(test_no_reply_carries_a_password);
+  RUN_TEST(test_what_says_how_the_machine_is_reached_is_asked_for_with_a_get);
+  RUN_TEST(test_a_listen_is_asked_for_and_what_it_heard_is_read_afterwards);
+  RUN_TEST(test_the_fullest_list_of_networks_in_reach_has_every_field);
+  RUN_TEST(test_the_mode_is_changed_by_name);
+  RUN_TEST(test_a_mode_the_machine_does_not_have_is_refused);
+  RUN_TEST(test_a_network_is_remembered_from_its_name_and_password);
+  RUN_TEST(test_a_network_sent_without_a_password_is_one_that_has_none);
+  RUN_TEST(test_a_name_json_has_to_escape_comes_back_as_it_went_in);
+  RUN_TEST(test_a_network_the_machine_cannot_keep_is_refused_in_words);
+  RUN_TEST(test_one_network_more_than_it_remembers_is_refused_as_a_conflict);
+  RUN_TEST(test_a_network_is_forgotten_by_its_name);
+  RUN_TEST(test_a_forget_that_names_no_network_is_refused);
+  RUN_TEST(test_whether_its_own_network_offers_a_router_is_set_strictly);
+  RUN_TEST(test_what_changes_the_network_reads_its_body_as_a_command_does);
+  RUN_TEST(test_what_changes_the_network_is_asked_for_with_a_post);
   return UNITY_END();
 }

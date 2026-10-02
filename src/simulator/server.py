@@ -1,12 +1,13 @@
 """A stand-in for the machine, so data/ can be worked on without one.
 
 The simulator is the firmware. main.cpp beside this file builds this
-machine's own job runner and Api for the host, on the fake motors, screen and
-flash the native tests drive, and reads requests on stdin. This serves the
-panel's files out of data/, as the device serves them out of SPIFFS, and
-relays every request under /api/ to that program and its reply back. Nothing
-the device says is written down here, so a command, a refusal or a status
-field added to the firmware is in the simulator with nothing to remember.
+machine's own job runner, link supervisor and Api for the host, on the fake
+motors, screen, flash and radio the native tests drive, and reads requests on
+stdin. This serves the panel's files out of data/, as the device serves them
+out of SPIFFS, and relays every request under /api/ to that program and its
+reply back. Nothing the device says is written down here, so a command, a
+refusal or a status field added to the firmware is in the simulator with
+nothing to remember.
 
 It needs aiohttp, which nothing else in this repo does, and PlatformIO, which
 builds the firmware. From the repo root:
@@ -18,6 +19,11 @@ then open http://localhost/. The panel's URLs are relative, so any port
 serves it. macOS lets anyone listen on 80; on Linux, --port 8080 does
 without sudo. --speed 10 runs the machine ten times as fast. --lose 30 is a
 weak network, which leaves 30 in a hundred requests to the api unanswered.
+
+The machine has no network to start with, so it opens its own. The radio it
+has is a list of networks, which main.cpp names: one lets it in, one turns it
+away twice first, one has no address to give. The password of every one that
+has a password is labelmaker.
 """
 
 import asyncio

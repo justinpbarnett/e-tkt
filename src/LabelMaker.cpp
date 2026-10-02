@@ -107,9 +107,6 @@ Printhead* printhead =
     new Printhead(logger, daisywheel, press, stopSignal, feeder);
 ETKT* etkt = new ETKT(logger, settings, display, printhead, feeder, roll,
                       lastRun, sound, ledFinish, ledChar, stopSignal);
-// Everything the device answers under /api/, which the webserver hands every
-// such request to.
-Api* api = new Api(etkt, logger);
 // How the machine is reached. The link decides: which network it joins, and
 // when it opens its own. It works the radio through the Radio interface, as
 // the host tests work a fake one, so this is the one place that knows the
@@ -118,6 +115,9 @@ NetworkSettings* networkSettings = new NetworkSettings(logger);
 Esp32Radio* radio = new Esp32Radio(logger);
 LinkSupervisor* linkSupervisor =
     new LinkSupervisor(logger, radio, networkSettings, display);
+// Everything the device answers under /api/, which the webserver hands every
+// such request to: what the job runner does, and how the machine is reached.
+Api* api = new Api(etkt, linkSupervisor, networkSettings, logger);
 Network* network =
     new Network(logger, display, api, radio, networkSettings, linkSupervisor);
 // The pin is still named for what the switch on it was first for. Held
