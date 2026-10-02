@@ -53,9 +53,9 @@ export function tapeLeftMm(status) {
 export function formatLength(mm) {
   const um = Math.max(Math.round(mm * 1000), 0);
   if (um < 1000000) {
-    return Math.floor(um / 1000) + " mm";
+    return withUnit(Math.floor(um / 1000), "mm");
   }
-  return Math.floor(um / 10000) / 100 + " m";
+  return withUnit(Math.floor(um / 10000) / 100, "m");
 }
 
 // A roll length as typed into Setup's dialog, in metres, which is how people
@@ -124,8 +124,8 @@ export function rollRange(device) {
     "From " +
     roll.minimum_mm / 1000 +
     " to " +
-    roll.maximum_mm / 1000 +
-    " m. A new roll is usually " +
+    withUnit(roll.maximum_mm / 1000, "m") +
+    ". A new roll is usually " +
     formatLength(roll.default_mm) +
     "."
   );
@@ -136,6 +136,14 @@ export function rollRange(device) {
 // cycle, and a file of its own would be one more request for the device.
 export function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
+}
+
+// A number and its unit, with a space between them that a line does not
+// break at: "2.95" at the end of one line and "m left." at the start of the
+// next read as two things. The other modules take it from here, as they take
+// clamp().
+export function withUnit(value, unit) {
+  return value + " " + unit;
 }
 
 // Metres typed, as whole millimetres, or null when what is typed is not a

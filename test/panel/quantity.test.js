@@ -126,14 +126,14 @@ test("the quantity note says when the roll is spent, and where to load another",
 
 test("the quantity note says how much tape is left while there is no label to measure", () => {
   const left = quantity(choice({ labelLength: null, tapeLeftMm: 2968 }), labelMaker()).note;
-  assert.deepEqual(left, { text: "2.96 m of tape left on the roll.", tone: null });
+  assert.deepEqual(left, { text: "2.96\u00a0m of tape left on the roll.", tone: null });
 });
 
 test("the quantity note warns when not even one of the label fits", () => {
   // A 7-character label takes 29.6 mm, and 29 mm is left.
   const short = quantity(choice({ labelLength: 7, tapeLeftMm: 29 }), labelMaker()).note;
   assert.deepEqual(short, {
-    text: "Only 29 mm left, not enough for a label this long.\nLoad a new roll in Setup.",
+    text: "Only 29\u00a0mm left, not enough for a label this long.\nLoad a new roll in Setup.",
     tone: "warning",
   });
 });
@@ -141,11 +141,11 @@ test("the quantity note warns when not even one of the label fits", () => {
 test("with One picked, the quantity note says about how many of the label fit", () => {
   const device = labelMaker();
   assert.deepEqual(quantity(choice({}), device).note, {
-    text: "About 81 labels this long fit on the 3 m left.",
+    text: "About 81 labels this long fit on the 3\u00a0m left.",
     tone: null,
   });
   assert.deepEqual(quantity(choice({ tapeLeftMm: 40 }), device).note, {
-    text: "About 1 label this long fits on the 40 mm left.",
+    text: "About 1 label this long fits on the 40\u00a0mm left.",
     tone: null,
   });
 });
@@ -156,16 +156,25 @@ test("with Multiple picked, the quantity note says what the run takes, or why it
   // the spool is the better judge of what is left.
   const device = labelMaker();
   const multiple = (changes) => quantity(choice({ mode: "multiple", ...changes }), device).note;
-  assert.deepEqual(multiple({ copiesText: "12" }), { text: "Uses about 444 mm of the 3 m left.", tone: null });
+  assert.deepEqual(multiple({ copiesText: "12" }), {
+    text: "Uses about 444\u00a0mm of the 3\u00a0m left.",
+    tone: null,
+  });
   assert.deepEqual(multiple({ copiesText: "2", labelLength: 6 }), {
-    text: "Uses about 51 mm of the 3 m left.",
+    text: "Uses about 51\u00a0mm of the 3\u00a0m left.",
     tone: null,
   });
   assert.deepEqual(multiple({ copiesText: "1" }), { text: "Enter a number from 2 to 500.", tone: "warning" });
-  assert.deepEqual(multiple({ copiesText: "81" }), { text: "Uses about 2.99 m of the 3 m left.", tone: null });
-  assert.deepEqual(multiple({ copiesText: "82" }), { text: "Only about 81 fit on the 3 m left.", tone: "warning" });
+  assert.deepEqual(multiple({ copiesText: "81" }), {
+    text: "Uses about 2.99\u00a0m of the 3\u00a0m left.",
+    tone: null,
+  });
+  assert.deepEqual(multiple({ copiesText: "82" }), {
+    text: "Only about 81 fit on the 3\u00a0m left.",
+    tone: "warning",
+  });
   assert.deepEqual(multiple({ copiesText: "2", tapeLeftMm: 40 }), {
-    text: "Only about 1 fits on the 40 mm left.",
+    text: "Only about 1 fits on the 40\u00a0mm left.",
     tone: "warning",
   });
 });

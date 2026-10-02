@@ -61,19 +61,19 @@ test("a length of tape reads to the millimetre under a metre, and to the centime
   // could be a good share of one out: two labels of 28 mm read as 5 cm.
   // Rounded down so what is left is never said to be more than the device's
   // own estimate of it.
-  assert.equal(formatLength(9.9), "9 mm");
-  assert.equal(formatLength(-4), "0 mm");
-  assert.equal(formatLength(56), "56 mm");
-  assert.equal(formatLength(999.9), "999 mm");
-  assert.equal(formatLength(1000), "1 m");
-  assert.equal(formatLength(1009), "1 m");
-  assert.equal(formatLength(1010), "1.01 m");
-  assert.equal(formatLength(1500), "1.5 m");
-  assert.equal(formatLength(2824), "2.82 m");
-  assert.equal(formatLength(10000), "10 m");
+  assert.equal(formatLength(9.9), "9\u00a0mm");
+  assert.equal(formatLength(-4), "0\u00a0mm");
+  assert.equal(formatLength(56), "56\u00a0mm");
+  assert.equal(formatLength(999.9), "999\u00a0mm");
+  assert.equal(formatLength(1000), "1\u00a0m");
+  assert.equal(formatLength(1009), "1\u00a0m");
+  assert.equal(formatLength(1010), "1.01\u00a0m");
+  assert.equal(formatLength(1500), "1.5\u00a0m");
+  assert.equal(formatLength(2824), "2.82\u00a0m");
+  assert.equal(formatLength(10000), "10\u00a0m");
   // 350 labels of 6 feeds of 3.9 mm are 8190 mm, which the sum lands a hair
   // under in floating point.
-  assert.equal(formatLength(350 * ((6 * 3900) / 1000)), "8.19 m");
+  assert.equal(formatLength(350 * ((6 * 3900) / 1000)), "8.19\u00a0m");
 });
 
 test("the tape left is the last status's estimate, and unknown without one", () => {
@@ -151,7 +151,7 @@ test("loading a roll starts from the length the last one went in at", () => {
 
 test("loading a roll says what lengths the device takes", () => {
   // Said in metres, the unit the length is typed in.
-  assert.equal(rollRange(labelMaker()), "From 0.5 to 10 m. A new roll is usually 3 m.");
+  assert.equal(rollRange(labelMaker()), "From 0.5 to 10\u00a0m. A new roll is usually 3\u00a0m.");
 });
 
 test("Setup shows how much of the roll is left, and warns when it runs low", () => {
@@ -159,9 +159,9 @@ test("Setup shows how much of the roll is left, and warns when it runs low", () 
   // that length, so a roll that has been over-declared never shows more
   // than full, and one declared at nothing shows empty.
   const gauge = (length_mm, remaining_mm) => rollGauge({ roll: { length_mm, remaining_mm } });
-  assert.deepEqual(gauge(3000, 1500), { left: "1.5 m", of: "left of 3 m", share: 0.5, low: false });
-  assert.deepEqual(gauge(3000, 300), { left: "300 mm", of: "left of 3 m", share: 0.1, low: false });
-  assert.equal(gauge(3000, 2824).left, "2.82 m");
+  assert.deepEqual(gauge(3000, 1500), { left: "1.5\u00a0m", of: "left of 3\u00a0m", share: 0.5, low: false });
+  assert.deepEqual(gauge(3000, 300), { left: "300\u00a0mm", of: "left of 3\u00a0m", share: 0.1, low: false });
+  assert.equal(gauge(3000, 2824).left, "2.82\u00a0m");
   assert.equal(gauge(3000, 299).low, true);
   assert.equal(gauge(3000, 4000).share, 1);
   assert.equal(gauge(0, 0).share, 0);

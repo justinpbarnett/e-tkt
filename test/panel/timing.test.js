@@ -7,34 +7,61 @@ import { labelMaker, running } from "./device.js";
 test("a run of labels is estimated label by label and in all before it is sent", () => {
   // What api/tag/estimate answered for 100 of " HELLO ", cut: a tenth of a
   // second on the label, so leaving the cut out shows what it saves.
-  assert.equal(estimateText({ label_ms: 14_900, run_ms: 1_495_000 }, 100), "About 14.9 s a label, 25 min in all.");
+  assert.equal(
+    estimateText({ label_ms: 14_900, run_ms: 1_495_000 }, 100),
+    "About 14.9\u00a0s a label, 25\u00a0min in all.",
+  );
 });
 
 test("a single label is estimated as the time it takes, tune and home and all", () => {
   // Its label time and its run are the same label, and the run is the one
   // that counts the tune and the home the label waits for.
-  assert.equal(estimateText({ label_ms: 14_900, run_ms: 22_400 }, 1), "Takes about 22 s.");
+  assert.equal(estimateText({ label_ms: 14_900, run_ms: 22_400 }, 1), "Takes about 22\u00a0s.");
 });
 
 test("a run under ten minutes is estimated to the second", () => {
   // At that length a minute either way is a good part of it.
-  assert.equal(estimateText({ label_ms: 14_900, run_ms: 82_000 }, 5), "About 14.9 s a label, 1 min 22 s in all.");
-  assert.equal(estimateText({ label_ms: 14_900, run_ms: 240_300 }, 16), "About 14.9 s a label, 4 min in all.");
-  assert.equal(estimateText({ label_ms: 14_900, run_ms: 599_400 }, 40), "About 14.9 s a label, 9 min 59 s in all.");
+  assert.equal(
+    estimateText({ label_ms: 14_900, run_ms: 82_000 }, 5),
+    "About 14.9\u00a0s a label, 1\u00a0min 22\u00a0s in all.",
+  );
+  assert.equal(
+    estimateText({ label_ms: 14_900, run_ms: 240_300 }, 16),
+    "About 14.9\u00a0s a label, 4\u00a0min in all.",
+  );
+  assert.equal(
+    estimateText({ label_ms: 14_900, run_ms: 599_400 }, 40),
+    "About 14.9\u00a0s a label, 9\u00a0min 59\u00a0s in all.",
+  );
 });
 
 test("a run of an hour or more is estimated in hours and minutes", () => {
   // The most one run prints is 500 labels, a couple of hours of them.
-  assert.equal(estimateText({ label_ms: 14_900, run_ms: 7_455_000 }, 500), "About 14.9 s a label, 2 h 4 min in all.");
-  assert.equal(estimateText({ label_ms: 14_400, run_ms: 7_190_000 }, 500), "About 14.4 s a label, 2 h in all.");
-  assert.equal(estimateText({ label_ms: 14_900, run_ms: 3_570_000 }, 239), "About 14.9 s a label, 1 h in all.");
+  assert.equal(
+    estimateText({ label_ms: 14_900, run_ms: 7_455_000 }, 500),
+    "About 14.9\u00a0s a label, 2\u00a0h 4\u00a0min in all.",
+  );
+  assert.equal(
+    estimateText({ label_ms: 14_400, run_ms: 7_190_000 }, 500),
+    "About 14.4\u00a0s a label, 2\u00a0h in all.",
+  );
+  assert.equal(
+    estimateText({ label_ms: 14_900, run_ms: 3_570_000 }, 239),
+    "About 14.9\u00a0s a label, 1\u00a0h in all.",
+  );
 });
 
 test("a label of a minute or more is estimated as long as any other length of time", () => {
   // The longest label the device takes is 249 characters, which is minutes
   // of pressing, and tenths of a second are nothing at that length.
-  assert.equal(estimateText({ label_ms: 83_040, run_ms: 420_000 }, 5), "About 1 min 23 s a label, 7 min in all.");
-  assert.equal(estimateText({ label_ms: 59_960, run_ms: 310_000 }, 5), "About 1 min a label, 5 min 10 s in all.");
+  assert.equal(
+    estimateText({ label_ms: 83_040, run_ms: 420_000 }, 5),
+    "About 1\u00a0min 23\u00a0s a label, 7\u00a0min in all.",
+  );
+  assert.equal(
+    estimateText({ label_ms: 59_960, run_ms: 310_000 }, 5),
+    "About 1\u00a0min a label, 5\u00a0min 10\u00a0s in all.",
+  );
 });
 
 test("without an estimate the page can read, it says nothing of the time", () => {
@@ -70,13 +97,13 @@ function printing(status = {}, stop = null) {
 test("a run printing says how long it has left, and how long its labels are taking", () => {
   // The label time is the one the device has timed its labels at, which
   // is what the time left is worked out from.
-  assert.equal(timeLeftText(printing(), labelMaker()), "About 24 min left, at 14.8 s a label.");
+  assert.equal(timeLeftText(printing(), labelMaker()), "About 24\u00a0min left, at 14.8\u00a0s a label.");
 });
 
 test("a single label says only how long it has left", () => {
   // Its label time is the whole of it.
   const single = printing({ copy: 1, copies: 1, remaining_ms: 12_300 });
-  assert.equal(timeLeftText(single, labelMaker()), "About 12 s left.");
+  assert.equal(timeLeftText(single, labelMaker()), "About 12\u00a0s left.");
 });
 
 test("a run with nothing left to count says nothing of the time", () => {
@@ -97,7 +124,7 @@ test("a run the page has asked to stop after the label says nothing of the time 
   assert.equal(timeLeftText(printing({}, "after_label"), labelMaker()), "");
   // Once it has, the time left is to the end of the label it is on.
   const stopping = printing({ stop: "after_label", remaining_ms: 9_200 }, "after_label");
-  assert.equal(timeLeftText(stopping, labelMaker()), "About 9 s left, at 14.8 s a label.");
+  assert.equal(timeLeftText(stopping, labelMaker()), "About 9\u00a0s left, at 14.8\u00a0s a label.");
 });
 
 test("a command that is not a run of labels says nothing of the time", () => {
@@ -115,8 +142,8 @@ test("a run the page has lost touch with says nothing of the time", () => {
 });
 
 test("a run whose label time cannot be read says only how long it has left", () => {
-  assert.equal(timeLeftText(printing({ label_ms: 0 }), labelMaker()), "About 24 min left.");
-  assert.equal(timeLeftText(printing({ label_ms: undefined }), labelMaker()), "About 24 min left.");
+  assert.equal(timeLeftText(printing({ label_ms: 0 }), labelMaker()), "About 24\u00a0min left.");
+  assert.equal(timeLeftText(printing({ label_ms: undefined }), labelMaker()), "About 24\u00a0min left.");
 });
 
 // A run of " HELLO " as the page posts it, to api/tag and to api/tag/estimate.
@@ -141,11 +168,11 @@ test("the answer the device gives for a run is what the page says of it", () => 
   const estimates = new Estimates();
   assert.equal(estimates.text(hello()), "");
   estimates.answered(estimates.ask(hello()), HELLO_ESTIMATE);
-  assert.equal(estimates.text(hello()), "About 14.9 s a label, 25 min in all.");
+  assert.equal(estimates.text(hello()), "About 14.9\u00a0s a label, 25\u00a0min in all.");
   // As estimateText() says it, for the copies the answer was for.
   const single = hello(1);
   estimates.answered(estimates.ask(single), { label_ms: 14_900, run_ms: 22_400 });
-  assert.equal(estimates.text(single), "Takes about 22 s.");
+  assert.equal(estimates.text(single), "Takes about 22\u00a0s.");
 });
 
 test("a form with no run on it says nothing of the time", () => {
@@ -163,7 +190,7 @@ test("only the answer for the run last asked about counts", () => {
   const second = estimates.ask(hello(200));
   estimates.answered(second, { label_ms: 14_900, run_ms: 2_985_000 });
   estimates.answered(first, HELLO_ESTIMATE);
-  assert.equal(estimates.text(hello(200)), "About 14.9 s a label, 50 min in all.");
+  assert.equal(estimates.text(hello(200)), "About 14.9\u00a0s a label, 50\u00a0min in all.");
 });
 
 test("a run the device has not answered for says nothing of the time, whatever it said of the one before", () => {
@@ -176,7 +203,7 @@ test("a run the device has not answered for says nothing of the time, whatever i
   estimates.ask(hello(200));
   assert.equal(estimates.text(hello(200)), "");
   // Back on 100, and what the device said of it still holds.
-  assert.equal(estimates.text(hello(100)), "About 14.9 s a label, 25 min in all.");
+  assert.equal(estimates.text(hello(100)), "About 14.9\u00a0s a label, 25\u00a0min in all.");
 });
 
 test("a run the device will not estimate says nothing of the time, and is not asked about again", () => {
@@ -212,10 +239,10 @@ test("the page can tell the run it asked about last from any other", () => {
 
 // What the page says under the print button, from what the page knows of
 // the command running and what it would say of the run on the form.
-const ON_THE_FORM = "About 14.9 s a label, 25 min in all.";
+const ON_THE_FORM = "About 14.9\u00a0s a label, 25\u00a0min in all.";
 
 test("while a run prints, the page says how long it has left", () => {
-  assert.equal(timeText(printing(), labelMaker(), ON_THE_FORM), "About 24 min left, at 14.8 s a label.");
+  assert.equal(timeText(printing(), labelMaker(), ON_THE_FORM), "About 24\u00a0min left, at 14.8\u00a0s a label.");
 });
 
 test("before a run prints, the page says how long the run on the form would take", () => {

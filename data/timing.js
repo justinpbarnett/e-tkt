@@ -5,6 +5,7 @@
 // test/panel/timing.test.js.
 
 import { printingRun, printsRun } from "./status.js";
+import { withUnit } from "./tape.js";
 
 // What the page says of a run before it is sent, from the reply to
 // api/tag/estimate for it: how long one of its labels takes, and the run
@@ -131,7 +132,7 @@ function isTime(ms) {
 // it shows. A label of a minute or more is as long as anything else is.
 function labelDuration(ms) {
   const tenths = Math.round(ms / 100);
-  return tenths < 600 ? (tenths / 10).toFixed(1) + " s" : duration(ms);
+  return tenths < 600 ? withUnit((tenths / 10).toFixed(1), "s") : duration(ms);
 }
 
 // A length of time to the second under ten minutes, where a minute either
@@ -139,16 +140,16 @@ function labelDuration(ms) {
 export function duration(ms) {
   const seconds = Math.round(ms / 1000);
   if (seconds < 60) {
-    return seconds + " s";
+    return withUnit(seconds, "s");
   }
   if (seconds < 600) {
-    const minutes = Math.floor(seconds / 60) + " min";
-    return seconds % 60 === 0 ? minutes : minutes + " " + (seconds % 60) + " s";
+    const minutes = withUnit(Math.floor(seconds / 60), "min");
+    return seconds % 60 === 0 ? minutes : minutes + " " + withUnit(seconds % 60, "s");
   }
   const minutes = Math.round(seconds / 60);
   if (minutes < 60) {
-    return minutes + " min";
+    return withUnit(minutes, "min");
   }
-  const hours = Math.floor(minutes / 60) + " h";
-  return minutes % 60 === 0 ? hours : hours + " " + (minutes % 60) + " min";
+  const hours = withUnit(Math.floor(minutes / 60), "h");
+  return minutes % 60 === 0 ? hours : hours + " " + withUnit(minutes % 60, "min");
 }

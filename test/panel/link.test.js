@@ -316,9 +316,9 @@ test("the page says how long ago the device was last heard", () => {
   link.heard(1000);
   link.missed();
   assert.equal(link.sinceHeard(18000), 17000);
-  assert.equal(lastHeardText(17000), "Last heard 17 s ago.");
-  assert.equal(lastHeardText(125000), "Last heard 2 min 5 s ago.");
-  assert.equal(lastHeardText(3 * 3600000), "Last heard 3 h ago.");
+  assert.equal(lastHeardText(17000), "Last heard 17\u00a0s ago.");
+  assert.equal(lastHeardText(125000), "Last heard 2\u00a0min 5\u00a0s ago.");
+  assert.equal(lastHeardText(3 * 3600000), "Last heard 3\u00a0h ago.");
   // It goes by the last answer, not the first.
   link.heard(15000);
   assert.equal(link.sinceHeard(18000), 3000);
