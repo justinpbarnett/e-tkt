@@ -43,7 +43,7 @@ static Remembered judged(const String& ssid, const String& password) {
   if (ssid.length() == 0) {
     return Remembered::NAME_MISSING;
   }
-  if (ssid.length() > (unsigned int)NetworkSettings::MAX_NAME_BYTES) {
+  if (ssid.length() > (unsigned int)Radio::MAX_NAME_BYTES) {
     return Remembered::NAME_TOO_LONG;
   }
   if (!NetworkSettings::nameIsText(ssid)) {
@@ -51,10 +51,10 @@ static Remembered judged(const String& ssid, const String& password) {
   }
   // No password at all is an open network.
   if (password.length() > 0 &&
-      password.length() < (unsigned int)NetworkSettings::MIN_PASSWORD_LENGTH) {
+      password.length() < (unsigned int)Radio::MIN_PASSWORD_LENGTH) {
     return Remembered::PASSWORD_TOO_SHORT;
   }
-  if (password.length() > (unsigned int)NetworkSettings::MAX_PASSWORD_LENGTH) {
+  if (password.length() > (unsigned int)Radio::MAX_PASSWORD_LENGTH) {
     return Remembered::PASSWORD_TOO_LONG;
   }
   return Remembered::KEPT;
@@ -196,8 +196,8 @@ void NetworkSettings::initialize(const String& machineId) {
   const bool read = found && readStored(text, &this->remembered);
   // One that WPA2 could not use is not a password this code made. The next
   // one asked for is made new.
-  if (this->password.length() < (unsigned int)MIN_PASSWORD_LENGTH ||
-      this->password.length() > (unsigned int)MAX_PASSWORD_LENGTH) {
+  if (this->password.length() < (unsigned int)Radio::MIN_PASSWORD_LENGTH ||
+      this->password.length() > (unsigned int)Radio::MAX_PASSWORD_LENGTH) {
     this->password = "";
   }
   const NetworkMode mode = this->current;

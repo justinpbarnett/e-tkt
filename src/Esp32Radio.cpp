@@ -34,6 +34,21 @@ void fillField(uint8_t* field, size_t size, const String& text) {
          std::min(size, static_cast<size_t>(text.length())));
 }
 
+// Radio.h names these for a build that has no chip. They are the chip's.
+static_assert(RADIO_REASON_ASSOC_LEAVE == WIFI_REASON_ASSOC_LEAVE,
+              "RADIO_REASON_ASSOC_LEAVE is not the chip's");
+static_assert(RADIO_REASON_4WAY_HANDSHAKE_TIMEOUT ==
+                  WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT,
+              "RADIO_REASON_4WAY_HANDSHAKE_TIMEOUT is not the chip's");
+static_assert(RADIO_REASON_BEACON_TIMEOUT == WIFI_REASON_BEACON_TIMEOUT,
+              "RADIO_REASON_BEACON_TIMEOUT is not the chip's");
+static_assert(RADIO_REASON_NO_AP_FOUND == WIFI_REASON_NO_AP_FOUND,
+              "RADIO_REASON_NO_AP_FOUND is not the chip's");
+static_assert(RADIO_REASON_AUTH_FAIL == WIFI_REASON_AUTH_FAIL,
+              "RADIO_REASON_AUTH_FAIL is not the chip's");
+static_assert(RADIO_REASON_HANDSHAKE_TIMEOUT == WIFI_REASON_HANDSHAKE_TIMEOUT,
+              "RADIO_REASON_HANDSHAKE_TIMEOUT is not the chip's");
+
 }  // namespace
 
 Esp32Radio::Esp32Radio(Logger* logger) { this->logger = logger; }
@@ -147,7 +162,11 @@ StationState Esp32Radio::station() {
   return state;
 }
 
-String Esp32Radio::address() { return WiFi.localIP().toString(); }
+String Esp32Radio::address() {
+  // The core says 0.0.0.0 for a station that has no address.
+  const IPAddress address = WiFi.localIP();
+  return address == IPAddress(0, 0, 0, 0) ? String("") : address.toString();
+}
 
 int Esp32Radio::channel() { return WiFi.channel(); }
 
@@ -158,7 +177,7 @@ bool Esp32Radio::openAccessPoint(const String& name, const String& password,
   // This core opens a network with no password when it is handed none, and
   // ESPAsyncWiFiManager opened the old setup network that way when the one it
   // was handed was too short. Neither is asked to here.
-  if (password.length() < 8) {
+  if (password.length() < (unsigned int)Radio::MIN_PASSWORD_LENGTH) {
     return false;
   }
   // softAP() turns the access point on a moment before it hands it the name

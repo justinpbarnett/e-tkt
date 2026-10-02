@@ -37,7 +37,7 @@ struct FakeNetwork {
   // How many tries it turns away before it lets one in, as a weak link does,
   // and the reason it gives.
   int refusals = 0;
-  uint8_t refusal = 15;
+  uint8_t refusal = RADIO_REASON_4WAY_HANDSHAKE_TIMEOUT;
   // False for a network that leaves a try hanging: no answer either way.
   bool answers = true;
 };
@@ -178,8 +178,8 @@ class FakeRadio : public Radio {
   }
 
   /**
-   * @brief The network the machine is on goes away, for this reason: 200 is
-   * a beacon timeout, which is what walking out of reach looks like.
+   * @brief The network the machine is on goes away, for this reason.
+   * RADIO_REASON_BEACON_TIMEOUT is what walking out of reach looks like.
    */
   void lose(uint8_t reason) {
     this->settle();
@@ -208,8 +208,8 @@ class FakeRadio : public Radio {
       }
     }
     if (this->current < 0) {
-      // 201: no network of that name was found.
-      this->schedule(Due::DROP, join.atMs + this->searchMs, 201);
+      this->schedule(Due::DROP, join.atMs + this->searchMs,
+                     RADIO_REASON_NO_AP_FOUND);
       return;
     }
     FakeNetwork& network = this->air[this->current];
@@ -217,8 +217,9 @@ class FakeRadio : public Radio {
       return;
     }
     if (network.password != password) {
-      // 15: the handshake a wrong password never finishes.
-      this->schedule(Due::DROP, join.atMs + network.joinMs, 15);
+      // The handshake a wrong password never finishes.
+      this->schedule(Due::DROP, join.atMs + network.joinMs,
+                     RADIO_REASON_4WAY_HANDSHAKE_TIMEOUT);
       return;
     }
     if (network.refusals > 0) {
@@ -237,8 +238,7 @@ class FakeRadio : public Radio {
     this->settle();
     this->leaves++;
     if (this->state.associated || this->trying) {
-      // 8: the machine left.
-      this->drop(8);
+      this->drop(RADIO_REASON_ASSOC_LEAVE);
     }
   }
 
@@ -246,7 +246,7 @@ class FakeRadio : public Radio {
     this->settle();
     this->stops++;
     if (this->state.associated || this->trying) {
-      this->drop(8);
+      this->drop(RADIO_REASON_ASSOC_LEAVE);
     }
     this->stationOn = false;
   }
@@ -260,7 +260,7 @@ class FakeRadio : public Radio {
     this->settle();
     if (!this->state.addressed || this->current < 0 ||
         millis() - this->addressedAtMs < this->addressLagMs) {
-      return String("0.0.0.0");
+      return String("");
     }
     return this->air[this->current].address;
   }
@@ -284,7 +284,9 @@ class FakeRadio : public Radio {
     opening.offerRouter = offerRouter;
     // WPA2 takes no password shorter than this, and the chip opens the
     // network without one when it is given one.
-    opening.opened = password.length() >= 8 && !this->accessPointFails;
+    opening.opened =
+        password.length() >= (unsigned int)Radio::MIN_PASSWORD_LENGTH &&
+        !this->accessPointFails;
     opening.atMs = millis();
     this->openings.push_back(opening);
     this->accessPointOpen = opening.opened;

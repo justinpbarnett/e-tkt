@@ -903,21 +903,20 @@ bool Api::rememberNetwork(const JsonObjectConst& body, Reply* refused) {
       break;
     case Remembered::NAME_TOO_LONG:
       refusal = String("A network's name may be at most ") +
-                (int)NetworkSettings::MAX_NAME_BYTES + " bytes, got " +
-                (int)strlen(ssid);
+                (int)Radio::MAX_NAME_BYTES + " bytes, got " + (int)strlen(ssid);
       break;
     case Remembered::NAME_NOT_TEXT:
       refusal = "A network's name must be plain text";
       break;
     case Remembered::PASSWORD_TOO_SHORT:
       refusal = String("A network's password must be at least ") +
-                (int)NetworkSettings::MIN_PASSWORD_LENGTH +
-                " characters, got " + (int)password.length();
+                (int)Radio::MIN_PASSWORD_LENGTH + " characters, got " +
+                (int)password.length();
       break;
     case Remembered::PASSWORD_TOO_LONG:
       refusal = String("A network's password may be at most ") +
-                (int)NetworkSettings::MAX_PASSWORD_LENGTH +
-                " characters, got " + (int)password.length();
+                (int)Radio::MAX_PASSWORD_LENGTH + " characters, got " +
+                (int)password.length();
       break;
     case Remembered::FULL:
       // 409, not 400: the request was fine, and it is the machine that has

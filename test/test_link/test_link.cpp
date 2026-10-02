@@ -288,9 +288,12 @@ void test_an_address_the_radio_has_not_published_yet_is_not_shown(void) {
   const LinkStatus status = supervisor->status();
   TEST_ASSERT_TRUE(StationLink::JOINED == status.station);
   TEST_ASSERT_EQUAL_STRING("192.168.1.50", status.address.c_str());
-  TEST_ASSERT_FALSE(logged("0.0.0.0"));
+  // Said once it could be said with the address in it, and the screen was
+  // never told of a network with nothing under its name.
+  TEST_ASSERT_EQUAL_INT(1, count("joined Church"));
+  TEST_ASSERT_TRUE(logged("joined Church at 192.168.1.50"));
   for (const DisplayCall& call : display->calls) {
-    TEST_ASSERT_TRUE(call.info.detail != "0.0.0.0");
+    TEST_ASSERT_TRUE(call.info.detail.length() > 0);
   }
 }
 
@@ -298,7 +301,7 @@ void test_a_lost_network_is_joined_again(void) {
   joinChurch();
 
   // 200: the network's beacons stopped coming.
-  radio->lose(200);
+  radio->lose(RADIO_REASON_BEACON_TIMEOUT);
   run(WIFI_STEP_MS);
 
   TEST_ASSERT_TRUE(logged("lost Church (BEACON_TIMEOUT), joining it again"));
@@ -407,7 +410,7 @@ void test_the_network_it_was_on_is_tried_first_after_a_loss(void) {
   TEST_ASSERT_EQUAL_INT(0, radio->leaves);
   TEST_ASSERT_TRUE(StationLink::JOINED == supervisor->status().station);
 
-  radio->lose(200);
+  radio->lose(RADIO_REASON_BEACON_TIMEOUT);
   run(WIFI_RETRY_MS + 500);
 
   TEST_ASSERT_EQUAL_INT(2, (int)radio->joins.size());
@@ -454,7 +457,7 @@ void test_it_says_why_the_last_try_failed(void) {
 
   LinkStatus status = supervisor->status();
   TEST_ASSERT_TRUE(JoinFailure::NOT_FOUND == status.failedTry.cause);
-  TEST_ASSERT_EQUAL_UINT8(201, status.failedTry.reason);
+  TEST_ASSERT_EQUAL_UINT8(RADIO_REASON_NO_AP_FOUND, status.failedTry.reason);
   TEST_ASSERT_EQUAL_STRING("Church", status.failedTry.network.c_str());
 
   // The network comes into reach, under another password than the one the
@@ -464,7 +467,8 @@ void test_it_says_why_the_last_try_failed(void) {
 
   status = supervisor->status();
   TEST_ASSERT_TRUE(JoinFailure::REFUSED == status.failedTry.cause);
-  TEST_ASSERT_EQUAL_UINT8(15, status.failedTry.reason);
+  TEST_ASSERT_EQUAL_UINT8(RADIO_REASON_4WAY_HANDSHAKE_TIMEOUT,
+                          status.failedTry.reason);
   TEST_ASSERT_EQUAL_STRING("Church", status.failedTry.network.c_str());
 }
 
@@ -485,12 +489,15 @@ void test_a_failure_is_forgotten_once_the_machine_has_joined(void) {
 }
 
 void test_the_reasons_a_try_fails_have_names(void) {
-  TEST_ASSERT_EQUAL_STRING("NO_AP_FOUND",
-                           LinkSupervisor::reasonText(201).c_str());
-  TEST_ASSERT_EQUAL_STRING("4WAY_HANDSHAKE_TIMEOUT",
-                           LinkSupervisor::reasonText(15).c_str());
-  TEST_ASSERT_EQUAL_STRING("BEACON_TIMEOUT",
-                           LinkSupervisor::reasonText(200).c_str());
+  TEST_ASSERT_EQUAL_STRING(
+      "NO_AP_FOUND",
+      LinkSupervisor::reasonText(RADIO_REASON_NO_AP_FOUND).c_str());
+  TEST_ASSERT_EQUAL_STRING(
+      "4WAY_HANDSHAKE_TIMEOUT",
+      LinkSupervisor::reasonText(RADIO_REASON_4WAY_HANDSHAKE_TIMEOUT).c_str());
+  TEST_ASSERT_EQUAL_STRING(
+      "BEACON_TIMEOUT",
+      LinkSupervisor::reasonText(RADIO_REASON_BEACON_TIMEOUT).c_str());
   // One the radio has no name for is still told apart, by its number.
   TEST_ASSERT_EQUAL_STRING("67", LinkSupervisor::reasonText(67).c_str());
 }
@@ -676,7 +683,7 @@ void test_a_lost_network_is_not_tried_every_few_seconds_under_a_phone(void) {
   const size_t joined = radio->joins.size();
 
   // The venue's network goes, and stays away.
-  radio->lose(200);
+  radio->lose(RADIO_REASON_BEACON_TIMEOUT);
   radio->air.clear();
   run(WIFI_OWN_AFTER_MS);
   TEST_ASSERT_EQUAL_INT((int)joined, (int)radio->joins.size());

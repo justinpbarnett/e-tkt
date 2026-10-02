@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "Logger.h"
+#include "Radio.h"
 
 /**
  * @brief How the machine gets onto a network: it joins one it remembers, or
@@ -77,12 +78,6 @@ class NetworkSettings {
   // few places, and each one more is one more to try before it opens its own
   // network.
   static const int MAX_REMEMBERED = 4;
-
-  // What a network's name and password may be: what the radio takes for a
-  // name, and what WPA2 takes for a password.
-  static const int MAX_NAME_BYTES = 32;
-  static const int MIN_PASSWORD_LENGTH = 8;
-  static const int MAX_PASSWORD_LENGTH = 63;
 
   NetworkSettings(Logger* logger);
 

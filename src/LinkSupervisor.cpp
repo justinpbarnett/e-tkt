@@ -7,13 +7,20 @@
 
 namespace {
 
-// The reason the radio gives for a network it did not hear.
-const uint8_t NOT_HEARD = 201;
+// The three channels that do not overlap each other.
+const int CHANNELS[] = {1, 6, 11};
+const int CHANNEL_COUNT = sizeof(CHANNELS) / sizeof(CHANNELS[0]);
+// A network is in the way of every channel fewer than this many from its
+// own.
+const int CHANNEL_REACH = 5;
+// A network no louder than this here, in dBm, is in the way of none.
+const int FAINTEST_RSSI = -100;
 
 // The disconnect reasons this core reports, by the number the event
-// carries. Anything else is printed as that number. The ones the core
-// itself never retries are 3, 4, 8, 15 and 202, which is most of what a
-// weak link produces.
+// carries: the ones Radio.h names, and the ones the link reads nothing into,
+// which have their number here alone. Anything else is printed as that
+// number. The ones the core itself never retries are 3, 4, 8, 15 and 202,
+// which is most of what a weak link produces.
 const char* reasonName(uint8_t reason) {
   switch (reason) {
     case 0:
@@ -32,37 +39,37 @@ const char* reasonName(uint8_t reason) {
       return "NOT_AUTHED";
     case 7:
       return "NOT_ASSOCED";
-    case 8:
+    case RADIO_REASON_ASSOC_LEAVE:
       return "ASSOC_LEAVE";
-    case 15:
+    case RADIO_REASON_4WAY_HANDSHAKE_TIMEOUT:
       return "4WAY_HANDSHAKE_TIMEOUT";
     case 16:
       return "GROUP_KEY_UPDATE_TIMEOUT";
-    case 200:
+    case RADIO_REASON_BEACON_TIMEOUT:
       return "BEACON_TIMEOUT";
-    case 201:
+    case RADIO_REASON_NO_AP_FOUND:
       return "NO_AP_FOUND";
-    case 202:
+    case RADIO_REASON_AUTH_FAIL:
       return "AUTH_FAIL";
     case 203:
       return "ASSOC_FAIL";
-    case 204:
+    case RADIO_REASON_HANDSHAKE_TIMEOUT:
       return "HANDSHAKE_TIMEOUT";
     default:
       return NULL;
   }
 }
 
-// What the end of a try says about the network. 15 and 204 are a handshake
-// the network did not finish and 202 is the network saying no. A wrong
-// password does that, and so does a signal too weak to carry the handshake.
+// What the end of a try says about the network. A handshake the network did
+// not finish and the network saying no are one thing here: a wrong password
+// does either, and so does a signal too weak to carry the handshake.
 JoinFailure failureOf(uint8_t reason) {
   switch (reason) {
-    case NOT_HEARD:
+    case RADIO_REASON_NO_AP_FOUND:
       return JoinFailure::NOT_FOUND;
-    case 15:
-    case 202:
-    case 204:
+    case RADIO_REASON_4WAY_HANDSHAKE_TIMEOUT:
+    case RADIO_REASON_AUTH_FAIL:
+    case RADIO_REASON_HANDSHAKE_TIMEOUT:
       return JoinFailure::REFUSED;
     default:
       return JoinFailure::OTHER;
@@ -316,7 +323,7 @@ void LinkSupervisor::keepJoining(uint32_t nowMs) {
     // The radio says it has an address a moment before it can say which.
     // Until it can, this is a machine still waiting for one.
     const String address = this->radio->address();
-    if (address != "0.0.0.0") {
+    if (address.length() > 0) {
       this->noteJoined(address, nowMs);
       return;
     }
@@ -329,7 +336,7 @@ void LinkSupervisor::keepJoining(uint32_t nowMs) {
     // The network hands out another address when a lease runs out, and the
     // screen is the only place the address is written.
     const String address = this->radio->address();
-    if (address != "0.0.0.0") {
+    if (address.length() > 0) {
       this->joinedAddress = address;
     }
     this->keepFallback(nowMs);
@@ -371,7 +378,7 @@ void LinkSupervisor::keepJoining(uint32_t nowMs) {
       // A network that is there and turned the machine away is worth another
       // try before the next one: on a weak link that is how most tries end.
       // One that was not heard is not.
-      if (state.lastReason == NOT_HEARD ||
+      if (state.lastReason == RADIO_REASON_NO_AP_FOUND ||
           this->triesHere >= WIFI_TRIES_PER_NETWORK) {
         this->moveOn();
       }
@@ -764,29 +771,28 @@ String LinkSupervisor::reasonText(uint8_t reason) {
 
 int LinkSupervisor::quietestChannel(const std::vector<HeardNetwork>& heard,
                                     int preferred) {
-  // The three channels that do not overlap each other, looked at from the
-  // preferred one on, so that it is the one taken when none is quieter.
-  const int channels[] = {1, 6, 11};
+  // Looked at from the preferred one on, so that it is the one taken when
+  // none is quieter.
   int first = 0;
-  for (int i = 0; i < 3; i++) {
-    if (channels[i] == preferred) {
+  for (int i = 0; i < CHANNEL_COUNT; i++) {
+    if (CHANNELS[i] == preferred) {
       first = i;
     }
   }
-  int best = channels[first];
+  int best = CHANNELS[first];
   long bestLoad = -1;
-  for (int i = 0; i < 3; i++) {
-    const int channel = channels[(first + i) % 3];
+  for (int i = 0; i < CHANNEL_COUNT; i++) {
+    const int channel = CHANNELS[(first + i) % CHANNEL_COUNT];
     long load = 0;
     for (const HeardNetwork& network : heard) {
-      // A network is in the way of every channel fewer than five from its
-      // own, less so the further off, and more so the louder it is here.
+      // A network is less in the way the further off its channel is, and
+      // more so the louder it is here.
       const int apart = network.channel > channel ? network.channel - channel
                                                   : channel - network.channel;
-      if (apart >= 5 || network.rssi <= -100) {
+      if (apart >= CHANNEL_REACH || network.rssi <= FAINTEST_RSSI) {
         continue;
       }
-      load += (long)(network.rssi + 100) * (5 - apart);
+      load += (long)(network.rssi - FAINTEST_RSSI) * (CHANNEL_REACH - apart);
     }
     if (bestLoad < 0 || load < bestLoad) {
       best = channel;
@@ -801,5 +807,5 @@ int LinkSupervisor::preferredChannel(const String& name) {
   for (unsigned int i = 0; i < name.length(); i++) {
     sum += (unsigned char)name.charAt(i);
   }
-  return 1 + 5 * (int)(sum % 3);
+  return CHANNELS[sum % CHANNEL_COUNT];
 }
