@@ -357,7 +357,7 @@ A name comes off the air from whoever named the network, so the panel sets each 
 Refused is a network that was there and did not let the machine on, and a wrong password and a signal too weak to finish the handshake look the same from the machine.
 No address is a network that took the machine on and then gave it none within `WIFI_DHCP_MS`, as a network with no addresses left to give does.
 `/api/network` reports it with the network it was for and the number the radio gave, until the machine is on a network again or the remembered networks change.
-`JoinFailure`.
+`JoinFailure`, kept with that network and that number in a `FailedTry`.
 
 ## Where the parts meet
 

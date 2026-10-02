@@ -469,12 +469,12 @@ void LinkSupervisor::noteOffline(uint32_t nowMs) {
   }
   this->lastReportMs = nowMs;
   String last = "none";
-  if (this->failure == JoinFailure::NO_ADDRESS) {
+  if (this->failedTry.cause == JoinFailure::NO_ADDRESS) {
     last = "no address";
-  } else if (this->failure != JoinFailure::NONE) {
+  } else if (this->failedTry.cause != JoinFailure::NONE) {
     // A try that never ended has no reason to give.
-    last = this->failureReason == 0 ? String("no answer")
-                                    : reasonText(this->failureReason);
+    last = this->failedTry.reason == 0 ? String("no answer")
+                                       : reasonText(this->failedTry.reason);
   }
   this->logger->log(String("still joining ") + namesOf(this->networks) + ", " +
                     String(this->tries) +
@@ -483,17 +483,13 @@ void LinkSupervisor::noteOffline(uint32_t nowMs) {
                     " s, last failure " + last);
 }
 
-void LinkSupervisor::noteFailure(JoinFailure failure, uint8_t reason) {
-  this->failedNetwork = this->tryingSsid;
-  this->failure = failure;
-  this->failureReason = reason;
+void LinkSupervisor::noteFailure(JoinFailure cause, uint8_t reason) {
+  this->failedTry.network = this->tryingSsid;
+  this->failedTry.cause = cause;
+  this->failedTry.reason = reason;
 }
 
-void LinkSupervisor::clearFailure() {
-  this->failedNetwork = "";
-  this->failure = JoinFailure::NONE;
-  this->failureReason = 0;
-}
+void LinkSupervisor::clearFailure() { this->failedTry = FailedTry(); }
 
 void LinkSupervisor::beginOutage(uint32_t nowMs) {
   this->outageBeganMs = nowMs;
@@ -720,9 +716,7 @@ void LinkSupervisor::publish() {
   status.ownName = this->ownName;
   status.ownOpen = this->ownOpen;
   status.clients = this->clients;
-  status.failedNetwork = this->failedNetwork;
-  status.failure = this->failure;
-  status.failureReason = this->failureReason;
+  status.failedTry = this->failedTry;
 
   this->lock.lock();
   this->published = status;

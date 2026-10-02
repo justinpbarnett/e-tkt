@@ -38,6 +38,17 @@ enum class JoinFailure {
 };
 
 /**
+ * @brief A try at a network that failed.
+ */
+struct FailedTry {
+  String network = "";
+  // NONE when no try has failed.
+  JoinFailure cause = JoinFailure::NONE;
+  // The number the radio gave for it. 0 when it gave none.
+  uint8_t reason = 0;
+};
+
+/**
  * @brief How the machine is reached, for the panel.
  */
 struct LinkStatus {
@@ -52,10 +63,7 @@ struct LinkStatus {
   int clients = 0;
   // The last try that failed since the machine was last on a network, or
   // since the networks it remembers were changed.
-  String failedNetwork = "";
-  JoinFailure failure = JoinFailure::NONE;
-  // The number the radio gave for it. 0 when it gave none.
-  uint8_t failureReason = 0;
+  FailedTry failedTry;
 };
 
 /**
@@ -155,9 +163,8 @@ class LinkSupervisor {
   // WIFI_OWN_AFTER_MS from there they are WIFI_RETRY_MS apart whoever is on
   // its own network.
   TimedFlag startedOver;
-  String failedNetwork = "";
-  JoinFailure failure = JoinFailure::NONE;
-  uint8_t failureReason = 0;
+  // As LinkStatus says it.
+  FailedTry failedTry;
 
   // --- the machine's own network ---
   String ownName = "";
@@ -189,7 +196,7 @@ class LinkSupervisor {
   void noteJoined(const String& address, uint32_t nowMs);
   void noteLost(const String& why, uint32_t nowMs);
   void noteOffline(uint32_t nowMs);
-  void noteFailure(JoinFailure failure, uint8_t reason);
+  void noteFailure(JoinFailure cause, uint8_t reason);
   void clearFailure();
   void beginOutage(uint32_t nowMs);
   void startOver(uint32_t nowMs);

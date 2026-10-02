@@ -778,13 +778,14 @@ Reply Api::network(const Request& /*request*/) {
 
   // Left out when no try has failed since the machine was last on a network.
   // The radio's own number and name for it are left out when it gave none.
-  if (link.failure != JoinFailure::NONE) {
+  if (link.failedTry.cause != JoinFailure::NONE) {
     const JsonObject failure = doc.createNestedObject("failure");
-    failure["network"] = link.failedNetwork;
-    failure["cause"] = failureName(link.failure);
-    if (link.failureReason != 0) {
-      failure["reason"] = (int)link.failureReason;
-      failure["reason_name"] = LinkSupervisor::reasonText(link.failureReason);
+    failure["network"] = link.failedTry.network;
+    failure["cause"] = failureName(link.failedTry.cause);
+    if (link.failedTry.reason != 0) {
+      failure["reason"] = (int)link.failedTry.reason;
+      failure["reason_name"] =
+          LinkSupervisor::reasonText(link.failedTry.reason);
     }
   }
   return jsonReply(200, doc);

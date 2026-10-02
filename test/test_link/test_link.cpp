@@ -232,9 +232,9 @@ void test_a_try_that_never_ends_is_given_up(void) {
   run(500);
   TEST_ASSERT_EQUAL_INT(1, radio->leaves);
   const LinkStatus status = supervisor->status();
-  TEST_ASSERT_TRUE(JoinFailure::OTHER == status.failure);
-  TEST_ASSERT_EQUAL_UINT8(0, status.failureReason);
-  TEST_ASSERT_EQUAL_STRING("Church", status.failedNetwork.c_str());
+  TEST_ASSERT_TRUE(JoinFailure::OTHER == status.failedTry.cause);
+  TEST_ASSERT_EQUAL_UINT8(0, status.failedTry.reason);
+  TEST_ASSERT_EQUAL_STRING("Church", status.failedTry.network.c_str());
 
   run(WIFI_RETRY_MS + 500);
   TEST_ASSERT_EQUAL_INT(2, (int)radio->joins.size());
@@ -254,7 +254,8 @@ void test_a_network_that_gives_no_address_is_left_after_two_minutes(void) {
   run(2 * WIFI_STEP_MS);
   TEST_ASSERT_EQUAL_INT(1, radio->leaves);
   TEST_ASSERT_TRUE(logged("no address after 120 s, joining again"));
-  TEST_ASSERT_TRUE(JoinFailure::NO_ADDRESS == supervisor->status().failure);
+  TEST_ASSERT_TRUE(JoinFailure::NO_ADDRESS ==
+                   supervisor->status().failedTry.cause);
 
   // And it is tried again, like any network that failed.
   run(WIFI_RETRY_BESIDE_OWN_MS + 1000);
@@ -452,9 +453,9 @@ void test_it_says_why_the_last_try_failed(void) {
   run(3000);
 
   LinkStatus status = supervisor->status();
-  TEST_ASSERT_TRUE(JoinFailure::NOT_FOUND == status.failure);
-  TEST_ASSERT_EQUAL_UINT8(201, status.failureReason);
-  TEST_ASSERT_EQUAL_STRING("Church", status.failedNetwork.c_str());
+  TEST_ASSERT_TRUE(JoinFailure::NOT_FOUND == status.failedTry.cause);
+  TEST_ASSERT_EQUAL_UINT8(201, status.failedTry.reason);
+  TEST_ASSERT_EQUAL_STRING("Church", status.failedTry.network.c_str());
 
   // The network comes into reach, under another password than the one the
   // machine remembers.
@@ -462,9 +463,9 @@ void test_it_says_why_the_last_try_failed(void) {
   run(WIFI_RETRY_MS + 2500);
 
   status = supervisor->status();
-  TEST_ASSERT_TRUE(JoinFailure::REFUSED == status.failure);
-  TEST_ASSERT_EQUAL_UINT8(15, status.failureReason);
-  TEST_ASSERT_EQUAL_STRING("Church", status.failedNetwork.c_str());
+  TEST_ASSERT_TRUE(JoinFailure::REFUSED == status.failedTry.cause);
+  TEST_ASSERT_EQUAL_UINT8(15, status.failedTry.reason);
+  TEST_ASSERT_EQUAL_STRING("Church", status.failedTry.network.c_str());
 }
 
 void test_a_failure_is_forgotten_once_the_machine_has_joined(void) {
@@ -473,13 +474,14 @@ void test_a_failure_is_forgotten_once_the_machine_has_joined(void) {
 
   start();
   run(3000);
-  TEST_ASSERT_TRUE(JoinFailure::REFUSED == supervisor->status().failure);
+  TEST_ASSERT_TRUE(JoinFailure::REFUSED ==
+                   supervisor->status().failedTry.cause);
 
   run(6000);
   const LinkStatus status = supervisor->status();
   TEST_ASSERT_TRUE(StationLink::JOINED == status.station);
-  TEST_ASSERT_TRUE(JoinFailure::NONE == status.failure);
-  TEST_ASSERT_EQUAL_STRING("", status.failedNetwork.c_str());
+  TEST_ASSERT_TRUE(JoinFailure::NONE == status.failedTry.cause);
+  TEST_ASSERT_EQUAL_STRING("", status.failedTry.network.c_str());
 }
 
 void test_the_reasons_a_try_fails_have_names(void) {
