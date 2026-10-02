@@ -6,7 +6,7 @@
 #
 # extra_scripts = <path_to_this_script>
 # upload_protocol = custom
-# custom_upload_url = http://e-tkt.local/update # or access by ip address
+# custom_upload_url = http://e-tkt-xxxx.local/update # or access by ip address
 #
 # PlatformIO warns on every build about an option it does not know, unless
 # the option starts custom_, which it leaves for scripts like this one.

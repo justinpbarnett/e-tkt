@@ -4,9 +4,7 @@
 #include <AsyncElegantOTA.h>
 #include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
-#include <ESPAsyncWiFiManager.h>
 #include <ESPmDNS.h>
-#include <WiFi.h>
 
 #include <algorithm>
 #include <cstring>
@@ -14,12 +12,13 @@
 #include "Api.h"
 #include "Configuration.h"
 #include "Display.h"
+#include "Esp32Radio.h"
+#include "LinkSupervisor.h"
 #include "Logger.h"
+#include "NetworkSettings.h"
 #include "SPIFFS.h"
 #include "esp_heap_caps.h"
 #include "esp_wifi.h"
-
-Network* Network::instance = NULL;
 
 // --- ApiHandler ---
 
@@ -100,337 +99,38 @@ class ApiHandler : public AsyncWebHandler {
 
 // --- Network ---
 
-namespace {
-
-// The disconnect reasons this core reports, by the number the event
-// carries. Anything else is printed as that number. The ones the core
-// itself never retries are 3, 4, 8, 15 and 202, which is most of what a
-// weak link produces.
-const char* reasonName(uint8_t reason) {
-  switch (reason) {
-    case 0:
-      return "NONE";
-    case 1:
-      return "UNSPECIFIED";
-    case 2:
-      return "AUTH_EXPIRE";
-    case 3:
-      return "AUTH_LEAVE";
-    case 4:
-      return "ASSOC_EXPIRE";
-    case 5:
-      return "ASSOC_TOOMANY";
-    case 6:
-      return "NOT_AUTHED";
-    case 7:
-      return "NOT_ASSOCED";
-    case 8:
-      return "ASSOC_LEAVE";
-    case 15:
-      return "4WAY_HANDSHAKE_TIMEOUT";
-    case 16:
-      return "GROUP_KEY_UPDATE_TIMEOUT";
-    case 200:
-      return "BEACON_TIMEOUT";
-    case 201:
-      return "NO_AP_FOUND";
-    case 202:
-      return "AUTH_FAIL";
-    case 203:
-      return "ASSOC_FAIL";
-    case 204:
-      return "HANDSHAKE_TIMEOUT";
-    default:
-      return NULL;
-  }
-}
-
-String reasonText(uint8_t reason) {
-  const char* name = reasonName(reason);
-  if (name != NULL) {
-    return String(name);
-  }
-  return String(reason);
-}
-
-// Awake, and as loud as this radio goes. Sleep stretched a round trip on
-// the weak spot from about 80 ms to about 250 ms. The pages leave the
-// device, so a quieter transmit makes them slower.
-void wakeRadio() {
-  WiFi.setSleep(false);
-  WiFi.setTxPower(WIFI_POWER_19_5dBm);
-}
-
-}  // namespace
-
-Network::Network(Logger* logger, Display* display, Api* api, uint8_t resetPin) {
-  Network::instance = this;
+Network::Network(Logger* logger, Display* display, Api* api, Esp32Radio* radio,
+                 NetworkSettings* settings, LinkSupervisor* link) {
   this->logger = logger;
   this->display = display;
   this->api = api;
+  this->radio = radio;
+  this->settings = settings;
+  this->link = link;
   this->server = new AsyncWebServer(80);
-  this->dns = new DNSServer();
-  this->resetPin = resetPin;
 }
 
-Network::~Network() {
-  delete server;
-  delete dns;
-}
-
-void Network::onWiFiEventStatic(system_event_id_t event,
-                                system_event_info_t info) {
-  if (instance != NULL) {
-    instance->onWiFiEvent(event, info);
-  }
-}
-
-void Network::onWiFiEvent(system_event_id_t event, system_event_info_t info) {
-  switch (event) {
-    case SYSTEM_EVENT_STA_CONNECTED:
-      this->associated.store(true);
-      break;
-    case SYSTEM_EVENT_STA_GOT_IP:
-      this->addressed.store(true);
-      break;
-    case SYSTEM_EVENT_STA_LOST_IP:
-      this->addressed.store(false);
-      break;
-    case SYSTEM_EVENT_STA_DISCONNECTED:
-      this->associated.store(false);
-      this->addressed.store(false);
-      this->lastReason.store(info.disconnected.reason);
-      this->lastDropMs.store(millis());
-      this->drops.fetch_add(1);
-      break;
-    default:
-      break;
-  }
-}
-
-bool Network::online() const {
-  return this->associated.load() && this->addressed.load();
-}
-
-String Network::savedNetwork() {
-  // The connected SSID (WiFi.SSID()) is empty until a join succeeds, and
-  // the stored one is 32 bytes that are not always NUL-terminated.
-  wifi_config_t conf;
-  memset(&conf, 0, sizeof(conf));
-  if (esp_wifi_get_config(WIFI_IF_STA, &conf) != ESP_OK) {
-    return "";
-  }
-  char ssid[33];
-  memcpy(ssid, conf.sta.ssid, 32);
-  ssid[32] = '\0';
-  return String(ssid);
-}
-
-void Network::preferStrongest() {
-  // arduino-esp32 2.x connects to the strongest AP of a name and accepts
-  // any signal. This core's begin(ssid, pass) asks for a full scan but
-  // leaves the signal floor at 0, which drops every real AP, and a
-  // no-argument begin() keeps whatever was stored. Written once, when
-  // the stored choice differs, because the write goes to NVS.
-  wifi_config_t conf;
-  if (esp_wifi_get_config(WIFI_IF_STA, &conf) != ESP_OK) {
-    return;
-  }
-  if (conf.sta.scan_method == WIFI_ALL_CHANNEL_SCAN &&
-      conf.sta.sort_method == WIFI_CONNECT_AP_BY_SIGNAL &&
-      conf.sta.threshold.rssi == -127) {
-    return;
-  }
-  conf.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
-  conf.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
-  conf.sta.threshold.rssi = -127;
-  esp_wifi_set_config(WIFI_IF_STA, &conf);
-}
-
-void Network::startTry() {
-  const String ssid = this->savedNetwork();
-  if (ssid.length() == 0) {
-    return;
-  }
-  this->preferStrongest();
-  this->tries++;
-  this->tryOpen = true;
-  this->awaitingRetry = false;
-  this->tryStartedMs = millis();
-  this->dropsAtTry = this->drops.load();
-  WiFi.begin();
-}
-
-void Network::noteOffline(uint32_t nowMs) {
-  if (this->outageBeganMs == 0) {
-    this->outageBeganMs = nowMs;
-    this->lastReportMs = nowMs;
-    return;
-  }
-  if (nowMs - this->lastReportMs < WIFI_REPORT_MS) {
-    return;
-  }
-  this->lastReportMs = nowMs;
-  const String ssid = this->savedNetwork();
-  const uint32_t secs = (nowMs - this->outageBeganMs) / 1000;
-  String line = "still joining ";
-  line += ssid.length() > 0 ? ssid : String("(none)");
-  line += ", ";
-  line += String(this->tries);
-  line += " tries in ";
-  line += String(secs);
-  line += " s, last failure ";
-  line += reasonText(this->lastReason.load());
-  this->logger->log(line);
-}
-
-void Network::keepJoining() {
-  const uint32_t nowMs = millis();
-  const bool now = this->online();
-
-  if (now && !this->wasOnline) {
-    const String ip = WiFi.localIP().toString();
-    if (ip == "0.0.0.0") {
-      // GOT_IP was recorded before the adapter published the address.
-      return;
-    }
-    this->joinedSsid = WiFi.SSID();
-    String line = "joined " + this->joinedSsid + " at " + ip + " (channel " +
-                  String(static_cast<int>(WiFi.channel())) + ", " +
-                  String(static_cast<int>(WiFi.RSSI())) + " dBm)";
-    if (this->tries > 1) {
-      const uint32_t secs = this->outageBeganMs == 0
-                                ? 0
-                                : (nowMs - this->outageBeganMs) / 1000;
-      line += " after " + String(this->tries) + " tries in " + String(secs) +
-              " s";
-    }
-    this->logger->log(line);
-    if (this->screenAddressSet && ip != this->shownAddress) {
-      this->logger->warn(
-          "address changed from " + this->shownAddress + " to " + ip +
-          "; the screen keeps the first until a restart");
-    }
-    this->tries = 0;
-    this->tryOpen = false;
-    this->awaitingRetry = false;
-    this->wasOnline = true;
-    this->waitingForAddress = false;
-    this->dhcpAbandoned = false;
-    this->dhcpSinceMs = 0;
-    return;
-  }
-
-  if (!now && this->wasOnline) {
-    const String ssid =
-        this->joinedSsid.length() > 0 ? this->joinedSsid : this->savedNetwork();
-    this->logger->log("lost " + ssid + " (" +
-                      reasonText(this->lastReason.load()) +
-                      "), joining it again");
-    this->wasOnline = false;
-    this->tries = 0;
-    this->tryOpen = false;
-    this->awaitingRetry = true;
-    this->waitingForAddress = false;
-    this->dhcpAbandoned = false;
-    this->dhcpSinceMs = 0;
-    this->outageBeganMs = nowMs;
-    this->lastReportMs = nowMs;
-  }
-
-  if (this->associated.load()) {
-    // DHCP on this link has taken the better part of a minute and then
-    // worked. Starting another join here would throw that away. A join
-    // that never gets an address is dropped once, and the disconnect
-    // event is what opens the next try.
-    if (this->dhcpSinceMs == 0) {
-      this->dhcpSinceMs = nowMs;
-    }
-    if (!this->waitingForAddress) {
-      this->waitingForAddress = true;
-      this->logger->log("associated, waiting for an address");
-    }
-    if (!this->dhcpAbandoned &&
-        nowMs - this->dhcpSinceMs >= WIFI_DHCP_MS) {
-      this->dhcpAbandoned = true;
-      this->logger->warn("no address after " + String(WIFI_DHCP_MS / 1000) +
-                         " s, joining again");
-      WiFi.disconnect();
-    }
-    return;
-  }
-  this->dhcpSinceMs = 0;
-  this->waitingForAddress = false;
-  this->dhcpAbandoned = false;
-
-  if (this->tryOpen && this->drops.load() != this->dropsAtTry) {
-    this->tryOpen = false;
-    this->awaitingRetry = true;
-  }
-  if (this->tryOpen) {
-    if (nowMs - this->tryStartedMs < WIFI_TRY_MS) {
-      this->noteOffline(nowMs);
-      return;
-    }
-    // No disconnect arrived. The stack is stuck in this try.
-    WiFi.disconnect();
-    this->startTry();
-    return;
-  }
-
-  const uint32_t retryWait = WiFi.softAPgetStationNum() > 0
-                                 ? WIFI_RETRY_WHILE_SETUP_MS
-                                 : WIFI_RETRY_MS;
-  if (this->awaitingRetry && nowMs - this->lastDropMs.load() < retryWait) {
-    this->noteOffline(nowMs);
-    return;
-  }
-  this->awaitingRetry = false;
-
-  // The portal's scan shares the radio. scanComplete() gives up after
-  // its own 10 s, so this wait cannot last forever.
-  if (WiFi.scanComplete() == WIFI_SCAN_RUNNING) {
-    this->noteOffline(nowMs);
-    return;
-  }
-  if (this->savedNetwork().length() == 0) {
-    this->noteOffline(nowMs);
-    return;
-  }
-  if (this->outageBeganMs == 0) {
-    this->outageBeganMs = nowMs;
-    this->lastReportMs = nowMs;
-  }
-  this->startTry();
-}
+Network::~Network() { delete server; }
 
 void Network::supervisorTask(void* arg) {
   Network* network = static_cast<Network*>(arg);
   for (;;) {
-    network->keepJoining();
-    vTaskDelay(pdMS_TO_TICKS(250));
+    network->link->step();
+    vTaskDelay(pdMS_TO_TICKS(WIFI_STEP_MS));
   }
 }
 
-void Network::softAPCallbackStatic(AsyncWiFiManager* manager) {
-  if (instance) {
-    instance->softAPCallback(manager);
-  }
-}
+void Network::forgetNetworks() {
+  this->logger->log("Button held through the start: forgetting every network");
+  this->settings->reset();
 
-void Network::softAPCallback(AsyncWiFiManager* manager) {
-  this->display->render(Screen::WIFI_SETUP);
-  this->logger->log(String("setup portal \"") + manager->getConfigPortalSSID() +
-                    "\" is open");
-}
-
-void Network::clearWiFiCredentials() {
-  // load the flash-saved configs
+  // The firmware before this one kept its network in the radio's own
+  // storage, and this one leaves it there. That goes as well: a network
+  // forgotten here is not to come back with a firmware put back on.
   wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
   esp_wifi_init(&cfg);  // initiate and allocate wifi resources
   delay(2000);          // wait a bit
 
-  // clear credentials if button is pressed
   if (esp_wifi_restore() != ESP_OK) {
     this->logger->log("WiFi is not initialized by esp_wifi_init ");
   } else {
@@ -451,12 +151,13 @@ namespace {
 // The modules are folded into script.js when the image is built, so they
 // are not separate files here.
 const char* PANEL_PATHS[] = {
-    "/index.html", "/script.js", "/style.css", "/manifest.json",
+    "/index.html", "/script.js",   "/style.css",     "/manifest.json",
     "/icon.png",   "/favicon.ico", "/fontwhite.ttf",
 };
 const int PANEL_PATH_COUNT = sizeof(PANEL_PATHS) / sizeof(PANEL_PATHS[0]);
 
-// Left free for the radio and the server, which allocate after this copy.
+// Left free for what allocates after this copy: the radio as it joins, the
+// machine's own network when that opens, the server and its connections.
 // Taking the last block is how a later connection fails.
 const size_t PANEL_HEAP_RESERVE = 48 * 1024;
 
@@ -679,20 +380,20 @@ class PanelHandler : public AsyncWebHandler {
 
     const uint8_t* bytes = file->bytes;
     const size_t length = file->length;
-    AsyncWebServerResponse* response = request->beginResponse(
-        file->type, length,
-        [bytes, length](uint8_t* buffer, size_t maxLen,
-                        size_t index) -> size_t {
-          if (index >= length) {
-            return 0;
-          }
-          size_t n = length - index;
-          if (n > maxLen) {
-            n = maxLen;
-          }
-          memcpy(buffer, bytes + index, n);
-          return n;
-        });
+    AsyncWebServerResponse* response =
+        request->beginResponse(file->type, length,
+                               [bytes, length](uint8_t* buffer, size_t maxLen,
+                                               size_t index) -> size_t {
+                                 if (index >= length) {
+                                   return 0;
+                                 }
+                                 size_t n = length - index;
+                                 if (n > maxLen) {
+                                   n = maxLen;
+                                 }
+                                 memcpy(buffer, bytes + index, n);
+                                 return n;
+                               });
     if (file->gzip) {
       response->addHeader("Content-Encoding", "gzip");
     }
@@ -705,88 +406,16 @@ class PanelHandler : public AsyncWebHandler {
 }  // namespace
 
 void Network::initialize() {
-  // devkit build 2026-09: the PCB pulls this pin high externally. On a bare
-  // ESP32 devkit an unwired GPIO13 floats low. The internal pull-up makes
-  // the button a plain short-to-GND, but the pin is still low in the moment
-  // after the pull-up is enabled, and a read in that moment wipes a saved
-  // network on a boot where nobody is holding the button. The pull-up is
-  // given time to rise, and the low has to still be there after that, which
-  // a finger on the button is and a floating pin is not.
-  pinMode(resetPin, INPUT_PULLUP);
-  delay(50);
-  bool held = digitalRead(this->resetPin) == LOW;
-  if (held) {
-    delay(100);
-    held = digitalRead(this->resetPin) == LOW;
-  }
-  if (held) {
-    this->logger->log("Wi-Fi button held, clearing the saved network");
-    this->clearWiFiCredentials();
-  }
+  // What the machine remembers, under the name its chip gives it. Read
+  // before anything else: the link goes by it from its first step.
+  this->settings->initialize(Esp32Radio::machineId());
 
-  // The core's own retry skips the reasons a weak link actually fails
-  // with, so it is off and keepJoining() is the only thing that starts
-  // a try. Modem sleep is off for the same link: it costs airtime the
-  // station does not have.
-  WiFi.onEvent(Network::onWiFiEventStatic);
-  WiFi.setAutoReconnect(false);
-  WiFi.mode(WIFI_STA);
-  wakeRadio();
+  // The radio, and with it the stack everything below stands on. It joins
+  // nothing yet.
+  this->radio->initialize();
 
-  const String saved = this->savedNetwork();
-  this->outageBeganMs = millis();
-  this->lastReportMs = this->outageBeganMs;
-  if (saved.length() > 0) {
-    this->display->render(Screen::WIFI_JOINING);
-    this->logger->log("joining " + saved);
-  }
-
-  // Lives until this function returns. After the join its portal
-  // handlers are cleared off the server, and the manager itself holds
-  // no wifi state worth keeping.
-  AsyncWiFiManager wifiManager(this->server, this->dns);
-  wifiManager.setAPCallback(&Network::softAPCallbackStatic);
-  wifiManager.setDebugOutput(DEBUG_WIFI);
-
-  bool portal = false;
-  const uint32_t bootMs = millis();
-  while (!this->online()) {
-    const bool noSaved = this->savedNetwork().length() == 0;
-    if (!portal && (noSaved || millis() - bootMs >= WIFI_SETUP_AFTER_MS)) {
-      portal = true;
-      this->logger->log(noSaved ? "no saved network, opening setup"
-                                : "still offline, opening setup");
-      // This blocks for up to 10 s inside one connect attempt, then
-      // serves the portal. The join beside it carries on from the loop
-      // below. connect stays false, so the portal does not start its
-      // own tries over ours except when someone saves a network.
-      wifiManager.startConfigPortalModeless("E-TKT", NULL);
-      wakeRadio();
-    }
-    if (portal) {
-      wifiManager.loop();
-    }
-    this->keepJoining();
-    delay(10);
-  }
-
-  if (portal) {
-    // Back to the station alone. A phone on E-TKT was slowing the
-    // retries, and the portal's handlers are not the panel.
-    WiFi.mode(WIFI_STA);
-    wakeRadio();
-    this->dns->stop();
-    this->server->reset();
-    if (!this->online()) {
-      this->logger->log("setup closed, joining again");
-      while (!this->online()) {
-        this->keepJoining();
-        delay(10);
-      }
-    }
-  }
-
-  if (!MDNS.begin("e-tkt")) {
+  const String host = this->settings->hostName();
+  if (!MDNS.begin(host.c_str())) {
     // Not fatal: the device is still reachable at its IP, just not by name.
     this->logger->warn("Error starting mDNS");
   } else {
@@ -795,15 +424,8 @@ void Network::initialize() {
     // find it.
     MDNS.addService("http", "tcp", 80);
     MDNS.addServiceTxt("http", "tcp", "e-tkt", "true");
+    this->logger->log(String("answers to ") + host + ".local");
   }
-
-  // The idle screen keeps this address until a restart. A later one is
-  // logged and left off the glass: the screen is not drawn from the
-  // supervisor task.
-  const String ip = WiFi.localIP().toString();
-  display->setConnectionInfo(ip, WiFi.SSID());
-  this->shownAddress = ip;
-  this->screenAddressSet = true;
 
   // Every request under /api/ goes to the Api. It comes ahead of the files,
   // so that none of them is taken for a file, and it does not wait on them
@@ -820,8 +442,8 @@ void Network::initialize() {
     if (cachePanel(this->logger)) {
       this->server->addHandler(new PanelHandler());
     }
-    AsyncStaticWebHandler& files =
-        this->server->serveStatic("/", SPIFFS, "/").setDefaultFile("index.html");
+    AsyncStaticWebHandler& files = this->server->serveStatic("/", SPIFFS, "/")
+                                       .setDefaultFile("index.html");
     if (findPanel("/") != NULL) {
       files.setCacheControl("public, max-age=31536000, immutable");
     }
@@ -841,12 +463,19 @@ void Network::initialize() {
     AsyncElegantOTA.begin(server);
   }
 
-  // Already listening when the portal was up. begin() then keeps the
-  // socket and serves the handlers just registered.
+  // Listening before the machine is on any network. It is reached once it
+  // has joined one or has opened its own, and the server is there by then.
   this->server->begin();
 
-  // Core 0, under the Wi-Fi tasks. The log lines allocate, so the stack
-  // is a step past the 4 KB the event task gets by.
-  xTaskCreatePinnedToCore(Network::supervisorTask, "wifi-join", 6144, this, 1,
+  // The first step says on the screen what the machine is about to do, so
+  // the idle screen that comes after this has it. Every step from here on
+  // is the task's.
+  this->link->step();
+
+  // Core 0, under the Wi-Fi tasks. A step logs, writes what the machine
+  // remembers to flash and listens for a quiet channel, so the stack is the
+  // size of the one setup() runs on, twice the 4 KB the event task gets by
+  // on.
+  xTaskCreatePinnedToCore(Network::supervisorTask, "wifi-join", 8192, this, 1,
                           NULL, 0);
 }

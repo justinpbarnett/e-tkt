@@ -57,7 +57,7 @@
  * Developers of the firmware may find it useful to turn on these features
  */
 #define ENABLE_SERIAL true  // Enables serial output
-#define ENABLE_OTA false    // Enables OTA updates at http://e-tkt.local/update
+#define ENABLE_OTA false    // Enables OTA updates at http://<address>/update
 #define DEBUG_WIFI false    // Enables WiFi debugging
 
 /**
@@ -183,20 +183,41 @@ constexpr int MAX_COPIES = 500;
  * The radio at a machine can be weak enough that a join takes minutes,
  * and most tries die in a handshake timeout. One ten-second try, then a
  * portal that never goes back to the saved network, is how the panel
- * used to stay dark. The machine keeps trying the saved network for as
- * long as it takes. The setup portal opens beside that only when there
- * is no saved network, or when a minute has passed with none joined.
+ * used to stay dark. The machine keeps trying the networks it remembers
+ * for as long as it takes, and nothing waits for it: the machine starts,
+ * and prints, with no network at all.
+ *
+ * Its own network is the way in when there is no other: an access point
+ * with a password, serving the same panel at WIFI_OWN_ADDRESS. It opens
+ * beside the tries when there is no network to try, or when a minute has
+ * passed with none joined, and in own mode it is all there is. See
+ * LinkSupervisor.
  */
+
+// How often the link is looked at: whether a try has ended, whether the
+// network is still there, whether a phone has come or gone.
+constexpr uint32_t WIFI_STEP_MS = 250;
 
 // How long to wait after a failed try before the next one. Long enough
 // that the stack has finished the disconnect, short enough that a run
 // of handshake timeouts still joins in the minutes this spot takes.
 constexpr uint32_t WIFI_RETRY_MS = 3000;
 
-// While a phone is on the setup portal, tries are this far apart. A
-// closer retry takes the radio the phone's page needs, and a phone that
-// stays on E-TKT would keep the saved network from winning.
-constexpr uint32_t WIFI_RETRY_WHILE_SETUP_MS = 30000;
+// How many tries in a row a network gets when it is there and turns the
+// machine away, before the next one the machine remembers gets its turn.
+// On a weak link that is how most tries end, and the next network is one
+// from another place. A network that is not there gets a single try.
+constexpr uint32_t WIFI_TRIES_PER_NETWORK = 3;
+
+// While the machine's own network is open beside them, tries are this far
+// apart. A try takes the radio off the channel that network is on, so
+// closer ones would leave a phone little chance of finding it.
+constexpr uint32_t WIFI_RETRY_BESIDE_OWN_MS = 30000;
+
+// And this far apart while a phone is on it. Every try stalls that phone's
+// pages, and a phone on the machine's own network is somebody working the
+// machine.
+constexpr uint32_t WIFI_RETRY_WHILE_CLIENT_MS = 300000;
 
 // A try that never ends, because no disconnect event arrives, is
 // abandoned after this and started again. A try that is going to fail
@@ -210,22 +231,52 @@ constexpr uint32_t WIFI_TRY_MS = 30000;
 // that is about to succeed.
 constexpr uint32_t WIFI_DHCP_MS = 120000;
 
-// How long to try the saved network on its own before the setup portal
-// opens beside it. With nothing saved, the portal opens at once.
-constexpr uint32_t WIFI_SETUP_AFTER_MS = 60000;
+// How long to try the remembered networks on their own before the
+// machine's own network opens beside them. With none remembered, it opens
+// at once. For this long after the networks are changed on the panel, the
+// tries are WIFI_RETRY_MS apart again whoever is on the machine's own
+// network: that is somebody waiting to see whether the change worked.
+constexpr uint32_t WIFI_OWN_AFTER_MS = 60000;
 
 // How often, while still offline, to say that the join is still going.
 // The log keeps 32 lines, so this is a summary and not one line a try.
 constexpr uint32_t WIFI_REPORT_MS = 60000;
 
+// How long the machine's own network stays open once another is joined
+// and the last phone has left it. The phone a network was typed in on is
+// still on the machine's own, and that is where it reads the address to
+// go to next.
+constexpr uint32_t WIFI_OWN_LINGER_MS = 60000;
+
+// How long to wait before opening the machine's own network again when it
+// did not open.
+constexpr uint32_t WIFI_OWN_RETRY_MS = 10000;
+
+// How long a change made on the panel waits before the radio follows it.
+// The reply to the request that made it has to leave first, over a link
+// the change may take away.
+constexpr uint32_t WIFI_SETTLE_MS = 2000;
+
+// How long the screen shows the panel's address to a phone that has just
+// joined the machine's own network. After that it shows how to join again,
+// which is what the next phone needs.
+constexpr uint32_t WIFI_ADDRESS_SHOWN_MS = 120000;
+
+// How many phones the machine's own network takes at once. The radio
+// stops at 10, and each one costs memory the panel's pages need.
+constexpr int WIFI_OWN_CLIENTS = 4;
+
+// Where the panel is on the machine's own network.
+constexpr char WIFI_OWN_ADDRESS[] = "192.168.4.1";
+
 /**
  * The Button
  *
- * The tact switch on WIFI_RESET_PIN. Held through a boot it clears the
- * saved network, which was all it did. Once the machine is up it now works
- * the machine with no phone and no network: a press stops a job, a press
- * with nothing running prints the last run again, and a hold unloads the
- * roll. See Button.
+ * The tact switch on WIFI_RESET_PIN. Held through a boot it makes the
+ * machine forget its networks, which was all it did. Once the machine is
+ * up it now works the machine with no phone and no network: a press stops
+ * a job, a press with nothing running prints the last run again, and a
+ * hold unloads the roll. See Button.
  */
 
 // How often the button is read.
@@ -236,6 +287,12 @@ constexpr uint32_t BUTTON_POLL_MS = 10;
 // it: a boot took that for the button and cleared the saved network. Longer
 // than either, and too short to feel as a wait on a stop.
 constexpr uint32_t BUTTON_DEBOUNCE_MS = 50;
+
+// How long the button has to stay down as the machine starts for it to
+// forget its networks. Every reading in this time has to be low, so the
+// pin's false low at a boot does not count, and neither does a finger that
+// only brushed it. Short enough to hold through on purpose.
+constexpr uint32_t BUTTON_BOOT_HOLD_MS = 1000;
 
 // How long the button is held, with nothing running, for the roll to be
 // unloaded. A press is let go well inside this, and a hold is not long

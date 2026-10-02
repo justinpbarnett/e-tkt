@@ -169,6 +169,7 @@ ETKT::ETKT(Logger* logger, Settings* settings, Display* display,
   // Nothing has fed yet, so there is nothing to charge.
   this->accountedFeeds = 0;
   this->feedsAtLabelStart = 0;
+  this->idleStopped = false;
   this->lastStopId = 0;
   this->calibration.align = 0;
   this->calibration.force = 0;
@@ -366,6 +367,13 @@ void ETKT::loop() {
   // class, not about this code, and the next code to set this->command would
   // silently break it. The enum is two bytes; copy it out.
   if (this->command == NULL) {
+    guard.unlock();
+    // How the machine is reached changes with no job running, and the idle
+    // screen is where it is written. It is drawn again from here because only
+    // this task draws.
+    if (this->display->connectionChanged()) {
+      this->showIdle(this->idleStopped);
+    }
     return;
   }
   const Command running = this->command->command;
@@ -450,6 +458,7 @@ void ETKT::loop() {
 }
 
 void ETKT::showIdle(bool stopped) {
+  this->idleStopped = stopped;
   // A machine with no roll in it has nothing to be ready for, so it says
   // what it is waiting for instead.
   if (this->roll->state().out) {

@@ -30,20 +30,22 @@ struct DisplayCall {
   };
   explicit DisplayCall(Kind kind) : kind(kind) {}
   Kind kind;
-  Screen screen = Screen::WIFI_SETUP;  // RENDER
+  Screen screen = Screen::WIFI_RESET;  // RENDER
   bool stopped = false;                // RENDER_IDLE
   int charactersDone = 0;              // RENDER_PROGRESS
   String label = "";                   // RENDER_PROGRESS
   int copy = 0;                        // RENDER_PROGRESS
   int copies = 0;                      // RENDER_PROGRESS
   Calibration calibration = {0, 0};    // RENDER_SAVED
-  String ip = "";                      // CONNECTION_INFO
-  String ssid = "";                    // CONNECTION_INFO
+  ConnectionInfo info;                 // CONNECTION_INFO
   unsigned long atMs = 0;
 };
 
 class FakeDisplay : public Display {
  private:
+  // Set by setConnectionInfo(), and cleared by asking and by the idle screen.
+  bool changed = false;
+
   void record(DisplayCall call) {
     call.atMs = millis();
     this->calls.push_back(call);
@@ -77,14 +79,21 @@ class FakeDisplay : public Display {
   void renderIdle(bool stopped) override {
     DisplayCall c(DisplayCall::RENDER_IDLE);
     c.stopped = stopped;
+    this->changed = false;
     this->record(c);
   }
 
-  void setConnectionInfo(const String& ip, const String& ssid) override {
+  void setConnectionInfo(const ConnectionInfo& info) override {
     DisplayCall c(DisplayCall::CONNECTION_INFO);
-    c.ip = ip;
-    c.ssid = ssid;
+    c.info = info;
+    this->changed = true;
     this->record(c);
+  }
+
+  bool connectionChanged() override {
+    const bool was = this->changed;
+    this->changed = false;
+    return was;
   }
 
   void renderProgress(int charactersDone, const String& label, int copy,

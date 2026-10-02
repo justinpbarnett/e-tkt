@@ -998,6 +998,62 @@ void test_a_machine_with_its_roll_in_shows_the_idle_screen(void) {
   TEST_ASSERT_EQUAL_INT(0, (int)display->screens().size());
 }
 
+// --- the idle screen and the network ---------------------------------------
+
+static ConnectionInfo onTheChurchNetwork(void) {
+  ConnectionInfo info;
+  info.name = "Church";
+  info.detail = "192.168.1.50";
+  info.qr = "http://192.168.1.50";
+  return info;
+}
+
+// How the machine is reached changes with no job running: a network joined
+// a minute after the boot, another address, the machine's own network
+// opening. The idle screen is the one place that says it, and the job runner
+// is the one task that draws, so it draws the idle screen again when it
+// wakes to no job and a change. Once for a change, not once for every wake.
+void test_a_waiting_machine_shows_a_change_in_how_it_is_reached(void) {
+  etkt->showIdle();
+  display->clear();
+  display->setConnectionInfo(onTheChurchNetwork());
+
+  etkt->loop();
+  TEST_ASSERT_EQUAL_INT(1, display->countOf(DisplayCall::RENDER_IDLE));
+
+  etkt->loop();
+  TEST_ASSERT_EQUAL_INT(1, display->countOf(DisplayCall::RENDER_IDLE));
+}
+
+// The screen goes on saying the last job was stopped until the next job.
+void test_the_idle_screen_drawn_again_still_says_the_job_was_stopped(void) {
+  feedStepper->afterStep = [] { etkt->stop(); };
+  submit(Command::FEED);
+  etkt->loop();
+  feedStepper->afterStep = nullptr;
+  TEST_ASSERT_TRUE(display->last(DisplayCall::RENDER_IDLE)->stopped);
+  display->clear();
+  display->setConnectionInfo(onTheChurchNetwork());
+
+  etkt->loop();
+
+  TEST_ASSERT_EQUAL_INT(1, display->countOf(DisplayCall::RENDER_IDLE));
+  TEST_ASSERT_TRUE(display->last(DisplayCall::RENDER_IDLE)->stopped);
+}
+
+// While the roll is out the machine goes on asking for the next one. The
+// idle screen that follows the load says how the machine is reached by then.
+void test_a_change_in_how_it_is_reached_leaves_the_roll_notice_up(void) {
+  submit(Command::UNLOAD);
+  etkt->loop();
+  display->setConnectionInfo(onTheChurchNetwork());
+
+  etkt->loop();
+
+  TEST_ASSERT_EQUAL_INT((int)Screen::NEW_ROLL, (int)display->screens().back());
+  TEST_ASSERT_EQUAL_INT(0, display->countOf(DisplayCall::RENDER_IDLE));
+}
+
 // --- how long it takes ---------------------------------------------------
 
 // Where the estimate counts a job's home from: see Printhead::homeUs().
@@ -1218,6 +1274,9 @@ int main(int, char**) {
   RUN_TEST(test_a_load_stopped_partway_leaves_the_roll_out);
   RUN_TEST(test_a_roll_that_is_out_is_still_out_after_a_reboot);
   RUN_TEST(test_a_machine_with_its_roll_in_shows_the_idle_screen);
+  RUN_TEST(test_a_waiting_machine_shows_a_change_in_how_it_is_reached);
+  RUN_TEST(test_the_idle_screen_drawn_again_still_says_the_job_was_stopped);
+  RUN_TEST(test_a_change_in_how_it_is_reached_leaves_the_roll_notice_up);
   RUN_TEST(test_the_estimate_of_a_run_is_how_long_it_takes);
   RUN_TEST(test_a_run_reports_how_long_it_has_left);
   RUN_TEST(test_a_run_counts_down_from_the_label_time_it_measures);

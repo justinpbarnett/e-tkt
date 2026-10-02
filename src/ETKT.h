@@ -427,6 +427,11 @@ class ETKT {
   // Like accountedFeeds, only ever touched by the command loop.
   long feedsAtLabelStart;
 
+  // Whether the idle screen, as last drawn, said the job before it was
+  // stopped: what it says again when it is drawn for a change in how the
+  // machine is reached. Only the command loop touches it, as above.
+  bool idleStopped;
+
   // What every press of the running job is made at, from its first
   // character to its cut. loop() picks it as the job begins: the align and
   // force the job is trialling, where its row says it reads them, and the
@@ -559,8 +564,10 @@ class ETKT {
    *
    * loop() draws it as each job ends, and setup() once the machine has
    * booted. `stopped` is whether the job that just ended was stopped, which
-   * the idle screen says. For the task that runs loop() only: the screen is
-   * not drawn from two tasks.
+   * the idle screen says. While the machine waits, loop() draws it again
+   * whenever the display has been told another way to reach the machine: see
+   * Display::connectionChanged(). For the task that runs loop() only: the
+   * screen is not drawn from two tasks.
    */
   void showIdle(bool stopped = false);
 

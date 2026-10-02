@@ -4,6 +4,8 @@
 #include <U8g2lib.h>
 #include <qrcode.h>
 
+#include <mutex>
+
 #include "Display.h"
 #include "Sound.h"
 
@@ -23,13 +25,15 @@ class OledDisplay : public Display {
   // two adapters.
   U8G2_SSD1306_128X64_NONAME_F_HW_I2C* u8g2;
   Sound* sound;
-  const int QRcode_Version = 3;  //  set the version (range 1->40)
-  const int QRcode_ECC =
-      2;  //  set the Error Correction level (range 0-3) or symbolic (ECC_LOW,
-          //  ECC_MEDIUM, ECC_QUARTILE and ECC_HIGH)
+  const int QRcode_Version = 3;   //  set the version (range 1->40)
   QRCode* qrcode = new QRCode();  //  create the QR code
-  String ssid = "";
-  String ip = "";
+
+  // What the idle screen says about how the machine is reached, and whether
+  // that has changed since the screen was last drawn. The link's task writes
+  // them and the job runner's reads them, so they are behind the lock.
+  std::mutex lock;
+  ConnectionInfo info;
+  bool changed = false;
 
   /**
    * @brief Paints every pixel the given colour and leaves the draw colour set
@@ -53,7 +57,8 @@ class OledDisplay : public Display {
 
   void render(Screen screen) override;
   void renderIdle(bool stopped) override;
-  void setConnectionInfo(const String& ip, const String& ssid) override;
+  void setConnectionInfo(const ConnectionInfo& info) override;
+  bool connectionChanged() override;
   void renderProgress(int charactersDone, const String& label, int copy,
                       int copies) override;
   void renderSaved(const Calibration& saved) override;

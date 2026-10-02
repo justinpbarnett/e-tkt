@@ -22,6 +22,9 @@
  * So a roll is changed with a hold and two presses: unload, load, and the
  * run again.
  *
+ * Held down as the machine starts, it does none of that. It says so, and the
+ * board makes the machine forget its networks: see heldAtStart().
+ *
  * Two things are not taken for a press of an idle machine. A reading that
  * has not held for BUTTON_DEBOUNCE_MS is no press at all. And a press that
  * comes down before the machine has sat idle for BUTTON_ARMING_MS starts
@@ -50,11 +53,18 @@ class Button {
   // unloaded the roll.
   bool spent = false;
 
-  // When the machine was last busy, or the button started, and whether the
-  // machine has sat idle for BUTTON_ARMING_MS since. Both, so that the
-  // answer still holds when millis() wraps.
+  // When the machine was last busy, or the button was first read, and
+  // whether the machine has sat idle for BUTTON_ARMING_MS since. Both, so
+  // that the answer still holds when millis() wraps.
   unsigned long idleSinceMs = 0;
   bool armed = false;
+
+  // Whether poll() has run. The button's clocks start with it.
+  bool polled = false;
+
+  // Whether the button was down for all of BUTTON_BOOT_HOLD_MS as the
+  // machine started.
+  bool startHeld = false;
 
   /**
    * @brief The button has gone down, with the machine `busy` or not.
@@ -78,13 +88,24 @@ class Button {
   Button(uint8_t pin, ETKT* etkt, Logger* logger);
 
   /**
-   * @brief Pulls the pin up and starts the button's clocks. Once, before the
-   * first poll().
+   * @brief Pulls the pin up, and reads whether the button is being held
+   * through the start. Once, before the first poll().
    *
-   * A button that is down already starts nothing, however long it stays
-   * down: holding it through the boot is how the saved network is cleared.
+   * It returns at the first reading that says nobody is at the button, and
+   * after BUTTON_BOOT_HOLD_MS when somebody is.
+   *
+   * The machine may take as long as it likes between this and its first
+   * poll(). A button that is down by then starts nothing, however long it
+   * stays down: holding it through the start is how the machine is made to
+   * forget its networks, and a finger that came to it late is not asking
+   * for a roll to be unloaded.
    */
   void initialize();
+
+  /**
+   * @brief Whether the button was held down through initialize().
+   */
+  bool heldAtStart() const;
 
   /**
    * @brief Reads the button, and does what a press of it asks for.

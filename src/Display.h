@@ -23,7 +23,6 @@
  * them. Print progress is not either; it animates.
  */
 enum class Screen {
-  WIFI_SETUP,
   WIFI_RESET,
   CUTTING,
   FEEDING,
@@ -31,10 +30,34 @@ enum class Screen {
   UNLOADING,
   TESTING,
   FINISHED,
-  WIFI_JOINING,
   NEW_ROLL,
   REBOOTING,
 };
+
+/**
+ * @brief What the idle screen says about how the machine is reached.
+ *
+ * The link supervisor writes it and knows what each line means. The screen
+ * only lays the three out.
+ */
+struct ConnectionInfo {
+  // The network: the one the machine is on or is joining, or its own.
+  String name = "";
+  // The line under it: the machine's address there, the password of its own
+  // network, or a word for what it is doing about one.
+  String detail = "";
+  // What the QR code holds: the address of the panel, or how to join the
+  // machine's own network. Empty for no code.
+  String qr = "";
+};
+
+inline bool operator==(const ConnectionInfo& a, const ConnectionInfo& b) {
+  return a.name == b.name && a.detail == b.detail && a.qr == b.qr;
+}
+
+inline bool operator!=(const ConnectionInfo& a, const ConnectionInfo& b) {
+  return !(a == b);
+}
 
 /**
  * @brief What the machine shows on its own screen, told in terms of the job
@@ -75,7 +98,8 @@ class Display {
 
   /**
    * @brief Renders the screen the machine shows most often, when it is idle:
-   * the network it is on, its address, and a QR code of that address.
+   * how it is reached, as setConnectionInfo() last said, with a QR code when
+   * there is something to scan.
    *
    * @param stopped true when the job before was stopped partway. The screen
    *        then says "stopped" in place of "ready", with the square stop
@@ -86,10 +110,21 @@ class Display {
   virtual void renderIdle(bool stopped) = 0;
 
   /**
-   * @brief Updates the network the idle screen names and the address it
-   * shows, for the next time it is drawn.
+   * @brief Updates what the idle screen says about how the machine is
+   * reached, for the next time it is drawn. It draws nothing.
+   *
+   * The one method here that is called from another task than the one that
+   * draws: the link changes while the machine prints, and the link's task is
+   * the one that knows.
    */
-  virtual void setConnectionInfo(const String& ip, const String& ssid) = 0;
+  virtual void setConnectionInfo(const ConnectionInfo& info) = 0;
+
+  /**
+   * @brief Whether setConnectionInfo() has said anything since this was last
+   * asked, or since the idle screen was last drawn. An idle machine asks, and
+   * draws its idle screen again when it has.
+   */
+  virtual bool connectionChanged() = 0;
 
   /**
    * @brief Renders print progress, for use in the middle of printing a label.

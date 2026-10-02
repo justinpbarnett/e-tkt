@@ -654,8 +654,8 @@ Reply Api::capabilities(const Request& /*request*/) {
 // way to read them was a USB cable and a serial monitor, which is a problem
 // for a machine that is on a bench, on wifi, and printing a label wrong.
 // Plain text, because the only reader is somebody stood at the bench opening
-// http://e-tkt.local/api/log in a phone browser to find out why the last
-// label came out wrong.
+// /api/log at the machine's address in a phone browser to find out why the
+// last label came out wrong.
 Reply Api::log(const Request& /*request*/) {
   Reply reply = {200, TEXT_TYPE, this->logger->recent(), NULL};
   return reply;

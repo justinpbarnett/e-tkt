@@ -63,6 +63,8 @@ class NetworkSettings {
   // Empty until ownPassword() has made one.
   String password = "";
   bool router = true;
+  // Whether the network of the firmware before this one has been looked for.
+  bool importDone = false;
   uint32_t changes = 0;
 
   // Writes the list of networks. Under the lock.
@@ -152,6 +154,16 @@ class NetworkSettings {
   void setRouterOffered(bool offered);
 
   /**
+   * @brief Whether the network the firmware before this one had saved has
+   * been looked for. That firmware kept its one network in the radio itself,
+   * and it stays there. The link takes it over the first time this firmware
+   * starts, and says so here: looked for at every start, it would bring back
+   * a network that was forgotten on purpose.
+   */
+  bool imported();
+  void markImported();
+
+  /**
    * @brief A number that moves with every change the link has to follow: the
    * mode, the networks, and the router. Not with prefer(), which is the
    * link's own doing.
@@ -161,7 +173,8 @@ class NetworkSettings {
   /**
    * @brief Forgets every network, goes back to joining one, and throws away
    * the password of the machine's own network, so that the next one asked
-   * for is new.
+   * for is new. The network of the firmware before this one is not looked
+   * for after it. It needs no initialize() first.
    */
   void reset();
 };

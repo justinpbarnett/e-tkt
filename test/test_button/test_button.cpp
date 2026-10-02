@@ -38,10 +38,21 @@ static void pressIn(unsigned long afterMs, unsigned long forMs) {
   upAtMs = downAtMs + forMs;
 }
 
-// The button as the machine starts reading it.
+// The button as the machine starts reading it. The board's task reads it
+// only once it has started, so it is not polled until then here either.
 static void startButton(void) {
-  button = new Button(WIFI_RESET_PIN, etkt, &machine->logger);
-  button->initialize();
+  Button* starting = new Button(WIFI_RESET_PIN, etkt, &machine->logger);
+  starting->initialize();
+  button = starting;
+}
+
+// The machine starting again with the finger on the button, from then for
+// `forMs`.
+static void startAgainHolding(unsigned long forMs) {
+  delete button;
+  button = NULL;
+  pressIn(0, forMs);
+  startButton();
 }
 
 // Lets the machine sit idle for long enough that a press is meant for an
@@ -257,10 +268,7 @@ void test_a_button_already_down_as_the_machine_starts_starts_nothing(void) {
   // pin that reads low before its pull-up has it. Not a press, and not a
   // hold, however long it lasts.
   run("AB", 1);
-  delete button;
-  button = NULL;
-  pressIn(0, 5000);
-  startButton();
+  startAgainHolding(5000);
 
   delay(6000);
 
@@ -272,6 +280,29 @@ void test_a_button_already_down_as_the_machine_starts_starts_nothing(void) {
   press();
 
   TEST_ASSERT_EQUAL_INT(Command::TAG, etkt->createStatus().currentCommand);
+}
+
+void test_a_button_that_goes_down_while_the_machine_starts_starts_nothing(
+    void) {
+  // The machine reads whether the button is held, and then takes a few
+  // seconds more to start: its files, its radio. A finger that comes down
+  // in that time is late for making the machine forget its networks, and it
+  // stays down to see that happen. That hold is not to unload the roll.
+  run("AB", 1);
+  delete button;
+  button = NULL;
+  Button* starting = new Button(WIFI_RESET_PIN, etkt, &machine->logger);
+  starting->initialize();
+  pressIn(1000, 8000);
+  // The rest of the start, with the button not read yet.
+  delay(3000);
+  button = starting;
+
+  delay(BUTTON_HOLD_MS + 1000);
+
+  const StatusUpdate status = etkt->createStatus();
+  TEST_ASSERT_EQUAL_INT(Command::IDLE, status.currentCommand);
+  TEST_ASSERT_FALSE(status.roll.out);
 }
 
 void test_a_press_overtaken_by_a_job_from_the_panel_leaves_that_job_alone(
@@ -296,6 +327,37 @@ void test_a_press_overtaken_by_a_job_from_the_panel_leaves_that_job_alone(
   TEST_ASSERT_EQUAL_INT(Command::IDLE, status.stopped.command);
 }
 
+// --- held through the start ------------------------------------------------
+
+void test_a_button_held_through_the_start_is_said_to_be(void) {
+  // How the machine is made to forget its networks: the board asks this of
+  // the button as it starts, before it has a network to be reached over.
+  startAgainHolding(BUTTON_BOOT_HOLD_MS);
+
+  TEST_ASSERT_TRUE(button->heldAtStart());
+}
+
+void test_a_start_with_nobody_at_the_button_does_not_wait_for_a_hold(void) {
+  // Every start but one in a thousand. The first reading says so, and the
+  // machine gets on with starting.
+  const unsigned long before = millis();
+
+  startAgainHolding(0);
+
+  TEST_ASSERT_FALSE(button->heldAtStart());
+  TEST_ASSERT_LESS_OR_EQUAL_UINT32(BUTTON_POLL_MS, millis() - before);
+}
+
+void test_a_button_let_go_before_the_hold_is_up_was_not_held(void) {
+  // Every reading has to be low. A finger that brushed the button is not
+  // asking for the networks to be forgotten, and neither is the pin, which
+  // reads low in the moment its pull-up turns on: a boot once took that for
+  // the button, and the machine forgot its network with nobody near it.
+  startAgainHolding(BUTTON_BOOT_HOLD_MS - BUTTON_POLL_MS);
+
+  TEST_ASSERT_FALSE(button->heldAtStart());
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_a_press_while_a_job_runs_stops_it);
@@ -310,6 +372,11 @@ int main(int, char**) {
   RUN_TEST(test_a_press_just_after_a_job_ended_starts_nothing);
   RUN_TEST(test_a_button_already_down_as_the_machine_starts_starts_nothing);
   RUN_TEST(
+      test_a_button_that_goes_down_while_the_machine_starts_starts_nothing);
+  RUN_TEST(
       test_a_press_overtaken_by_a_job_from_the_panel_leaves_that_job_alone);
+  RUN_TEST(test_a_button_held_through_the_start_is_said_to_be);
+  RUN_TEST(test_a_start_with_nobody_at_the_button_does_not_wait_for_a_hold);
+  RUN_TEST(test_a_button_let_go_before_the_hold_is_up_was_not_held);
   return UNITY_END();
 }

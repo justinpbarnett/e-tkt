@@ -39,12 +39,15 @@
 #include "Configuration.h"
 #include "DaisyWheel.h"
 #include "ETKT.h"
+#include "Esp32Radio.h"
 #include "Feeder.h"
 #include "HallSwitch.h"
 #include "LastRun.h"
 #include "Light.h"
+#include "LinkSupervisor.h"
 #include "Logger.h"
 #include "Network.h"
+#include "NetworkSettings.h"
 #include "OledDisplay.h"
 #include "Press.h"
 #include "Printhead.h"
@@ -85,8 +88,8 @@ Logger* logger = new Logger();
 // that moves, sounds or blinks for a job, so they all share the one.
 StopSignal* stopSignal = new StopSignal();
 Sound* sound = new Sound(stopSignal);
-// The one place that knows the screen is an OLED. ETKT and Network take it
-// as a Display, which is all either of them draws through.
+// The one place that knows the screen is an OLED. ETKT, the link and Network
+// take it as a Display, which is all any of them draws through.
 OledDisplay* display = new OledDisplay(sound, screen);
 Settings* settings = new Settings(logger);
 Roll* roll = new Roll(logger);
@@ -107,9 +110,18 @@ ETKT* etkt = new ETKT(logger, settings, display, printhead, feeder, roll,
 // Everything the device answers under /api/, which the webserver hands every
 // such request to.
 Api* api = new Api(etkt, logger);
-Network* network = new Network(logger, display, api, WIFI_RESET_PIN);
-// The same switch the network reads once, at boot. From then on it is the
-// button's.
+// How the machine is reached. The link decides: which network it joins, and
+// when it opens its own. It works the radio through the Radio interface, as
+// the host tests work a fake one, so this is the one place that knows the
+// radio is the chip's.
+NetworkSettings* networkSettings = new NetworkSettings(logger);
+Esp32Radio* radio = new Esp32Radio(logger);
+LinkSupervisor* linkSupervisor =
+    new LinkSupervisor(logger, radio, networkSettings, display);
+Network* network =
+    new Network(logger, display, api, radio, networkSettings, linkSupervisor);
+// The pin is still named for what the switch on it was first for. Held
+// through the start, it still is that.
 Button* button = new Button(WIFI_RESET_PIN, etkt, logger);
 
 // Reads the button for as long as the machine is on. A task of its own, so
@@ -128,16 +140,23 @@ void setup() {
   // Play the splash screen
   display->playSplashScreen();
 
-  // Start WiFi, network.
+  // The button, held from the splash on, is how the machine is made to
+  // forget its networks. It restarts to do so, and nothing below runs.
+  button->initialize();
+  if (button->heldAtStart()) {
+    network->forgetNetworks();
+  }
+
+  // Start the webserver and the link. Neither waits for a network, so the
+  // machine is ready, and its button works, whether or not it is on one.
   network->initialize();
 
   // Display the ready "idle" screen, or the notice that the roll is out.
   etkt->showIdle();
 
-  // Core 0, beside the Wi-Fi join's task and for its reason: core 1 is the
-  // motors'. A press logs, and the log lines allocate, so the stack is that
-  // task's size too.
-  button->initialize();
+  // Core 0, beside the link's task and for its reason: core 1 is the
+  // motors'. A press logs, and the log lines allocate, so the stack is a
+  // step past the 4 KB a task that only reads a pin would get by on.
   xTaskCreatePinnedToCore(buttonTask, "button", 6144, NULL, 1, NULL, 0);
 }
 

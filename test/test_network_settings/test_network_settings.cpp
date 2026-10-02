@@ -332,6 +332,32 @@ void test_a_reset_changes_the_password_of_its_own_network(void) {
   TEST_ASSERT_EQUAL_STRING(after.c_str(), settings->ownPassword().c_str());
 }
 
+// --- the network the firmware before this one knew -------------------------
+
+void test_the_old_firmwares_network_is_looked_for_once(void) {
+  // The firmware before this one kept its one network in the radio itself,
+  // and it is still there. The link takes it over the first time this
+  // firmware starts. Looked for at every start, it would bring back a network
+  // that was forgotten on purpose.
+  TEST_ASSERT_FALSE(settings->imported());
+
+  settings->markImported();
+
+  TEST_ASSERT_TRUE(settings->imported());
+  restart();
+  TEST_ASSERT_TRUE(settings->imported());
+}
+
+void test_a_reset_leaves_nothing_to_take_over(void) {
+  // The reset wipes the radio's copy as well. Should that fail, the network
+  // in it still does not come back.
+  settings->reset();
+
+  TEST_ASSERT_TRUE(settings->imported());
+  restart();
+  TEST_ASSERT_TRUE(settings->imported());
+}
+
 // --- telling the link that something changed -------------------------------
 
 void test_every_change_the_link_has_to_follow_moves_the_revision(void) {
@@ -395,6 +421,8 @@ int main(int, char**) {
   RUN_TEST(test_no_password_is_logged);
   RUN_TEST(test_a_reset_forgets_every_network_and_goes_back_to_joining_one);
   RUN_TEST(test_a_reset_changes_the_password_of_its_own_network);
+  RUN_TEST(test_the_old_firmwares_network_is_looked_for_once);
+  RUN_TEST(test_a_reset_leaves_nothing_to_take_over);
   RUN_TEST(test_every_change_the_link_has_to_follow_moves_the_revision);
   RUN_TEST(test_what_changes_nothing_leaves_the_revision_alone);
   return UNITY_END();

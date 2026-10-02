@@ -15,20 +15,42 @@ void Button::initialize() {
   // is the chip's own. The switch then only has to short the pin to ground.
   pinMode(this->pin, INPUT_PULLUP);
 
-  const unsigned long now = millis();
+  // Held through the start, the button makes the machine forget its
+  // networks, so a low reading here has to be a finger and nothing else. The
+  // pin reads low in the moment its pull-up turns on, and a boot once took
+  // that for the button. So every reading for BUTTON_BOOT_HOLD_MS has to be
+  // low, and the first one that is not ends the wait: a start with nobody at
+  // the button is not held up.
+  this->startHeld = true;
+  for (uint32_t heldMs = 0; heldMs < BUTTON_BOOT_HOLD_MS;
+       heldMs += BUTTON_POLL_MS) {
+    if (digitalRead(this->pin) != LOW) {
+      this->startHeld = false;
+      break;
+    }
+    delay(BUTTON_POLL_MS);
+  }
+
   this->readingDown = false;
-  this->readingSinceMs = now;
   this->down = false;
   this->spent = false;
-  // The machine has been busy until now, booting. So a button that is down
-  // already, or a pin that reads low before the pull-up has it, is a press
-  // that comes too soon after that to start anything.
-  this->idleSinceMs = now;
   this->armed = false;
+  this->polled = false;
 }
+
+bool Button::heldAtStart() const { return this->startHeld; }
 
 void Button::poll() {
   const unsigned long now = millis();
+  if (!this->polled) {
+    // The machine has been busy until now, starting, for however long that
+    // took after initialize(). So a button that is down already, or that
+    // went down while the machine started, is a press that comes too soon
+    // after that to start anything.
+    this->polled = true;
+    this->readingSinceMs = now;
+    this->idleSinceMs = now;
+  }
 
   const bool busy = this->etkt->busy();
   if (busy) {

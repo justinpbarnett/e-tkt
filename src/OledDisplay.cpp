@@ -89,9 +89,19 @@ void OledDisplay::initialize() {
   this->clear();
 }
 
-void OledDisplay::setConnectionInfo(const String& ip, const String& ssid) {
-  this->ip = ip;
-  this->ssid = ssid;
+void OledDisplay::setConnectionInfo(const ConnectionInfo& info) {
+  this->lock.lock();
+  this->info = info;
+  this->changed = true;
+  this->lock.unlock();
+}
+
+bool OledDisplay::connectionChanged() {
+  this->lock.lock();
+  const bool was = this->changed;
+  this->changed = false;
+  this->lock.unlock();
+  return was;
 }
 
 void OledDisplay::clear(int color) {
@@ -187,8 +197,6 @@ struct ScreenSpec {
 };
 
 const ScreenSpec SCREEN_SPECS[] = {
-    {Screen::WIFI_SETUP, ScreenLayout::NOTICE, false, "WI-FI SETUP", 15,
-     "Please, connect to", "the \"E-TKT\" network...", 0x011a, 0, 0},
     {Screen::WIFI_RESET, ScreenLayout::NOTICE, false, "WI-FI RESET", 15,
      "Connection cleared!", "Release the button.", 0x00cd, 0, 0},
     {Screen::CUTTING, ScreenLayout::BANNER, false, "CUTTING", 44, nullptr,
@@ -205,8 +213,6 @@ const ScreenSpec SCREEN_SPECS[] = {
      nullptr, 0x0073, 26, 90},
     {Screen::FINISHED, ScreenLayout::BANNER, true, "FINISHED!", 42, nullptr,
      nullptr, 0x0073, 27, 90},
-    {Screen::WIFI_JOINING, ScreenLayout::NOTICE, false, "CONNECTING", 15,
-     "Connecting to the", "saved network...", 0x011a, 0, 0},
     // Where the idle screen would be while the roll is out: see
     // ETKT::showIdle(). REELING's arrows, for the load the button then does.
     {Screen::NEW_ROLL, ScreenLayout::NOTICE, false, "NEW ROLL", 15,
@@ -234,7 +240,7 @@ void drawBanner(U8G2_SSD1306_128X64_NONAME_F_HW_I2C* u8g2,
 }
 
 // Draws a titled notice with two lines of body text and one icon beside the
-// title. The shape behind WIFI_SETUP, WIFI_RESET, WIFI_JOINING and NEW_ROLL.
+// title. The shape behind WIFI_RESET and NEW_ROLL.
 void drawNotice(U8G2_SSD1306_128X64_NONAME_F_HW_I2C* u8g2,
                 const ScreenSpec& spec) {
   u8g2->setFont(u8g2_font_nine_by_five_nbp_t_all);
@@ -280,87 +286,168 @@ void OledDisplay::render(Screen screen) {
   // instead of one that went dark.
 }
 
+// ---------------------------------------------------------------------------
+// The idle screen.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// The QR code has the right half of the glass to itself. Everything else
+// has to end before it.
+constexpr int QR_LEFT = SCREEN_WIDTH - 64;
+
+// With no code to draw, a line runs to as far from the right edge as it
+// starts from the left one.
+constexpr int TEXT_RIGHT = SCREEN_WIDTH - 3;
+
+// How many bytes of text a version 3 code holds at each level of error
+// correction, from the level that reads through the most damage down. The
+// library does not check: a text too long for its level is written over the
+// correction codewords, and one longer still past the end of the buffer.
+struct CodeLevel {
+  uint8_t ecc;
+  unsigned int bytes;
+};
+
+const CodeLevel CODE_LEVELS[] = {
+    {ECC_QUARTILE, 32}, {ECC_MEDIUM, 42}, {ECC_LOW, 53}};
+
+// The level a text is drawn at: the highest it leaves room for. NULL for no
+// text, and for one too long for any, which gets no code.
+const CodeLevel* codeLevelFor(const String& text) {
+  if (text.length() == 0) {
+    return NULL;
+  }
+  for (const CodeLevel& level : CODE_LEVELS) {
+    if (text.length() <= level.bytes) {
+      return &level;
+    }
+  }
+  return NULL;
+}
+
+// The fonts a line steps down through until it fits, the house font first.
+//
+// The name of the machine's own network is what a phone's list of networks
+// is searched for, so it has to show whole, and the second of these is where
+// its ten characters fit beside the code. The line under it holds the
+// address, or the password of that network, which is typed in from here when
+// the code will not scan. An address is figures and dots, which have
+// narrower fonts than letters do: the last of them fits any address there
+// is.
+const uint8_t* const NAME_FONTS[] = {u8g2_font_nine_by_five_nbp_t_all,
+                                     u8g2_font_5x7_tr};
+const uint8_t* const WORD_FONTS[] = {u8g2_font_nine_by_five_nbp_t_all,
+                                     u8g2_font_5x7_tr, u8g2_font_4x6_tr};
+const uint8_t* const FIGURE_FONTS[] = {u8g2_font_nine_by_five_nbp_t_all,
+                                       u8g2_font_miranda_nbp_tn,
+                                       u8g2_font_squeezed_r7_tn};
+
+bool isFigures(const String& text) {
+  for (unsigned int i = 0; i < text.length(); i++) {
+    const char c = text.charAt(i);
+    if ((c < '0' || c > '9') && c != '.') {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Selects the first of `fonts` that `text` is no wider than `width` in, and
+// says whether there was one. With none, the last of them is left selected.
+template <size_t N>
+bool fitFont(U8G2_SSD1306_128X64_NONAME_F_HW_I2C* u8g2,
+             const uint8_t* const (&fonts)[N], const String& text, int width) {
+  for (const uint8_t* font : fonts) {
+    u8g2->setFont(font);
+    if (u8g2->getStrWidth(text.c_str()) <= width) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// As much of `text` as fits `width` in the selected font, ending in dots.
+String cutToFit(U8G2_SSD1306_128X64_NONAME_F_HW_I2C* u8g2, const String& text,
+                int width) {
+  String kept = text;
+  while (kept.length() > 0 &&
+         u8g2->getStrWidth((kept + "...").c_str()) > width) {
+    kept = kept.substring(0, kept.length() - 1);
+  }
+  return kept + "...";
+}
+
+}  // namespace
+
 void OledDisplay::renderIdle(bool stopped) {
   // main screen with qr code, network and attributed ip
 
+  // The link's task may say something new while this draws. That is for the
+  // next time: this one draws what had been said as it began.
+  this->lock.lock();
+  const ConnectionInfo info = this->info;
+  this->changed = false;
+  this->lock.unlock();
+
   this->clear();
   this->u8g2->setFont(u8g2_font_nine_by_five_nbp_t_all);
+  this->u8g2->setDrawColor(1);
 
-  uint8_t qrcodeData[qrcode_getBufferSize(this->QRcode_Version)];
+  this->u8g2->drawStr(14, 15, "E-TKT");
+  this->u8g2->setDrawColor(2);
+  this->u8g2->drawFrame(3, 3, 50, 15);
+  this->u8g2->setDrawColor(1);
 
-  // The QR code has the right half of the screen to itself. Everything else
-  // has to end before it.
-  const uint8_t qrLeft = SCREEN_WIDTH - 64;
+  this->u8g2->drawStr(14, 31, stopped ? "stopped" : "ready");
 
-  if (this->ip != "") {
-    this->u8g2->setDrawColor(1);
+  const CodeLevel* level = codeLevelFor(info.qr);
+  const int right = level != NULL ? QR_LEFT : TEXT_RIGHT;
 
-    this->u8g2->drawStr(14, 15, "E-TKT");
-    this->u8g2->setDrawColor(2);
-    this->u8g2->drawFrame(3, 3, 50, 15);
-    this->u8g2->setDrawColor(1);
-
-    this->u8g2->drawStr(14, 31, stopped ? "stopped" : "ready");
-
-    String resizeSSID;
-    if (this->ssid.length() > 8) {
-      resizeSSID = this->ssid.substring(0, 7) + "...";
-    } else {
-      resizeSSID = this->ssid;
+  if (info.name != "") {
+    // A name too long for either font is cut short in the house one.
+    String name = info.name;
+    if (!fitFont(this->u8g2, NAME_FONTS, name, right - 14)) {
+      this->u8g2->setFont(NAME_FONTS[0]);
+      name = cutToFit(this->u8g2, name, right - 14);
     }
-    const char* d = resizeSSID.c_str();
-    this->u8g2->drawStr(14, 46, d);
+    this->u8g2->drawStr(14, 46, name.c_str());
+  }
 
-    // The address is the way in when the QR code will not scan, so it has to
-    // show whole. The house font fits a short one, but a long one like
-    // 192.168.254.165 runs under the QR code, so it steps down to the first
-    // of these it fits in. The last one fits any address there is.
-    const char* b = this->ip.c_str();
-    const uint8_t* const addressFonts[] = {u8g2_font_nine_by_five_nbp_t_all,
-                                           u8g2_font_miranda_nbp_tn,
-                                           u8g2_font_squeezed_r7_tn};
-    for (const uint8_t* font : addressFonts) {
-      this->u8g2->setFont(font);
-      if (3 + this->u8g2->getStrWidth(b) <= qrLeft) {
-        break;
-      }
-    }
-    this->u8g2->drawStr(3, 61, b);
+  if (isFigures(info.detail)) {
+    fitFont(this->u8g2, FIGURE_FONTS, info.detail, right - 3);
+  } else {
+    fitFont(this->u8g2, WORD_FONTS, info.detail, right - 3);
+  }
+  this->u8g2->drawStr(3, 61, info.detail.c_str());
 
-    this->u8g2->setFont(u8g2_font_open_iconic_all_1x_t);
+  this->u8g2->setFont(u8g2_font_open_iconic_all_1x_t);
+  if (info.name != "") {
     this->u8g2->drawGlyph(3, 46, 0x00f8);
-    // A tick when the last job finished, the media stop square when it was
-    // stopped partway.
-    this->u8g2->drawGlyph(3, 31, stopped ? 0x00d9 : 0x0073);
+  }
+  // A tick when the last job finished, the media stop square when it was
+  // stopped partway.
+  this->u8g2->drawGlyph(3, 31, stopped ? 0x00d9 : 0x0073);
 
-    String ipFull = "http://" + this->ip;
-    qrcode_initText(qrcode, qrcodeData, QRcode_Version, QRcode_ECC,
-                    ipFull.c_str());
+  if (level != NULL) {
+    uint8_t qrcodeData[qrcode_getBufferSize(this->QRcode_Version)];
+    qrcode_initText(qrcode, qrcodeData, QRcode_Version, level->ecc,
+                    info.qr.c_str());
 
     // qr code background
-    for (uint8_t y = 0; y < 64; y++) {
-      for (uint8_t x = 0; x < 64; x++) {
-        this->u8g2->setDrawColor(0);
-        this->u8g2->drawPixel(x + qrLeft, y);
-      }
-    }
+    this->u8g2->setDrawColor(0);
+    this->u8g2->drawBox(QR_LEFT, 0, SCREEN_WIDTH - QR_LEFT, SCREEN_HEIGHT);
 
     // setup the top right corner of the QRcode
-    uint8_t x0 = qrLeft + 6;
-    uint8_t y0 = 3;
+    const int x0 = QR_LEFT + 6;
+    const int y0 = 3;
 
     // display QRcode
+    this->u8g2->setDrawColor(1);
     for (uint8_t y = 0; y < qrcode->size; y++) {
       for (uint8_t x = 0; x < qrcode->size; x++) {
-        int newX = x0 + (x * 2);
-        int newY = y0 + (y * 2);
-
         if (qrcode_getModule(qrcode, x, y)) {
-          this->u8g2->setDrawColor(1);
-          this->u8g2->drawBox(newX, newY, 2, 2);
-        } else {
-          this->u8g2->setDrawColor(0);
-          this->u8g2->drawBox(newX, newY, 2, 2);
+          this->u8g2->drawBox(x0 + (x * 2), y0 + (y * 2), 2, 2);
         }
       }
     }

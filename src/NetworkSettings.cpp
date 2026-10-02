@@ -17,6 +17,7 @@ static const char* MODE_KEY = "mode";
 static const char* NETWORKS_KEY = "networks";
 static const char* PASSWORD_KEY = "password";
 static const char* ROUTER_KEY = "router";
+static const char* IMPORTED_KEY = "imported";
 
 // The mode as it is stored.
 static const uint32_t STORED_JOIN = 0;
@@ -143,6 +144,7 @@ void NetworkSettings::initialize(const String& machineId) {
                       : NetworkMode::JOIN;
   this->router = this->preferences.getBool(ROUTER_KEY, true);
   this->password = this->preferences.getString(PASSWORD_KEY, "");
+  this->importDone = this->preferences.getBool(IMPORTED_KEY, false);
   this->preferences.end();
 
   this->remembered.clear();
@@ -334,6 +336,24 @@ void NetworkSettings::setRouterOffered(bool offered) {
   }
 }
 
+bool NetworkSettings::imported() {
+  this->lock.lock();
+  const bool imported = this->importDone;
+  this->lock.unlock();
+  return imported;
+}
+
+void NetworkSettings::markImported() {
+  this->lock.lock();
+  if (!this->importDone) {
+    this->importDone = true;
+    this->preferences.begin(NETWORK_NAMESPACE, false);
+    this->preferences.putBool(IMPORTED_KEY, true);
+    this->preferences.end();
+  }
+  this->lock.unlock();
+}
+
 uint32_t NetworkSettings::revision() {
   this->lock.lock();
   const uint32_t revision = this->changes;
@@ -347,6 +367,7 @@ void NetworkSettings::reset() {
   this->current = NetworkMode::JOIN;
   this->router = true;
   this->password = "";
+  this->importDone = true;
   this->changes++;
   this->storeNetworks();
   this->preferences.begin(NETWORK_NAMESPACE, false);
@@ -354,6 +375,9 @@ void NetworkSettings::reset() {
   this->preferences.putBool(ROUTER_KEY, true);
   // Empty is none: ownPassword() makes the next.
   this->preferences.putString(PASSWORD_KEY, "");
+  // The radio's own copy of a network is wiped along with this. Should that
+  // fail, what is left in it still does not come back.
+  this->preferences.putBool(IMPORTED_KEY, true);
   this->preferences.end();
   this->lock.unlock();
 
