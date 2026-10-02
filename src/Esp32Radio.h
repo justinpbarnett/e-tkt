@@ -20,7 +20,8 @@
  * this one left in it, and is then left alone. What the machine remembers is
  * NetworkSettings' to keep. So a walk through four networks writes no flash,
  * and a machine put back on the firmware before this one finds its network
- * where it left it.
+ * where it left it. Only forgetInherited() wipes it, for a machine told to
+ * forget every network.
  */
 class Esp32Radio : public Radio {
  private:
@@ -58,6 +59,15 @@ class Esp32Radio : public Radio {
    * told to. Once, before anything else here.
    */
   void initialize();
+
+  /**
+   * @brief Wipes the radio's own storage, and with it the network the
+   * firmware before this one left there. In place of initialize(), not
+   * after it: the machine restarts once this is done.
+   *
+   * @return whether the radio wiped it.
+   */
+  bool forgetInherited();
 
   void join(const String& ssid, const String& password) override;
   void leave() override;

@@ -19,6 +19,11 @@ constexpr uint32_t SURVEY_MS_PER_CHANNEL = 120;
 // point to be up. It is up in a few tens of milliseconds.
 constexpr uint32_t ACCESS_POINT_UP_MS = 1000;
 
+// How long forgetInherited() gives the driver between bringing it up and
+// telling it to wipe its storage. The firmware before this one waited this
+// long and gave no reason. Nobody is in a hurry at a reset, so it stays.
+constexpr uint32_t DRIVER_UP_MS = 2000;
+
 // The names and passwords the radio keeps are fixed fields that are full
 // without a NUL at the end.
 String fieldText(const uint8_t* field, size_t size) {
@@ -265,4 +270,13 @@ bool Esp32Radio::inherited(String* ssid, String* password) {
   *ssid = this->inheritedSsid;
   *password = this->inheritedPassword;
   return true;
+}
+
+bool Esp32Radio::forgetInherited() {
+  // The driver wipes its storage only once it is up, and nothing has
+  // brought it up yet.
+  wifi_init_config_t config = WIFI_INIT_CONFIG_DEFAULT();
+  esp_wifi_init(&config);
+  delay(DRIVER_UP_MS);
+  return esp_wifi_restore() == ESP_OK;
 }

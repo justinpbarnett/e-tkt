@@ -18,7 +18,6 @@
 #include "NetworkSettings.h"
 #include "SPIFFS.h"
 #include "esp_heap_caps.h"
-#include "esp_wifi.h"
 
 // --- ApiHandler ---
 
@@ -127,14 +126,10 @@ void Network::forgetNetworks() {
   // The firmware before this one kept its network in the radio's own
   // storage, and this one leaves it there. That goes as well: a network
   // forgotten here is not to come back with a firmware put back on.
-  wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-  esp_wifi_init(&cfg);  // initiate and allocate wifi resources
-  delay(2000);          // wait a bit
-
-  if (esp_wifi_restore() != ESP_OK) {
-    this->logger->log("WiFi is not initialized by esp_wifi_init ");
+  if (this->radio->forgetInherited()) {
+    this->logger->log("Wiped the radio's own storage");
   } else {
-    this->logger->log("WiFi Configurations Cleared!");
+    this->logger->warn("Could not wipe the radio's own storage");
   }
   this->display->render(Screen::WIFI_RESET);
   delay(1500);
