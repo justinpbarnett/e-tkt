@@ -16,8 +16,10 @@
 #include "LinkSupervisor.h"
 #include "Logger.h"
 #include "NetworkSettings.h"
-#include "SPIFFS.h"
-#include "esp_heap_caps.h"
+#include "PanelFiles.h"
+
+// The panel, as scripts/embed_panel.py made it from data/ for this build.
+#include "EmbeddedPanel.h"
 
 // --- ApiHandler ---
 
@@ -138,216 +140,16 @@ void Network::forgetNetworks() {
 
 namespace {
 
-// What the panel is, in the order it should be copied. The page, the
-// script and the stylesheet go first: they are the first paint. The tape
-// font is last. It is half the bytes, and the page does not ask for it
-// until it is already up. Copying the font first took the one contiguous
-// block, and the script and the stylesheet were the files left on flash.
-// The modules are folded into script.js when the image is built, so they
-// are not separate files here.
-const char* PANEL_PATHS[] = {
-    "/index.html", "/script.js",   "/style.css",     "/manifest.json",
-    "/icon.png",   "/favicon.ico", "/fontwhite.ttf",
-};
-const int PANEL_PATH_COUNT = sizeof(PANEL_PATHS) / sizeof(PANEL_PATHS[0]);
-
-// Left free for what allocates after this copy: the radio as it joins, the
-// machine's own network when that opens, the server and its connections.
-// Taking the last block is how a later connection fails.
-const size_t PANEL_HEAP_RESERVE = 48 * 1024;
-
-struct CachedFile {
-  char path[32];
-  const char* type;
-  char etag[16];
-  uint8_t* bytes;
-  size_t length;
-  bool gzip;
-};
-
-CachedFile panelFiles[PANEL_PATH_COUNT];
-int panelCount = 0;
-
-bool endsWith(const char* text, const char* suffix) {
-  const size_t textLength = strlen(text);
-  const size_t suffixLength = strlen(suffix);
-  return textLength >= suffixLength &&
-         strcmp(text + textLength - suffixLength, suffix) == 0;
-}
-
-const char* panelType(const char* path) {
-  if (endsWith(path, ".html")) {
-    return "text/html";
-  }
-  if (endsWith(path, ".css")) {
-    return "text/css";
-  }
-  if (endsWith(path, ".js")) {
-    return "application/javascript";
-  }
-  if (endsWith(path, ".json")) {
-    return "application/json";
-  }
-  if (endsWith(path, ".png")) {
-    return "image/png";
-  }
-  if (endsWith(path, ".ico")) {
-    return "image/x-icon";
-  }
-  if (endsWith(path, ".svg")) {
-    return "image/svg+xml";
-  }
-  if (endsWith(path, ".ttf")) {
-    return "font/ttf";
-  }
-  return "application/octet-stream";
-}
-
-const char* panelCacheControl(const CachedFile* file) {
-  // The document is what names the other files, with a hash that changes
-  // when they do. It has to be asked every time, or a new image would
-  // never be seen. The others can stay: their address changes with them.
-  if (strcmp(file->path, "/index.html") == 0) {
-    return "no-cache";
-  }
-  return "public, max-age=31536000, immutable";
-}
-
-const CachedFile* findPanel(const String& url) {
-  const char* path = url.c_str();
-  if (url == "/") {
-    path = "/index.html";
-  }
-  for (int i = 0; i < panelCount; i++) {
-    if (strcmp(panelFiles[i].path, path) == 0) {
-      return &panelFiles[i];
-    }
-  }
-  return NULL;
-}
-
-File openPanelFile(const char* urlPath, bool* gzip) {
-  char gzPath[40];
-  snprintf(gzPath, sizeof(gzPath), "%s.gz", urlPath);
-  File zipped = SPIFFS.open(gzPath, "r");
-  if (zipped) {
-    *gzip = true;
-    return zipped;
-  }
-  *gzip = false;
-  return SPIFFS.open(urlPath, "r");
-}
-
-struct Candidate {
-  char path[32];
-  size_t length;
-  bool gzip;
-};
-
-bool measurePanel(const char* urlPath, Candidate* out) {
-  bool gzip = false;
-  File file = openPanelFile(urlPath, &gzip);
-  if (!file || file.isDirectory()) {
-    if (file) {
-      file.close();
-    }
-    return false;
-  }
-  const size_t length = file.size();
-  file.close();
-  if (length == 0) {
-    return false;
-  }
-  snprintf(out->path, sizeof(out->path), "%s", urlPath);
-  out->length = length;
-  out->gzip = gzip;
-  return true;
-}
-
-bool readPanel(Logger* logger, const Candidate* candidate) {
-  if (panelCount >= PANEL_PATH_COUNT) {
-    logger->warn(String("panel left ") + candidate->path + " on flash");
-    return false;
-  }
-  const size_t room = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
-  if (room < candidate->length + PANEL_HEAP_RESERVE) {
-    logger->warn(String("panel left ") + candidate->path + " on flash");
-    return false;
-  }
-  char stored[40];
-  if (candidate->gzip) {
-    snprintf(stored, sizeof(stored), "%s.gz", candidate->path);
-  } else {
-    snprintf(stored, sizeof(stored), "%s", candidate->path);
-  }
-  File file = SPIFFS.open(stored, "r");
-  if (!file) {
-    logger->warn(String("panel could not read ") + candidate->path);
-    return false;
-  }
-  uint8_t* bytes = static_cast<uint8_t*>(
-      heap_caps_malloc(candidate->length, MALLOC_CAP_8BIT));
-  if (bytes == NULL) {
-    file.close();
-    logger->warn(String("panel left ") + candidate->path + " on flash");
-    return false;
-  }
-  const size_t got = file.read(bytes, candidate->length);
-  file.close();
-  if (got != candidate->length) {
-    heap_caps_free(bytes);
-    logger->warn(String("panel could not read ") + candidate->path);
-    return false;
-  }
-
-  CachedFile* slot = &panelFiles[panelCount];
-  snprintf(slot->path, sizeof(slot->path), "%s", candidate->path);
-  slot->type = panelType(candidate->path);
-  slot->bytes = bytes;
-  slot->length = candidate->length;
-  slot->gzip = candidate->gzip;
-  uint32_t hash = 2166136261u;
-  for (size_t i = 0; i < candidate->length; i++) {
-    hash ^= bytes[i];
-    hash *= 16777619u;
-  }
-  snprintf(slot->etag, sizeof(slot->etag), "\"%08lx\"",
-           static_cast<unsigned long>(hash));
-  panelCount++;
-  return true;
-}
-
-// Serving a file used to read it from flash on the task that also sends
-// the packets, a window at a time. Flash and the radio share a bus, so
-// each of those reads held the send, and a page moved at a few kilobytes
-// a second. This copies the panel once, at boot, and the send then copies
-// memory. A file that does not fit is left on flash and served from there.
-bool cachePanel(Logger* logger) {
-  Candidate pending[PANEL_PATH_COUNT];
-  int count = 0;
-  for (int i = 0; i < PANEL_PATH_COUNT; i++) {
-    if (measurePanel(PANEL_PATHS[i], &pending[count])) {
-      count++;
-    }
-  }
-  size_t total = 0;
-  for (int i = 0; i < count; i++) {
-    if (readPanel(logger, &pending[i])) {
-      total += pending[i].length;
-    }
-  }
-  logger->log(String("panel in ram: ") + total + " bytes, " + panelCount +
-              " files, heap " + ESP.getFreeHeap());
-  return panelCount > 0;
-}
-
+// The webserver's side of the panel. Which file an address is, whether the
+// browser's own copy is still the one and how long it may keep what it gets
+// are PanelFiles.h's to say, and are tested there, so this has no rules of
+// its own. It sends the bytes from where the firmware holds them, which is
+// the mapped flash: a send takes no memory but the window it goes through.
 class PanelHandler : public AsyncWebHandler {
  public:
   bool canHandle(AsyncWebServerRequest* request) override {
-    if (request->method() != HTTP_GET) {
-      return false;
-    }
-    if (findPanel(request->url()) == NULL) {
+    if (request->method() != HTTP_GET ||
+        panelFile(EMBEDDED_PANEL, request->url().c_str()) == NULL) {
       return false;
     }
     request->addInterestingHeader("If-None-Match");
@@ -355,45 +157,28 @@ class PanelHandler : public AsyncWebHandler {
   }
 
   void handleRequest(AsyncWebServerRequest* request) override {
-    const CachedFile* file = findPanel(request->url());
-    if (file == NULL) {
+    const String version =
+        request->hasParam("v") ? request->getParam("v")->value() : String();
+    const PanelReply reply =
+        panelReply(EMBEDDED_PANEL, request->url().c_str(), version.c_str(),
+                   request->header("If-None-Match").c_str());
+    if (reply.file == NULL) {
       request->send(404, "text/plain", "Not found");
       return;
     }
-    const char* policy = panelCacheControl(file);
-    if (request->hasHeader("If-None-Match")) {
-      String match = request->header("If-None-Match");
-      match.trim();
-      if (match == file->etag) {
-        AsyncWebServerResponse* response = request->beginResponse(304);
-        response->addHeader("ETag", file->etag);
-        response->addHeader("Cache-Control", policy);
-        request->send(response);
-        return;
+
+    AsyncWebServerResponse* response;
+    if (reply.unchanged) {
+      response = request->beginResponse(304);
+    } else {
+      response = request->beginResponse_P(
+          200, reply.file->type, reply.file->bytes, reply.file->length);
+      if (reply.file->gzip) {
+        response->addHeader("Content-Encoding", "gzip");
       }
     }
-
-    const uint8_t* bytes = file->bytes;
-    const size_t length = file->length;
-    AsyncWebServerResponse* response =
-        request->beginResponse(file->type, length,
-                               [bytes, length](uint8_t* buffer, size_t maxLen,
-                                               size_t index) -> size_t {
-                                 if (index >= length) {
-                                   return 0;
-                                 }
-                                 size_t n = length - index;
-                                 if (n > maxLen) {
-                                   n = maxLen;
-                                 }
-                                 memcpy(buffer, bytes + index, n);
-                                 return n;
-                               });
-    if (file->gzip) {
-      response->addHeader("Content-Encoding", "gzip");
-    }
-    response->addHeader("Cache-Control", policy);
-    response->addHeader("ETag", file->etag);
+    response->addHeader("Cache-Control", reply.cacheControl);
+    response->addHeader("ETag", reply.file->etag);
     request->send(response);
   }
 };
@@ -422,33 +207,19 @@ void Network::initialize() {
     this->logger->log(String("answers to ") + host + ".local");
   }
 
-  // Every request under /api/ goes to the Api. It comes ahead of the files,
-  // so that none of them is taken for a file, and it does not wait on them
-  // mounting: without the files there is no panel, but the device's status,
-  // its log and a stop still answer. Before this, a filesystem that failed to
-  // mount returned ahead of every route, and of starting the server at all.
+  // Every request under /api/ goes to the Api. It comes ahead of the panel,
+  // so that none of them is taken for a file.
   this->server->addHandler(new ApiHandler(this->api));
 
-  // The files are copied into RAM and served from there. What is left on
-  // flash, because it did not fit, is still served below. With the page
-  // itself in RAM, a leftover is an asset whose address changes with its
-  // contents, so the browser can keep it instead of fetching it again.
-  if (SPIFFS.begin()) {
-    if (cachePanel(this->logger)) {
-      this->server->addHandler(new PanelHandler());
-    }
-    AsyncStaticWebHandler& files = this->server->serveStatic("/", SPIFFS, "/")
-                                       .setDefaultFile("index.html");
-    if (findPanel("/") != NULL) {
-      files.setCacheControl("public, max-age=31536000, immutable");
-    }
-  } else {
-    this->logger->error(
-        "An Error has occurred while mounting SPIFFS. There is no panel to "
-        "serve, but the api still answers.");
-  }
+  // The panel is part of the firmware, so there is nothing to mount and
+  // nothing to copy. It was copied into RAM at each start before, out of a
+  // SPIFFS partition, and the copy left a connection little to be made of.
+  this->server->addHandler(new PanelHandler());
+  this->logger->log(String("panel ") + EMBEDDED_PANEL.version + ": " +
+                    EMBEDDED_PANEL.count + " files, " +
+                    panelBytes(EMBEDDED_PANEL) + " bytes");
 
-  // Everything else, including every file when there are none.
+  // Everything else.
   this->server->onNotFound([](AsyncWebServerRequest* request) {
     request->send(404, "text/plain", "Not found");
   });

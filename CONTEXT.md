@@ -412,7 +412,10 @@ It has no **button** either.
 
 **Log** - the last 32 lines the device said, kept in memory and served as plain text from `/api/log`, because the machine is on a bench on wifi and a serial cable is not always the answer.
 
-**Panel** - the web UI in `data/`, served from SPIFFS.
+**Panel** - the web UI in `data/`, which the firmware carries.
+A build makes its files into constant data (`scripts/embed_panel.py`): the page's modules as one script, each file gzipped when that is smaller, and each address the page asks under given the panel's version.
+So there is one upload, the panel a machine serves is the one its firmware was built with, and the files take none of the memory the connections are made of.
+`PanelFiles.h` says what a browser is answered: a file asked for under this panel's version may be kept for good, and any other is asked for again each time.
 It asks the device what it will accept at startup (`/api/capabilities`) instead of deciding for itself.
 It polls `/api/status` every second, and every five while the page is hidden, so the tape left and a label sent from another phone show without a reload.
 It is built for a **link** that loses what is sent over it: a basement, or a hall with a thousand phones on one Wi-Fi.

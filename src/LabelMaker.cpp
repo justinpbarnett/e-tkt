@@ -26,7 +26,8 @@
 
 // vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
 //
-// IMPORTANT: do not forget to upload the files in "data" folder using SPIFFS
+// The files in the "data" folder are part of this firmware. A build puts
+// them in, so there is nothing to upload beside it, with SPIFFS or otherwise.
 //
 // ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 

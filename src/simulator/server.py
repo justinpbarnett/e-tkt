@@ -3,11 +3,11 @@
 The simulator is the firmware. main.cpp beside this file builds this
 machine's own job runner, link supervisor and Api for the host, on the fake
 motors, screen, flash and radio the native tests drive, and reads requests on
-stdin. This serves the panel's files out of data/, as the device serves them
-out of SPIFFS, and relays every request under /api/ to that program and its
-reply back. Nothing the device says is written down here, so a command, a
-refusal or a status field added to the firmware is in the simulator with
-nothing to remember.
+stdin. This serves the panel's files out of data/, where the device serves
+the copy of them its firmware carries, and relays every request under /api/
+to that program and its reply back. Nothing the device says is written down
+here, so a command, a refusal or a status field added to the firmware is in
+the simulator with nothing to remember.
 
 It needs aiohttp, which nothing else in this repo does, and PlatformIO, which
 builds the firmware. From the repo root:

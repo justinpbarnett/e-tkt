@@ -19,14 +19,16 @@ parent: 🛠️ do it yourself!
 ----
 
 1. Clone the [repository](https://github.com/andreisperid/E-TKT);
-2. Make sure you have the [framework and all the libraries](https://andreisperid.github.io/E-TKT/credits/libraries.html) installed on your computer (I use [Visual Studio Code](https://code.visualstudio.com/) with [PlatformIO](https://platformio.org/) and recommend it!);
-3. Flash the code into the PCB using an USB-C cable \*;
-4. Upload the files ("data" folder) to the ESP32 using SPIFFS \*.
+2. Make sure you have the [framework and all the libraries](https://andreisperid.github.io/E-TKT/credits/libraries.html) installed on your computer (I use [Visual Studio Code](https://code.visualstudio.com/) with [PlatformIO](https://platformio.org/) and recommend it!), and [Node.js](https://nodejs.org/), which the build checks the app's script with;
+3. Flash the code into the PCB using an USB-C cable \*.
 
 *\* don't forget to hold the \*FN button to enter DFU mode*
 
-Steps 3 and 4 go together, from the same copy of the repository.
-The app is the only place the device is given a network, so an older app in front of this firmware leaves no way to do that, and a newer app in front of an older firmware asks for what is not there.
-Networks are not part of either upload: they are given to the device afterwards, in the app, as the 📶 connection page says.
+The app (the files in the "data" folder) is part of the firmware.
+The build puts it in, so there is nothing more to upload, and the app a machine serves is always the one its firmware was built with.
+A machine that has a firmware from before the app was part of it needs this one flashed over USB, not over the network.
+The firmware is larger with the app in it, and only a flash over USB divides the machine's flash again to make the room.
+The machine keeps its calibration, its roll and its networks.
+Networks are not part of the upload: they are given to the device afterwards, in the app, as the 📶 connection page says.
 
 

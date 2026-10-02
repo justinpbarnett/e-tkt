@@ -41,7 +41,7 @@ It is unpredictable in which angle a given unit is delivered to you. Because of 
 ![_DSC0542](https://user-images.githubusercontent.com/15098003/196191073-89aa0f19-69f7-4820-b677-b6dd0658dd58.jpg)
 ![_DSC0545](https://user-images.githubusercontent.com/15098003/196191074-7be5f429-6352-4d60-9a2c-482f5ecead57.jpg)
 
-1. make sure you have already flashed both the firmware and data files (SPIFFS) into the PCB;
+1. make sure you have already flashed the firmware into the PCB;
 2. connect the display to the PCB;
 3. plug the 12DC power source into the PCB;
 4. wait for the "E-TKT" splash animation and the servo will be homed to its resting position.

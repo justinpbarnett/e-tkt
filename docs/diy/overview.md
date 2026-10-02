@@ -28,7 +28,7 @@ For some electronic parts, you might need to search for alternative *drop-in rep
 You can place the components manually in the PCB and then use a home electrical oven/toaster to solder the SMD components. There are PTH headers in the back face and a single SMD electrolytical capacitor that will be easy to deal with a simple soldering station.
 
 ### 5. flash the firmware
-Very simple process, but please don't forget to *add the data files* together with the firmware.
+Very simple process: *one upload*, which has the web app in it.
 
 ### 6. assemble the whole package
 After making sure the system is working properly, you can proceed to *cable management and physically mounting* the parts together.
