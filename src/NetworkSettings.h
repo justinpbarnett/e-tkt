@@ -30,6 +30,8 @@ enum class Remembered {
   KEPT,
   NAME_MISSING,
   NAME_TOO_LONG,
+  // See NetworkSettings::nameIsText().
+  NAME_NOT_TEXT,
   PASSWORD_TOO_SHORT,
   PASSWORD_TOO_LONG,
   FULL
@@ -83,6 +85,16 @@ class NetworkSettings {
   static const int MAX_PASSWORD_LENGTH = 63;
 
   NetworkSettings(Logger* logger);
+
+  /**
+   * @brief Whether a network's name is text: UTF-8, with nothing in it that
+   * does not print.
+   *
+   * On the air a name is up to 32 bytes of anything. The panel is what shows
+   * a name and sends it back, and it can do neither with one that is not
+   * text, so the machine remembers none, and lists none as in reach.
+   */
+  static bool nameIsText(const String& name);
 
   /**
    * @brief Reads everything back from EEPROM. A machine that was never set

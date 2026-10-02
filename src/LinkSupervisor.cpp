@@ -1,5 +1,8 @@
 #include "LinkSupervisor.h"
 
+#include <algorithm>
+#include <cstring>
+
 #include "Configuration.h"
 
 namespace {
@@ -78,6 +81,43 @@ String namesOf(const std::vector<RememberedNetwork>& networks) {
   return names;
 }
 
+// What the panel lists of the networks the radio heard: each name once, as
+// loud as its loudest access point, the loudest first, and no more than the
+// reply that lists them has room for. A network that hides its name is left
+// out, and its name can still be typed in. So is one whose name is not text,
+// which the machine would not remember.
+std::vector<HeardNetwork> toPickFrom(const std::vector<HeardNetwork>& heard) {
+  std::vector<HeardNetwork> networks;
+  for (const HeardNetwork& one : heard) {
+    if (one.ssid.length() == 0 || !NetworkSettings::nameIsText(one.ssid)) {
+      continue;
+    }
+    bool listed = false;
+    for (HeardNetwork& network : networks) {
+      if (network.ssid == one.ssid) {
+        listed = true;
+        if (one.rssi > network.rssi) {
+          network = one;
+        }
+      }
+    }
+    if (!listed) {
+      networks.push_back(one);
+    }
+  }
+  std::sort(networks.begin(), networks.end(),
+            [](const HeardNetwork& a, const HeardNetwork& b) {
+              if (a.rssi != b.rssi) {
+                return a.rssi > b.rssi;
+              }
+              return strcmp(a.ssid.c_str(), b.ssid.c_str()) < 0;
+            });
+  if (networks.size() > LinkSupervisor::MAX_NEARBY) {
+    networks.resize(LinkSupervisor::MAX_NEARBY);
+  }
+  return networks;
+}
+
 bool sameNetworks(const std::vector<RememberedNetwork>& a,
                   const std::vector<RememberedNetwork>& b) {
   if (a.size() != b.size()) {
@@ -106,7 +146,7 @@ void LinkSupervisor::step() {
   if (!this->started) {
     this->started = true;
     this->start(nowMs);
-  } else if (!this->followSettings(nowMs)) {
+  } else if (!this->followSettings(nowMs) && !this->listenIfAsked(nowMs)) {
     if (this->mode == NetworkMode::OWN) {
       this->keepOwn(nowMs);
     } else {
@@ -121,6 +161,21 @@ LinkStatus LinkSupervisor::status() {
   const LinkStatus status = this->published;
   this->lock.unlock();
   return status;
+}
+
+uint32_t LinkSupervisor::listen() {
+  this->lock.lock();
+  this->heard.listening = true;
+  const uint32_t listens = this->heard.listens;
+  this->lock.unlock();
+  return listens;
+}
+
+NearbyNetworks LinkSupervisor::nearby() {
+  this->lock.lock();
+  const NearbyNetworks nearby = this->heard;
+  this->lock.unlock();
+  return nearby;
 }
 
 void LinkSupervisor::start(uint32_t nowMs) {
@@ -595,6 +650,49 @@ void LinkSupervisor::countClients(uint32_t nowMs) {
       nowMs - this->addressShownMs >= WIFI_ADDRESS_SHOWN_MS) {
     this->addressShown = false;
   }
+}
+
+// --- the networks in reach ---
+
+bool LinkSupervisor::listenIfAsked(uint32_t nowMs) {
+  this->lock.lock();
+  const bool asked = this->heard.listening;
+  this->lock.unlock();
+  // The radio cannot listen and try a network at once, and a machine that is
+  // waiting for its address has to be there to be given it. Whatever has
+  // just ended gets its WIFI_RETRY_MS first, as it does before a try.
+  if (!asked || this->tryOpen || this->waitingForAddress ||
+      (this->awaitingRetry && nowMs - this->retryFromMs < WIFI_RETRY_MS)) {
+    return false;
+  }
+
+  // A few seconds, with the lock free: the panel goes on asking how it is
+  // going, and may ask for a listen again.
+  std::vector<HeardNetwork> heard;
+  const bool listened = this->radio->survey(&heard);
+  if (this->ownAlone) {
+    // Listening turned the station on, and the radio is its own network's
+    // alone.
+    this->radio->stopStation();
+  }
+  if (listened) {
+    // Not their names: what a stranger calls a network does not belong in
+    // the log.
+    this->logger->log(String("heard ") + String((int)heard.size()) +
+                      (heard.size() == 1 ? " network" : " networks") +
+                      " in reach");
+  } else {
+    this->logger->warn("could not listen for the networks in reach");
+  }
+  const std::vector<HeardNetwork> networks = toPickFrom(heard);
+
+  this->lock.lock();
+  this->heard.networks = networks;
+  this->heard.listens++;
+  this->heard.listening = false;
+  this->lock.unlock();
+  // The step is spent: the clock it was given is seconds behind by now.
+  return true;
 }
 
 // --- saying how the machine is reached ---

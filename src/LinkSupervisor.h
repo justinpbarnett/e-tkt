@@ -58,6 +58,20 @@ struct LinkStatus {
 };
 
 /**
+ * @brief The networks in reach, as the radio heard them the last time the
+ * panel asked it to listen.
+ */
+struct NearbyNetworks {
+  // A listen has been asked for and has not ended yet.
+  bool listening = false;
+  // How many listens have ended since the machine started. One the radio
+  // could not do is counted too, and leaves the list empty.
+  uint32_t listens = 0;
+  // The loudest first, and each name once.
+  std::vector<HeardNetwork> networks;
+};
+
+/**
  * @brief Keeps the machine reachable: joins a network it remembers, keeps
  * trying for as long as that takes, and opens the machine's own network when
  * there is no other way in.
@@ -79,8 +93,9 @@ struct LinkStatus {
  *
  * Nothing waits for a network. step() looks at where things stand and does
  * the next thing, every WIFI_STEP_MS, from a task of its own on the board.
- * The one thing in it that takes time is listening for a quiet channel: a
- * few seconds, once.
+ * The one thing in it that takes time is listening on every channel, which
+ * is a few seconds: once for a quiet channel to put its own network on, and
+ * whenever the panel asks which networks are in reach.
  *
  * The idle screen is told how the machine is reached whenever that changes,
  * and status() says it to the panel.
@@ -92,10 +107,11 @@ class LinkSupervisor {
   NetworkSettings* settings;
   Display* display;
 
-  // Covers `published`, which the webserver's task reads. Everything else
-  // here is step()'s alone.
+  // Covers `published` and `heard`, which the webserver's task reads, and
+  // asks a listen of. Everything else here is step()'s alone.
   std::mutex lock;
   LinkStatus published;
+  NearbyNetworks heard;
 
   bool started = false;
 
@@ -186,6 +202,8 @@ class LinkSupervisor {
   void closeOwn();
   void countClients(uint32_t nowMs);
 
+  bool listenIfAsked(uint32_t nowMs);
+
   void publish();
 
  public:
@@ -205,6 +223,28 @@ class LinkSupervisor {
    * @brief How the machine is reached, as of the last step. For any task.
    */
   LinkStatus status();
+
+  /**
+   * @brief How many networks nearby() names at most: the loudest ones.
+   */
+  static const size_t MAX_NEARBY = 12;
+
+  /**
+   * @brief Asks the radio to listen for the networks in reach. For any task.
+   *
+   * It listens at a later step, when no try is under way, and that takes a
+   * few seconds.
+   *
+   * @return how many listens have ended so far. What this one hears is in
+   *         nearby() once that count has gone up. A listen that is under way
+   *         as this is asked is the one that answers it.
+   */
+  uint32_t listen();
+
+  /**
+   * @brief What the radio heard at its last listen. For any task.
+   */
+  NearbyNetworks nearby();
 
   /**
    * @brief The name of the reason a try or a link ended, by the number the

@@ -159,6 +159,19 @@ void test_a_network_without_a_name_or_with_too_long_a_one_is_refused(void) {
   TEST_ASSERT_TRUE(takes(longest.c_str(), "correct horse"));
 }
 
+void test_a_network_whose_name_is_not_text_is_refused(void) {
+  // On the air a name is 32 bytes of anything. The panel is what shows the
+  // names the machine remembers, and what sends one back to have it
+  // forgotten, and it can do neither with a name that is not text.
+  TEST_ASSERT_TRUE(Remembered::NAME_NOT_TEXT ==
+                   settings->remember("Line\nbreak", "correct horse"));
+  TEST_ASSERT_TRUE(Remembered::NAME_NOT_TEXT ==
+                   settings->remember("Caf\xE9", "correct horse"));
+  TEST_ASSERT_EQUAL_STRING("", remembered().c_str());
+
+  TEST_ASSERT_TRUE(takes("Caf\xC3\xA9 \xF0\x9F\x93\xB6", "correct horse"));
+}
+
 void test_a_password_wpa2_cannot_use_is_refused(void) {
   // 8 to 63 characters. One typed short is the commonest way to get it
   // wrong, and the machine would try it for ever and never say why.
@@ -406,6 +419,7 @@ int main(int, char**) {
   RUN_TEST(test_a_network_with_no_password_is_remembered);
   RUN_TEST(test_no_more_networks_are_remembered_than_there_is_room_for);
   RUN_TEST(test_a_network_without_a_name_or_with_too_long_a_one_is_refused);
+  RUN_TEST(test_a_network_whose_name_is_not_text_is_refused);
   RUN_TEST(test_a_password_wpa2_cannot_use_is_refused);
   RUN_TEST(test_a_refused_password_leaves_the_one_already_kept);
   RUN_TEST(test_a_forgotten_network_stays_forgotten_across_a_restart);

@@ -944,6 +944,250 @@ void test_a_change_to_the_router_option_opens_its_own_network_again(void) {
   TEST_ASSERT_EQUAL_INT(1, radio->surveys);
 }
 
+// --- the networks in reach -------------------------------------------------
+
+void test_it_says_which_networks_are_in_reach_when_the_panel_asks(void) {
+  // The panel's list of networks to pick from. The loudest comes first: the
+  // network a machine is to be on is most likely the one it stands nearest.
+  joinChurch();
+  radio->add("Hall", "password1")->rssi = -45;
+  radio->add("Cafe", "")->rssi = -80;
+
+  TEST_ASSERT_EQUAL_UINT32(0, supervisor->listen());
+  TEST_ASSERT_TRUE(supervisor->nearby().listening);
+  run(WIFI_STEP_MS);
+
+  const NearbyNetworks nearby = supervisor->nearby();
+  TEST_ASSERT_FALSE(nearby.listening);
+  TEST_ASSERT_EQUAL_UINT32(1, nearby.listens);
+  TEST_ASSERT_EQUAL_INT(3, (int)nearby.networks.size());
+  TEST_ASSERT_EQUAL_STRING("Hall", nearby.networks[0].ssid.c_str());
+  TEST_ASSERT_EQUAL_INT(-45, nearby.networks[0].rssi);
+  TEST_ASSERT_TRUE(nearby.networks[0].secured);
+  TEST_ASSERT_EQUAL_STRING("Church", nearby.networks[1].ssid.c_str());
+  TEST_ASSERT_EQUAL_STRING("Cafe", nearby.networks[2].ssid.c_str());
+  TEST_ASSERT_FALSE(nearby.networks[2].secured);
+  TEST_ASSERT_TRUE(logged("heard 3 networks in reach"));
+  // The machine is still on its network.
+  TEST_ASSERT_EQUAL_INT(0, radio->leaves);
+  TEST_ASSERT_TRUE(StationLink::JOINED == supervisor->status().station);
+}
+
+void test_it_listens_only_when_it_is_asked(void) {
+  // Listening takes the radio off its channel for seconds, and whoever is
+  // talking to the machine waits that long.
+  joinChurch();
+  run(10UL * 60 * 1000);
+  TEST_ASSERT_EQUAL_INT(0, radio->surveys);
+  TEST_ASSERT_FALSE(supervisor->nearby().listening);
+  TEST_ASSERT_EQUAL_UINT32(0, supervisor->nearby().listens);
+
+  supervisor->listen();
+  run(10UL * 60 * 1000);
+  TEST_ASSERT_EQUAL_INT(1, radio->surveys);
+  TEST_ASSERT_EQUAL_UINT32(1, supervisor->nearby().listens);
+}
+
+void test_the_next_listen_says_what_is_in_reach_by_then(void) {
+  // The panel waits for a listen that ended after it asked, and knows it by
+  // the count. Until then the list is the one from before.
+  joinChurch();
+  supervisor->listen();
+  run(WIFI_STEP_MS);
+  TEST_ASSERT_EQUAL_INT(1, (int)supervisor->nearby().networks.size());
+
+  radio->add("Hall", "password1");
+  TEST_ASSERT_EQUAL_UINT32(1, supervisor->listen());
+  TEST_ASSERT_EQUAL_UINT32(1, supervisor->nearby().listens);
+  TEST_ASSERT_EQUAL_INT(1, (int)supervisor->nearby().networks.size());
+  run(WIFI_STEP_MS);
+
+  const NearbyNetworks nearby = supervisor->nearby();
+  TEST_ASSERT_EQUAL_UINT32(2, nearby.listens);
+  TEST_ASSERT_EQUAL_INT(2, (int)nearby.networks.size());
+}
+
+void test_it_does_not_listen_while_a_try_is_under_way(void) {
+  // The radio cannot do both, and a try cut short is a try wasted. The list
+  // comes when the try has ended, and before the next one starts.
+  settings->remember("Church", CHURCH_KEY);
+  radio->add("Church", CHURCH_KEY)->answers = false;
+  start();
+  run(WIFI_STEP_MS);
+  TEST_ASSERT_EQUAL_INT(1, (int)radio->joins.size());
+
+  supervisor->listen();
+  run(WIFI_TRY_MS);
+  TEST_ASSERT_EQUAL_INT(1, radio->leaves);
+  TEST_ASSERT_EQUAL_INT(0, radio->surveys);
+  TEST_ASSERT_TRUE(supervisor->nearby().listening);
+
+  // Whatever ended, the radio gets WIFI_RETRY_MS to be done with it, from
+  // the step that saw it end.
+  run(WIFI_RETRY_MS);
+  TEST_ASSERT_EQUAL_INT(0, radio->surveys);
+
+  run(WIFI_STEP_MS);
+  TEST_ASSERT_EQUAL_INT(1, radio->surveys);
+  TEST_ASSERT_FALSE(radio->surveyedDuringATry);
+  TEST_ASSERT_EQUAL_INT(1, (int)radio->joins.size());
+  TEST_ASSERT_EQUAL_UINT32(1, supervisor->nearby().listens);
+
+  // And the tries go on.
+  run(WIFI_STEP_MS);
+  TEST_ASSERT_EQUAL_INT(2, (int)radio->joins.size());
+}
+
+void test_it_does_not_listen_while_the_machine_waits_for_its_address(void) {
+  // On a weak link the address takes the better part of a minute, and a
+  // radio that is off listening is not there to be given it.
+  settings->remember("Church", CHURCH_KEY);
+  radio->add("Church", CHURCH_KEY)->addressMs = 40000;
+  start();
+  run(5000);
+
+  supervisor->listen();
+  run(30000);
+  TEST_ASSERT_EQUAL_INT(0, radio->surveys);
+
+  run(10000);
+  TEST_ASSERT_TRUE(StationLink::JOINED == supervisor->status().station);
+  TEST_ASSERT_EQUAL_INT(1, radio->surveys);
+  TEST_ASSERT_EQUAL_INT(0, radio->leaves);
+}
+
+void test_listening_leaves_the_radio_to_its_own_network_again(void) {
+  // With nothing to join, the radio is its own network's alone. Listening
+  // turns the station on, and it is turned off again.
+  radio->add("Church", CHURCH_KEY);
+  start();
+  run(WIFI_STEP_MS);
+  radio->phones = 1;
+  run(1000);
+  TEST_ASSERT_FALSE(radio->stationOn);
+
+  supervisor->listen();
+  run(WIFI_STEP_MS);
+
+  TEST_ASSERT_EQUAL_INT(1, (int)supervisor->nearby().networks.size());
+  TEST_ASSERT_FALSE(radio->stationOn);
+  // Its own network is as it was, with the phone that asked still on it.
+  TEST_ASSERT_TRUE(radio->accessPointOpen);
+  TEST_ASSERT_EQUAL_INT(1, (int)radio->openings.size());
+  TEST_ASSERT_EQUAL_INT(0, radio->closings);
+  TEST_ASSERT_EQUAL_INT(1, supervisor->status().clients);
+}
+
+void test_listening_between_tries_leaves_the_station_on(void) {
+  // Beside the tries the station is on anyway, and the next try needs it.
+  settings->remember("Church", CHURCH_KEY);
+  start();
+  run(WIFI_OWN_AFTER_MS + 10000);
+  TEST_ASSERT_TRUE(supervisor->status().ownOpen);
+  const int stops = radio->stops;
+
+  supervisor->listen();
+  run(WIFI_RETRY_BESIDE_OWN_MS);
+
+  TEST_ASSERT_EQUAL_UINT32(1, supervisor->nearby().listens);
+  TEST_ASSERT_EQUAL_INT(stops, radio->stops);
+  TEST_ASSERT_TRUE(radio->stationOn);
+  TEST_ASSERT_FALSE(radio->surveyedDuringATry);
+}
+
+void test_the_list_has_each_name_once_and_only_names_that_can_be_picked(void) {
+  joinChurch();
+  // A network with several access points is heard once for each of them. It
+  // is listed once, as loud as the loudest.
+  radio->add("Church", CHURCH_KEY)->rssi = -40;
+  radio->add("Church", CHURCH_KEY)->rssi = -75;
+  // A network that hides its name can still be typed in.
+  radio->add("", "password1")->rssi = -30;
+  // A name is 32 bytes of anything. One that is not text cannot be shown, and
+  // the panel could not send it back as it is.
+  radio->add("Line\nbreak", "")->rssi = -31;
+  radio->add("Caf\xE9", "")->rssi = -32;
+  radio->add("Cut short \xE2\x82", "")->rssi = -33;
+  radio->add("Caf\xC3\xA9 \xE2\x82\xAC \xF0\x9F\x93\xB6", "")->rssi = -50;
+
+  supervisor->listen();
+  run(WIFI_STEP_MS);
+
+  const NearbyNetworks nearby = supervisor->nearby();
+  TEST_ASSERT_EQUAL_INT(2, (int)nearby.networks.size());
+  TEST_ASSERT_EQUAL_STRING("Church", nearby.networks[0].ssid.c_str());
+  TEST_ASSERT_EQUAL_INT(-40, nearby.networks[0].rssi);
+  TEST_ASSERT_EQUAL_STRING("Caf\xC3\xA9 \xE2\x82\xAC \xF0\x9F\x93\xB6",
+                           nearby.networks[1].ssid.c_str());
+}
+
+void test_the_list_is_the_loudest_networks_and_no_more(void) {
+  // A church has dozens of networks in reach, and the reply that lists them
+  // has to fit. The far ones are the least likely to be wanted, and any name
+  // can still be typed in.
+  joinChurch();
+  for (int i = 0; i < 30; i++) {
+    radio->add(String("Net ") + String(i), "password1")->rssi = -59 + i;
+  }
+
+  supervisor->listen();
+  run(WIFI_STEP_MS);
+
+  const NearbyNetworks nearby = supervisor->nearby();
+  TEST_ASSERT_EQUAL_INT((int)LinkSupervisor::MAX_NEARBY,
+                        (int)nearby.networks.size());
+  // The network the machine is on is further off than any of them.
+  TEST_ASSERT_EQUAL_STRING("Net 29", nearby.networks[0].ssid.c_str());
+  TEST_ASSERT_EQUAL_INT(-30, nearby.networks[0].rssi);
+  TEST_ASSERT_EQUAL_STRING("Net 18", nearby.networks.back().ssid.c_str());
+  TEST_ASSERT_TRUE(logged("heard 31 networks in reach"));
+}
+
+void test_a_radio_that_could_not_listen_still_ends_the_wait(void) {
+  // The panel is waiting for the count to go up. It gets an empty list, and
+  // the name can be typed in.
+  joinChurch();
+  supervisor->listen();
+  run(WIFI_STEP_MS);
+  TEST_ASSERT_EQUAL_INT(1, (int)supervisor->nearby().networks.size());
+
+  radio->surveyFails = true;
+  supervisor->listen();
+  run(WIFI_STEP_MS);
+
+  const NearbyNetworks nearby = supervisor->nearby();
+  TEST_ASSERT_FALSE(nearby.listening);
+  TEST_ASSERT_EQUAL_UINT32(2, nearby.listens);
+  TEST_ASSERT_EQUAL_INT(0, (int)nearby.networks.size());
+  TEST_ASSERT_TRUE(logged("could not listen for the networks in reach"));
+}
+
+void test_asking_again_while_it_listens_does_not_make_it_listen_twice(void) {
+  // A reply lost on a slow link has the panel ask again. The listen under
+  // way answers both.
+  joinChurch();
+  supervisor->listen();
+  bool askedAgain = false;
+  uint32_t ended = 99;
+  stubAfterDelay() = [&]() {
+    // Partway through the radio's listen, as the webserver's task would.
+    if (radio->surveys == 1 && !askedAgain) {
+      askedAgain = true;
+      ended = supervisor->listen();
+    }
+  };
+  run(WIFI_STEP_MS);
+  stubAfterDelay() = nullptr;
+
+  TEST_ASSERT_TRUE(askedAgain);
+  TEST_ASSERT_EQUAL_UINT32(0, ended);
+  const NearbyNetworks nearby = supervisor->nearby();
+  TEST_ASSERT_FALSE(nearby.listening);
+  TEST_ASSERT_EQUAL_UINT32(1, nearby.listens);
+  run(10000);
+  TEST_ASSERT_EQUAL_INT(1, radio->surveys);
+}
+
 // --- the firmware before this one ------------------------------------------
 
 void test_a_machine_updated_from_the_firmware_before_keeps_its_network(void) {
@@ -1030,6 +1274,17 @@ int main(int, char**) {
   RUN_TEST(test_forgetting_the_network_it_is_on_leaves_it);
   RUN_TEST(test_forgetting_another_network_does_not_disturb_the_one_it_is_on);
   RUN_TEST(test_a_change_to_the_router_option_opens_its_own_network_again);
+  RUN_TEST(test_it_says_which_networks_are_in_reach_when_the_panel_asks);
+  RUN_TEST(test_it_listens_only_when_it_is_asked);
+  RUN_TEST(test_the_next_listen_says_what_is_in_reach_by_then);
+  RUN_TEST(test_it_does_not_listen_while_a_try_is_under_way);
+  RUN_TEST(test_it_does_not_listen_while_the_machine_waits_for_its_address);
+  RUN_TEST(test_listening_leaves_the_radio_to_its_own_network_again);
+  RUN_TEST(test_listening_between_tries_leaves_the_station_on);
+  RUN_TEST(test_the_list_has_each_name_once_and_only_names_that_can_be_picked);
+  RUN_TEST(test_the_list_is_the_loudest_networks_and_no_more);
+  RUN_TEST(test_a_radio_that_could_not_listen_still_ends_the_wait);
+  RUN_TEST(test_asking_again_while_it_listens_does_not_make_it_listen_twice);
   RUN_TEST(test_a_machine_updated_from_the_firmware_before_keeps_its_network);
   RUN_TEST(test_a_network_forgotten_on_purpose_does_not_come_back);
   return UNITY_END();

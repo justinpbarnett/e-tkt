@@ -46,6 +46,9 @@ static Remembered judged(const String& ssid, const String& password) {
   if (ssid.length() > (unsigned int)NetworkSettings::MAX_NAME_BYTES) {
     return Remembered::NAME_TOO_LONG;
   }
+  if (!NetworkSettings::nameIsText(ssid)) {
+    return Remembered::NAME_NOT_TEXT;
+  }
   // No password at all is an open network.
   if (password.length() > 0 &&
       password.length() < (unsigned int)NetworkSettings::MIN_PASSWORD_LENGTH) {
@@ -73,7 +76,7 @@ static String stored(const std::vector<RememberedNetwork>& networks) {
 
 // Reads stored networks into `networks`. Returns false, with none read, for
 // anything that is not a list as stored() writes one. A network in the list
-// that the radio could not use is left out: this firmware keeps none, so it
+// that remember() would refuse is left out: this firmware keeps none, so it
 // is some other firmware's, or flash gone bad.
 static bool readStored(const String& text,
                        std::vector<RememberedNetwork>* networks) {
@@ -127,6 +130,48 @@ static String madePassword() {
 }
 
 NetworkSettings::NetworkSettings(Logger* logger) { this->logger = logger; }
+
+bool NetworkSettings::nameIsText(const String& name) {
+  const unsigned int length = name.length();
+  unsigned int i = 0;
+  while (i < length) {
+    const uint8_t lead = (uint8_t)name.charAt(i);
+    // How many bytes follow the first, and what the second may be: the
+    // bounds are narrower after four of the first bytes, which is what
+    // keeps out the long forms of short characters and the halves of pairs.
+    unsigned int following = 0;
+    uint8_t lowest = 0x80;
+    uint8_t highest = 0xBF;
+    if (lead < 0x80) {
+      if (lead < 0x20 || lead == 0x7F) {
+        return false;
+      }
+    } else if (lead >= 0xC2 && lead <= 0xDF) {
+      following = 1;
+    } else if (lead >= 0xE0 && lead <= 0xEF) {
+      following = 2;
+      lowest = lead == 0xE0 ? 0xA0 : 0x80;
+      highest = lead == 0xED ? 0x9F : 0xBF;
+    } else if (lead >= 0xF0 && lead <= 0xF4) {
+      following = 3;
+      lowest = lead == 0xF0 ? 0x90 : 0x80;
+      highest = lead == 0xF4 ? 0x8F : 0xBF;
+    } else {
+      return false;
+    }
+    if (i + following >= length) {
+      return false;
+    }
+    for (unsigned int k = 1; k <= following; k++) {
+      const uint8_t next = (uint8_t)name.charAt(i + k);
+      if (next < (k == 1 ? lowest : 0x80) || next > (k == 1 ? highest : 0xBF)) {
+        return false;
+      }
+    }
+    i += 1 + following;
+  }
+  return true;
+}
 
 void NetworkSettings::initialize(const String& machineId) {
   this->lock.lock();
