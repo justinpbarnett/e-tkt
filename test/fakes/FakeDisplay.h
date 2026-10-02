@@ -43,7 +43,8 @@ struct DisplayCall {
 
 class FakeDisplay : public Display {
  private:
-  // Set by setConnectionInfo(), and cleared by asking and by the idle screen.
+  // Set by setConnectionInfo(), and cleared by taking it and by the idle
+  // screen.
   bool changed = false;
 
   void record(DisplayCall call) {
@@ -90,7 +91,7 @@ class FakeDisplay : public Display {
     this->record(c);
   }
 
-  bool connectionChanged() override {
+  bool takeConnectionChange() override {
     const bool was = this->changed;
     this->changed = false;
     return was;

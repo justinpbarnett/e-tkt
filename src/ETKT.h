@@ -582,7 +582,7 @@ class ETKT {
    * booted. `stopped` is whether the job that just ended was stopped, which
    * the idle screen says. While the machine waits, loop() draws it again
    * whenever the display has been told another way to reach the machine: see
-   * Display::connectionChanged(). For the task that runs loop() only: the
+   * Display::takeConnectionChange(). For the task that runs loop() only: the
    * screen is not drawn from two tasks.
    */
   void showIdle(bool stopped = false);

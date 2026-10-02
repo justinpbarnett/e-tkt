@@ -96,7 +96,7 @@ void OledDisplay::setConnectionInfo(const ConnectionInfo& info) {
   this->lock.unlock();
 }
 
-bool OledDisplay::connectionChanged() {
+bool OledDisplay::takeConnectionChange() {
   this->lock.lock();
   const bool was = this->changed;
   this->changed = false;

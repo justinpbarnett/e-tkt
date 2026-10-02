@@ -389,7 +389,7 @@ void ETKT::loop() {
     // How the machine is reached changes with no job running, and the idle
     // screen is where it is written. It is drawn again from here because only
     // this task draws.
-    if (this->display->connectionChanged()) {
+    if (this->display->takeConnectionChange()) {
       this->showIdle(this->idleStopped);
     }
     return;

@@ -58,7 +58,7 @@ class OledDisplay : public Display {
   void render(Screen screen) override;
   void renderIdle(bool stopped) override;
   void setConnectionInfo(const ConnectionInfo& info) override;
-  bool connectionChanged() override;
+  bool takeConnectionChange() override;
   void renderProgress(int charactersDone, const String& label, int copy,
                       int copies) override;
   void renderSaved(const Calibration& saved) override;

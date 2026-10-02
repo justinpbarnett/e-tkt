@@ -120,11 +120,15 @@ class Display {
   virtual void setConnectionInfo(const ConnectionInfo& info) = 0;
 
   /**
-   * @brief Whether setConnectionInfo() has said anything since this was last
-   * asked, or since the idle screen was last drawn. An idle machine asks, and
-   * draws its idle screen again when it has.
+   * @brief Takes the change that setConnectionInfo() has made, when it has
+   * made one since this was last called or since the idle screen was last
+   * drawn. An idle machine calls this, and draws its idle screen again when
+   * there was a change to take.
+   *
+   * @return whether there was one. It is taken once: the next call says
+   * false until setConnectionInfo() has said more.
    */
-  virtual bool connectionChanged() = 0;
+  virtual bool takeConnectionChange() = 0;
 
   /**
    * @brief Renders print progress, for use in the middle of printing a label.
