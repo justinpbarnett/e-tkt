@@ -323,16 +323,32 @@ Reply Api::route(const Request& request) {
       {"/api/network", Method::GET, &Api::network},
       {"/api/network/nearby", Method::GET, &Api::networksNearby},
       {"/api/network/listen", Method::POST, &Api::listenForNetworks},
-      {"/api/network/mode", Method::POST, &Api::setNetworkMode},
-      {"/api/network/remember", Method::POST, &Api::rememberNetwork},
-      {"/api/network/forget", Method::POST, &Api::forgetNetwork},
-      {"/api/network/router", Method::POST, &Api::offerRouter},
   };
   for (const Route& route : routes) {
     if (request.path == route.path) {
       return request.method == route.method
                  ? (this->*route.answer)(request)
                  : wrongMethod(request, route.method);
+    }
+  }
+
+  // What changes how the machine is reached. Each is a post with a body,
+  // made once under its id: see changeNetwork().
+  struct Change {
+    const char* path;
+    NetworkChange make;
+  };
+  static const Change changes[] = {
+      {"/api/network/mode", &Api::setNetworkMode},
+      {"/api/network/remember", &Api::rememberNetwork},
+      {"/api/network/forget", &Api::forgetNetwork},
+      {"/api/network/router", &Api::offerRouter},
+  };
+  for (const Change& change : changes) {
+    if (request.path == change.path) {
+      return request.method == Method::POST
+                 ? this->changeNetwork(request, change.make)
+                 : wrongMethod(request, Method::POST);
     }
   }
   return errorReply(404, "Not found");
@@ -798,67 +814,91 @@ Reply Api::networksNearby(const Request& /*request*/) {
 // at once with how many listens have ended, and what this one hears is the
 // list at /api/network/nearby once that count has gone up. Asked for twice,
 // it listens once.
-Reply Api::listenForNetworks(const Request& /*request*/) {
-  DynamicJsonDocument doc(SHORT_REPLY_JSON_BYTES);
-  doc["result"] = "listening";
-  doc["after"] = this->linkSupervisor->listen();
-  return jsonReply(200, doc);
+//
+// Asked again under its id it is answered as it was. The reply can be lost,
+// and the listen may have ended by the time the panel asks again: that would
+// take the radio away a second time, and move the count the panel waits on.
+Reply Api::listenForNetworks(const Request& request) {
+  return this->once(request, Keep::ACCEPTED, [&](const String& /*id*/) {
+    DynamicJsonDocument doc(SHORT_REPLY_JSON_BYTES);
+    doc["result"] = "listening";
+    doc["after"] = this->linkSupervisor->listen();
+    return jsonReply(200, doc);
+  });
 }
 
-// Whether the machine joins a network or runs its own. The link follows the
-// change a moment later, which is what lets this reply out first: a change
-// of mode can take away the network the panel is asking over.
+// What a change that has to name a network is told when it names none.
+static const char* const ASK_FOR_SSID = "Please provide an ssid value";
+
+// What changes how the machine is reached: the body is read, the change is
+// made, and the answer is the network as it is afterwards, so the panel
+// shows what the machine made of the change without asking again. The link
+// follows the change a moment later, which is what lets this reply out
+// first: a change can take away the network the panel is asking over.
 //
-// What changes the network answers with the network as it is afterwards, so
-// the panel shows what the machine made of the change without asking again.
-// Each of them does the same thing however often it is sent, so none is
-// kept under an id.
-Reply Api::setNetworkMode(const Request& request) {
-  DynamicJsonDocument parsed(REQUEST_JSON_BYTES);
-  Reply refused;
-  if (!readJsonBody(request, &parsed, &refused)) {
-    return refused;
-  }
-  const JsonVariantConst mode = parsed["mode"];
+// The reply can be lost over that link all the same, and the panel then
+// sends the change again under the id it sent it under. It is made once. A
+// network sent as it is kept already is otherwise somebody asking for
+// another try at it, and the link drops the try that is under way for that.
+// Only that the change was made is kept under its id, and not the reply, so
+// a change sent again is answered with the network as it is by then. One
+// that was refused changed nothing, and is judged again.
+Reply Api::changeNetwork(const Request& request, NetworkChange change) {
+  const Reply made =
+      this->once(request, Keep::ACCEPTED, [&](const String& /*id*/) -> Reply {
+        DynamicJsonDocument parsed(REQUEST_JSON_BYTES);
+        Reply refused;
+        if (!readJsonBody(request, &parsed, &refused) ||
+            !(this->*change)(parsed.as<JsonObjectConst>(), &refused)) {
+          return refused;
+        }
+        // Never sent: see above.
+        Reply changed = {200, JSON_TYPE, String(), NULL};
+        return changed;
+      });
+  return made.code == 200 ? this->network(request) : made;
+}
+
+// Whether the machine joins a network or runs its own.
+bool Api::setNetworkMode(const JsonObjectConst& body, Reply* refused) {
+  const JsonVariantConst mode = body["mode"];
   if (mode == "join") {
     this->networkSettings->setMode(NetworkMode::JOIN);
   } else if (mode == "own") {
     this->networkSettings->setMode(NetworkMode::OWN);
   } else {
-    return errorReply(400, "Please provide mode as join or own");
+    *refused = errorReply(400, "Please provide mode as join or own");
+    return false;
   }
-  return this->network(request);
+  return true;
 }
 
 // Remembers a network, as the first to be tried. One already remembered
 // under that name is replaced, which is how a password is put right.
-Reply Api::rememberNetwork(const Request& request) {
-  DynamicJsonDocument parsed(REQUEST_JSON_BYTES);
-  Reply refused;
-  if (!readJsonBody(request, &parsed, &refused)) {
-    return refused;
-  }
-  const char* ssid = parsed["ssid"].as<const char*>();
+bool Api::rememberNetwork(const JsonObjectConst& body, Reply* refused) {
+  const char* ssid = body["ssid"].as<const char*>();
   if (ssid == NULL) {
-    return errorReply(400, "Please provide an ssid value");
+    *refused = errorReply(400, ASK_FOR_SSID);
+    return false;
   }
   // Left out, or null, for a network that asks for none. Anything else that
   // is not text is refused: read as text, a number would be no password at
   // all, and the machine would try the network without one.
-  const JsonVariantConst sent = parsed["password"];
+  const JsonVariantConst sent = body["password"];
   if (!sent.isNull() && !sent.is<const char*>()) {
-    return errorReply(400,
-                      "Please provide password as text, or leave it out for "
-                      "a network without one");
+    *refused = errorReply(400,
+                          "Please provide password as text, or leave it out "
+                          "for a network without one");
+    return false;
   }
   const String password = sent.isNull() ? "" : sent.as<const char*>();
 
   String refusal;
   switch (this->networkSettings->remember(ssid, password)) {
     case Remembered::KEPT:
-      return this->network(request);
+      return true;
     case Remembered::NAME_MISSING:
-      refusal = "Please provide an ssid value";
+      refusal = ASK_FOR_SSID;
       break;
     case Remembered::NAME_TOO_LONG:
       refusal = String("A network's name may be at most ") +
@@ -881,41 +921,35 @@ Reply Api::rememberNetwork(const Request& request) {
     case Remembered::FULL:
       // 409, not 400: the request was fine, and it is the machine that has
       // no room. Forgetting a network is what makes the same body pass.
-      return errorReply(409, String("The device remembers at most ") +
-                                 (int)NetworkSettings::MAX_REMEMBERED +
-                                 " networks, so forget one first");
+      *refused = errorReply(409, String("The device remembers at most ") +
+                                     (int)NetworkSettings::MAX_REMEMBERED +
+                                     " networks, so forget one first");
+      return false;
   }
-  return errorReply(400, refusal);
+  *refused = errorReply(400, refusal);
+  return false;
 }
 
 // Forgets a network. One that is not remembered is forgotten already, so
 // that is no refusal.
-Reply Api::forgetNetwork(const Request& request) {
-  DynamicJsonDocument parsed(REQUEST_JSON_BYTES);
-  Reply refused;
-  if (!readJsonBody(request, &parsed, &refused)) {
-    return refused;
-  }
-  const char* ssid = parsed["ssid"].as<const char*>();
+bool Api::forgetNetwork(const JsonObjectConst& body, Reply* refused) {
+  const char* ssid = body["ssid"].as<const char*>();
   if (ssid == NULL || ssid[0] == '\0') {
-    return errorReply(400, "Please provide an ssid value");
+    *refused = errorReply(400, ASK_FOR_SSID);
+    return false;
   }
   this->networkSettings->forget(ssid);
-  return this->network(request);
+  return true;
 }
 
 // Whether the machine's own network says it is the way to the internet: see
 // NetworkSettings::routerOffered().
-Reply Api::offerRouter(const Request& request) {
-  DynamicJsonDocument parsed(REQUEST_JSON_BYTES);
-  Reply refused;
-  if (!readJsonBody(request, &parsed, &refused)) {
-    return refused;
-  }
+bool Api::offerRouter(const JsonObjectConst& body, Reply* refused) {
   // Read strictly, as a command's cut is.
-  if (!parsed["offered"].is<bool>()) {
-    return errorReply(400, "Please provide offered as true or false");
+  if (!body["offered"].is<bool>()) {
+    *refused = errorReply(400, "Please provide offered as true or false");
+    return false;
   }
-  this->networkSettings->setRouterOffered(parsed["offered"].as<bool>());
-  return this->network(request);
+  this->networkSettings->setRouterOffered(body["offered"].as<bool>());
+  return true;
 }

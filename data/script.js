@@ -53,12 +53,14 @@ import {
   rememberedRows,
   rememberedSummary,
   routerChange,
+  unansweredChange,
 } from "./network.js";
 import { plural, quantity, settledCopies, steppedCopies } from "./quantity.js";
 import {
   activity,
   CapabilitiesMismatch,
   commandListDisagreement,
+  NO_ANSWER_YET,
   printingRun,
   printPercentage,
   readCapabilities,
@@ -179,8 +181,12 @@ const state = {
   search: new NetworkSearch(),
   // Set while a change to how the device is reached is on its way to it.
   networkBusy: false,
+  // Where on the page that change was made, once a try at sending it has had
+  // no answer and the page is sending it again, which it says there.
+  networkUnanswered: null,
   // The change the confirm dialog is asking about: the path it posts to,
-  // and what it posts.
+  // what it posts, and where on the page it was made, as one of the
+  // data-unanswered notes in index.html names it.
   networkChange: null,
   // What went wrong adding a network, for the Add dialog to say.
   addProblem: null,
@@ -248,6 +254,7 @@ const el = {
   ownState: $("own-state"),
   ownNote: $("own-note"),
   routerInput: $("router-input"),
+  unanswered: document.querySelectorAll("[data-unanswered]"),
   alignValue: $("align-value"),
   forceValue: $("force-value"),
   stepButtons: document.querySelectorAll("[data-setting]"),
@@ -1413,18 +1420,31 @@ async function askNearby() {
 // Asks the device to listen for the networks in its reach. What it hears is
 // in api/network/nearby once it has listened, and pollNetwork() asks for
 // that.
+//
+// Asked again under one id until the device answers, as deliver() in link.js
+// has it, so a device that took the listen, and whose answer was lost, does
+// not listen a second time. Not for a dialog that has been closed, or once
+// the listen has been asked for again.
 async function listenForNetworks() {
-  state.search.asked(performance.now());
+  const request = state.search.asked();
+  const path = "api/network/listen?id=" + newCommandId();
   render();
   try {
-    const response = await postJson("api/network/listen", {}, { timeout: 5000 });
+    const response = await sendUntilAnswered({
+      attempt: () => postJson(path, {}, { timeout: 5000 }),
+      wanted: () => el.networkDialog.open && state.search.wanted(request),
+      unanswered: () => {
+        state.search.unanswered(request);
+        render();
+      },
+    });
     if (response.ok) {
-      state.search.taken(await readJson(response));
+      state.search.taken(request, await readJson(response), performance.now());
     } else {
-      state.search.lost();
+      state.search.lost(request);
     }
   } catch (error) {
-    state.search.lost();
+    state.search.lost(request);
   }
   render();
   pollNetwork();
@@ -1434,12 +1454,26 @@ async function listenForNetworks() {
 // its network comes to after it. Returns what went wrong, in words for the
 // page, or null. Nothing of it is logged: what is sent may hold a network's
 // password.
-async function changeNetwork(path, body) {
+//
+// change is the path to post to, what to post, and where on the page the
+// change was made. It is sent again under one id until the device answers,
+// as deliver() in link.js has it, and the device makes it once: the answer
+// can be lost over the very link the change is about. Whoever has left Setup
+// by then asked for it all the same, so nothing but the time ends the tries.
+async function changeNetwork(change) {
   state.networkBusy = true;
   networkChanges += 1;
   render();
+  const path = change.path + "?id=" + newCommandId();
   try {
-    const response = await postJson(path, body);
+    const response = await sendUntilAnswered({
+      attempt: () => postJson(path, change.body),
+      wanted: () => true,
+      unanswered: () => {
+        state.networkUnanswered = change.on;
+        render();
+      },
+    });
     const reply = await readJson(response);
     if (!response.ok) {
       const reason = reply !== null && typeof reply.error === "string" ? reply.error : null;
@@ -1452,9 +1486,10 @@ async function changeNetwork(path, body) {
     }
     return null;
   } catch (error) {
-    return "Couldn’t reach the label maker. Check that it’s switched on, then try again.";
+    return unansweredChange(change.on === "add");
   } finally {
     state.networkBusy = false;
+    state.networkUnanswered = null;
     networkChanges += 1;
     render();
   }
@@ -1465,7 +1500,11 @@ async function changeNetwork(path, body) {
 function reachModeChosen(radio) {
   const network = state.network;
   if (network !== null && radio.value !== network.mode) {
-    confirmNetworkChange(modeChange(network, radio.value), "api/network/mode", { mode: radio.value });
+    confirmNetworkChange(modeChange(network, radio.value), {
+      path: "api/network/mode",
+      body: { mode: radio.value },
+      on: "mode",
+    });
   }
   render();
 }
@@ -1476,24 +1515,32 @@ function routerChosen() {
   const network = state.network;
   const offered = el.routerInput.checked;
   if (network !== null && offered !== network.router_offered) {
-    confirmNetworkChange(routerChange(network), "api/network/router", { offered: offered });
+    confirmNetworkChange(routerChange(network), {
+      path: "api/network/router",
+      body: { offered: offered },
+      on: "own",
+    });
   }
   render();
 }
 
 function forgetNetwork(ssid) {
   if (state.network !== null) {
-    confirmNetworkChange(forgetChange(state.network, ssid), "api/network/forget", { ssid: ssid });
+    confirmNetworkChange(forgetChange(state.network, ssid), {
+      path: "api/network/forget",
+      body: { ssid: ssid },
+      on: "remembered",
+    });
   }
 }
 
 // Makes a change on the Network card: once it is confirmed, when it comes
 // with the words to ask by, and at once when it does not.
-function confirmNetworkChange(words, path, body) {
+function confirmNetworkChange(words, change) {
   if (state.networkBusy) {
     return;
   }
-  state.networkChange = { path: path, body: body };
+  state.networkChange = change;
   if (words === null) {
     sendNetworkChange();
     return;
@@ -1519,7 +1566,7 @@ async function sendNetworkChange() {
   const asker = document.activeElement;
   // Asked now: a network's button is off the card once it is forgotten.
   const onCard = el.networkCard.contains(asker);
-  const problem = await changeNetwork(change.path, change.body);
+  const problem = await changeNetwork(change);
   if (problem !== null) {
     showProblem(problem);
     render();
@@ -1546,13 +1593,15 @@ function openNetworkDialog() {
 }
 
 // A password is not left in the page once the dialog is done with it, and
-// the next network starts from nothing.
+// the next network starts from nothing. What the dialog said of a network
+// still on its way is for the card to say from here on.
 function closeNetworkDialog() {
   el.networkName.value = "";
   el.networkPassword.value = "";
   el.networkPassword.type = "password";
   el.networkPasswordShow.checked = false;
   state.addProblem = null;
+  render();
 }
 
 // The network in the Add dialog's fields, checked against what the device
@@ -1593,7 +1642,7 @@ async function addNetwork() {
   }
   state.addProblem = null;
   const asker = document.activeElement;
-  const problem = await changeNetwork("api/network/remember", adding.body);
+  const problem = await changeNetwork({ path: "api/network/remember", body: adding.body, on: "add" });
   if (problem === null) {
     el.networkDialog.close();
   } else if (el.networkDialog.open) {
@@ -1606,6 +1655,14 @@ async function addNetwork() {
   // left nowhere. It gets Add back to try again with.
   if (el.networkDialog.open && asker === el.networkAdd && document.activeElement !== asker) {
     el.networkAdd.focus();
+  }
+  // So is the button that opened the dialog, which a dialog closed in the
+  // meantime could not hand the keyboard back to.
+  if (!el.networkDialog.open && document.activeElement === document.body) {
+    el.addNetworkButton.focus({ preventScroll: true });
+  }
+  if (problem !== null && !el.networkDialog.open) {
+    revealOutcome();
   }
 }
 
@@ -1897,6 +1954,7 @@ function renderSetupView(running, offer, focused) {
   // change to it is still on its way.
   renderNetworkCard(busy || offline || state.restarting || state.networkBusy);
   renderNetworkDialog(busy);
+  renderUnanswered();
   // Saving restarts the label maker, which is not worth doing for the
   // numbers it already has.
   el.saveButton.disabled =
@@ -2031,6 +2089,20 @@ function showCheck(field, note, check) {
   note.hidden = check.note === null;
   setText(note, check.note ?? "");
   setTone(note, check.invalid ? "warning" : null);
+}
+
+// Says that a change to how the device is reached has had no answer yet,
+// beside what the change was made with, for as long as the page is sending
+// it again. A network added from a dialog that has been closed since says so
+// under the list it is to join.
+function renderUnanswered() {
+  const closed = state.networkUnanswered === "add" && !el.networkDialog.open;
+  const place = closed ? "remembered" : state.networkUnanswered;
+  for (const note of el.unanswered) {
+    const shown = note.dataset.unanswered === place;
+    note.hidden = !shown;
+    setText(note, shown ? NO_ANSWER_YET : "");
+  }
 }
 
 // What the last stop left behind, in whichever view is open, once the

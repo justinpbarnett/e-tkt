@@ -353,6 +353,11 @@
                 </label>
               </div>
               <p class="note" id="reach-mode-note"></p>
+              <!-- Says that a change made here has had no answer yet and is
+                   being sent again, as the three notes like it further down
+                   do for theirs. script.js shows the one the change was
+                   made beside. -->
+              <p class="note" data-unanswered="mode" data-tone="warning" role="status" hidden></p>
             </div>
 
             <div class="setting">
@@ -362,6 +367,7 @@
               </div>
               <ul class="network-list" id="remembered-list" role="list" aria-labelledby="remembered-label"></ul>
               <p class="note" id="remembered-note"></p>
+              <p class="note" data-unanswered="remembered" data-tone="warning" role="status" hidden></p>
               <div class="network-actions">
                 <button type="button" class="btn btn-secondary btn-compact" id="add-network-button">Add network</button>
               </div>
@@ -386,6 +392,7 @@
                 internet while it is on it. Off, a phone should keep its internet over mobile data, and may need to be
                 put on this network by hand each time.
               </p>
+              <p class="note" data-unanswered="own" data-tone="warning" role="status" hidden></p>
             </div>
           </div>
 
@@ -661,6 +668,7 @@
         <p class="note" id="network-held" data-tone="warning" hidden>
           The label maker is busy. A network can be added once it is done.
         </p>
+        <p class="note" data-unanswered="add" data-tone="warning" role="status" hidden></p>
         <p class="note" id="network-error" data-tone="warning" role="alert" hidden></p>
         <div class="dialog-actions">
           <button type="submit" class="btn btn-secondary" value="cancel" formnovalidate>Cancel</button>

@@ -7,6 +7,8 @@
 // A network's name comes off the air, from whoever named that network. It
 // leaves here only as text, for the page to set as text.
 
+import { NO_ANSWER_YET } from "./status.js";
+
 // How long a listen may take before the dialog says why it might: a listen
 // itself takes a few seconds, and one asked for while the label maker is
 // trying a network waits for the try to end.
@@ -312,41 +314,76 @@ export function routerChange(network) {
   };
 }
 
+// What the page says of a change the label maker never answered, though it
+// was sent again and again. It may have been made all the same, and the
+// answers lost. adding is set for a network to add, which the Add dialog
+// still holds.
+export function unansweredChange(adding) {
+  return adding
+    ? "Couldn’t reach the label maker, so the network may or may not have been added. Adding it again does no harm."
+    : "Couldn’t reach the label maker, so the change may or may not have been made. " +
+        "Its screen shows how it is reached now.";
+}
+
 // The search the Add dialog runs for the networks in reach of the label
 // maker: a listen asked for, and the list the device has once it has
 // listened.
 export class NetworkSearch {
-  // When the listen under way was asked for, or null while none is.
-  #askedAt = null;
-  // How many listens the device had done when it took this one. What this
-  // one hears is in its list once it has done more. Null until it answers.
-  #after = null;
+  // The listen under way, or null while none is: whether a try at asking
+  // for it has had no answer, and once the device has answered, when it did
+  // and how many listens it had done by then. What this one hears is in its
+  // list once it has done more.
+  #request = null;
   // What api/network/nearby last said, or null.
   #nearby = null;
   // Whether the last listen asked for never reached the device.
   #lost = false;
 
-  // The page is asking the device to listen. now is in milliseconds.
-  asked(now) {
-    this.#askedAt = now;
-    this.#after = null;
+  // The page is asking the device to listen. Returns the listen, for the
+  // page to say what becomes of the asking. One under way is over with.
+  asked() {
+    this.#request = { unanswered: false, takenAt: null, after: null };
     this.#lost = false;
+    return this.#request;
   }
 
-  // The device answered the request, and this is its reply. One this page
-  // cannot read is no answer: without the count in it, what this listen
-  // hears cannot be told from what the one before did.
-  taken(reply) {
-    if (reply === null || typeof reply !== "object" || !Number.isInteger(reply.after)) {
-      this.lost();
+  // Whether the page still waits on this listen, and not on one asked for
+  // since. The page stops sending one it does not.
+  wanted(request) {
+    return this.#request === request;
+  }
+
+  // A try at asking for the listen had no answer, and the page is sending
+  // it again.
+  unanswered(request) {
+    if (this.#request === request) {
+      request.unanswered = true;
+    }
+  }
+
+  // The device answered the request, and this is its reply, at a time in
+  // milliseconds. One this page cannot read is no answer: without the count
+  // in it, what this listen hears cannot be told from what the one before
+  // did.
+  taken(request, reply, now) {
+    if (this.#request !== request) {
       return;
     }
-    this.#after = reply.after;
+    if (reply === null || typeof reply !== "object" || !Number.isInteger(reply.after)) {
+      this.lost(request);
+      return;
+    }
+    request.unanswered = false;
+    request.takenAt = now;
+    request.after = reply.after;
   }
 
-  // The request did not get through.
-  lost() {
-    this.#askedAt = null;
+  // The request did not get through, and the page has given up sending it.
+  lost(request) {
+    if (this.#request !== request) {
+      return;
+    }
+    this.#request = null;
     this.#lost = true;
   }
 
@@ -370,26 +407,31 @@ export class NetworkSearch {
       return;
     }
     this.#nearby = reply;
-    if (this.#after !== null && reply.listens > this.#after) {
-      this.#askedAt = null;
+    if (this.waiting && reply.listens > this.#request.after) {
+      this.#request = null;
     }
   }
 
-  // Whether a listen asked for has yet to be heard from.
+  // Whether the device has a listen of this page's that it has yet to be
+  // heard from, so that its list is worth asking for. Not while the listen
+  // is still on its way: no list can end the wait before the device has
+  // said how many listens it had done.
   get waiting() {
-    return this.#askedAt !== null;
+    return this.#request !== null && this.#request.after !== null;
   }
 
   // Whether a listen can be asked for: not while one is under way, until
   // that one is long in coming. A listen the device lost to a restart never
   // ends, and asked for twice, the device listens once.
   askable(now) {
-    return this.#askedAt === null || this.#slow(now);
+    return this.#request === null || this.#slow(now);
   }
 
-  // Whether the listen under way is long in coming.
+  // Whether the device has had the listen under way for long. The time it
+  // took to reach the device does not count: that is the link's doing, and
+  // the words for a slow listen give the device's reason for one.
   #slow(now) {
-    return now - this.#askedAt >= SLOW_LISTEN_MS;
+    return this.waiting && now - this.#request.takenAt >= SLOW_LISTEN_MS;
   }
 
   // What the dialog says above the list, or null before the first listen
@@ -399,7 +441,12 @@ export class NetworkSearch {
     if (this.#lost) {
       return "Couldn’t ask the label maker to listen.";
     }
-    if (this.#askedAt !== null) {
+    if (this.#request !== null) {
+      // The device has not said it has the listen, so the page does not say
+      // it is listening.
+      if (this.#request.unanswered) {
+        return NO_ANSWER_YET;
+      }
       return this.#slow(now)
         ? "Still waiting to listen. The label maker can’t while it is trying to join a network, " +
             "so the name may be quicker to type in below."

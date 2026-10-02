@@ -76,6 +76,11 @@ export function readCapabilities(response) {
 // the page saying why.
 export const WAITING_TO_HEAR = "Waiting to hear from the label maker…";
 
+// What the page says of something it sent that has had no answer, while it
+// sends it again: a command, a change to how the label maker is reached, or
+// a listen for the networks in its reach.
+export const NO_ANSWER_YET = "No answer yet. Trying again…";
+
 // What the panel says of each command, keyed by the name the device answers
 // to. That name is also the path this panel posts to, api/<name>, and the
 // string /api/status reports back while the command runs.
@@ -216,7 +221,7 @@ export function activity(running, device) {
   // The device has not said it has the command, so the page does not say it
   // is doing it.
   if (running.unanswered) {
-    text = "No answer yet. Trying again…";
+    text = NO_ANSWER_YET;
   }
   if (running.stop === "now") {
     text = "Stopping…";

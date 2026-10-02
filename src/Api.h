@@ -5,6 +5,7 @@
 #include <map>
 #include <mutex>
 
+#include "ArduinoJson.h"
 #include "ETKT.h"
 #include "LinkSupervisor.h"
 #include "Logger.h"
@@ -72,9 +73,10 @@ class Api {
   NetworkSettings* networkSettings;
   Logger* logger;
 
-  // How many command ids the device remembers. A panel sends one command at
-  // a time and gives up on it within seconds, so only the newest few can
-  // come again; eight leaves room for several panels at once.
+  // How many ids the device remembers: of commands, of stops, and of what
+  // changes the network. A panel sends one of those at a time and gives up
+  // on it within seconds, so only the newest few can come again; eight
+  // leaves room for several panels at once.
   static const size_t REMEMBERED_IDS = 8;
 
   // A request sent under an id, and what the device answered it.
@@ -114,6 +116,20 @@ class Api {
   template <typename AnswerNow>
   Reply once(const Request& request, Keep keep, AnswerNow answerNow);
 
+  // What changes how the machine is reached. Each is handed the body of its
+  // request, and makes the change, or writes the reply that refuses it and
+  // returns false.
+  typedef bool (Api::*NetworkChange)(const JsonObjectConst& body,
+                                     Reply* refused);
+  bool setNetworkMode(const JsonObjectConst& body, Reply* refused);
+  bool rememberNetwork(const JsonObjectConst& body, Reply* refused);
+  bool forgetNetwork(const JsonObjectConst& body, Reply* refused);
+  bool offerRouter(const JsonObjectConst& body, Reply* refused);
+
+  // Makes one of them once however often it is sent under its id, and
+  // answers with the network as it is afterwards.
+  Reply changeNetwork(const Request& request, NetworkChange change);
+
   // Which route a request is for, and that route's answer to it.
   Reply route(const Request& request);
 
@@ -132,10 +148,6 @@ class Api {
   Reply network(const Request& request);
   Reply networksNearby(const Request& request);
   Reply listenForNetworks(const Request& request);
-  Reply setNetworkMode(const Request& request);
-  Reply rememberNetwork(const Request& request);
-  Reply forgetNetwork(const Request& request);
-  Reply offerRouter(const Request& request);
 
  public:
   // The longest body a request may send. Several times what the longest label

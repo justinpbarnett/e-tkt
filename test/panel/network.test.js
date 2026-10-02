@@ -16,6 +16,7 @@ import {
   rememberedRows,
   rememberedSummary,
   routerChange,
+  unansweredChange,
 } from "../../data/network.js";
 import { nearbyReply, networkReply } from "./device.js";
 
@@ -55,8 +56,7 @@ function failed(cause, reason = {}) {
 // A search that has heard what is in the simulator's air.
 function searched() {
   const search = new NetworkSearch();
-  search.asked(0);
-  search.taken({ result: "listening", after: 0 });
+  search.taken(search.asked(), { result: "listening", after: 0 }, 0);
   search.heard(nearbyReply());
   return search;
 }
@@ -459,13 +459,87 @@ test("a search waits until the device has listened after it was asked", () => {
   // heard. Its count of listens tells the two apart.
   const search = new NetworkSearch();
   assert.equal(search.waiting, false);
-  search.asked(1000);
+  search.taken(search.asked(), { result: "listening", after: 3 }, 1000);
   assert.equal(search.waiting, true);
-  search.taken({ result: "listening", after: 3 });
   search.heard(nearbyReply({ listening: true, listens: 3 }));
   assert.equal(search.waiting, true);
   search.heard(nearbyReply({ listens: 4 }));
   assert.equal(search.waiting, false);
+});
+
+test("a search asks for no list while its listen is still on its way", () => {
+  // No list can end the wait until the device has said how many listens it
+  // had done when it took this one, and a link that is losing the listen has
+  // enough to carry with that alone.
+  const search = new NetworkSearch();
+  const request = search.asked();
+  assert.equal(search.waiting, false);
+  search.unanswered(request);
+  assert.equal(search.waiting, false);
+  search.heard(nearbyReply({ listens: 4 }));
+  assert.equal(search.text(1500), "No answer yet. Trying again…");
+  search.taken(request, { result: "listening", after: 4 }, 2000);
+  assert.equal(search.waiting, true);
+});
+
+test("a listen that has had no answer says the page is asking again", () => {
+  // The page sends it again until the device answers, and does not say the
+  // device is listening while it has not heard that it is.
+  const search = new NetworkSearch();
+  const request = search.asked();
+  assert.equal(search.text(1000), "Listening for networks…");
+  search.unanswered(request);
+  assert.equal(search.text(6000), "No answer yet. Trying again…");
+  search.taken(request, { result: "listening", after: 3 }, 9000);
+  assert.equal(search.text(9000), "Listening for networks…");
+});
+
+test("a listen is long in coming from when the device took it", () => {
+  // The words for a slow listen give the device's reason for one. The time a
+  // weak link took to get the listen there is not the device's doing.
+  const search = new NetworkSearch();
+  const request = search.asked();
+  search.unanswered(request);
+  search.taken(request, { result: "listening", after: 0 }, 15000);
+  assert.equal(search.text(15000 + SLOW_LISTEN_MS - 1), "Listening for networks…");
+  assert.equal(search.askable(15000 + SLOW_LISTEN_MS - 1), false);
+  assert.equal(search.askable(15000 + SLOW_LISTEN_MS), true);
+});
+
+test("a listen asked for again is the end of the one before it", () => {
+  // The page stops sending the old one, and what comes back for it is not
+  // taken for the new one's.
+  const search = new NetworkSearch();
+  const first = search.asked();
+  assert.equal(search.wanted(first), true);
+  const second = search.asked();
+  assert.equal(search.wanted(first), false);
+  assert.equal(search.wanted(second), true);
+  search.unanswered(first);
+  assert.equal(search.text(500), "Listening for networks…");
+  search.taken(first, { result: "listening", after: 7 }, 600);
+  assert.equal(search.waiting, false);
+  search.lost(first);
+  assert.equal(search.text(700), "Listening for networks…");
+  assert.equal(search.wanted(second), true);
+});
+
+test("a change that was never answered may have been made all the same", () => {
+  // The page sent it again and again, and what was lost may have been the
+  // answers alone. So it does not say the change was not made, and says
+  // where to look: the label maker's screen names the network it is on, or
+  // has what a phone needs to join its own.
+  assert.equal(
+    unansweredChange(false),
+    "Couldn’t reach the label maker, so the change may or may not have been made. " +
+      "Its screen shows how it is reached now.",
+  );
+  // A network sent again goes under a new id, which the device takes as
+  // somebody asking for another try at it.
+  assert.equal(
+    unansweredChange(true),
+    "Couldn’t reach the label maker, so the network may or may not have been added. Adding it again does no harm.",
+  );
 });
 
 test("what the device heard before shows while it listens again", () => {
@@ -473,8 +547,7 @@ test("what the device heard before shows while it listens again", () => {
   // waiting.
   const search = new NetworkSearch();
   assert.deepEqual(search.rows(networkReply()), []);
-  search.asked(1000);
-  search.taken({ result: "listening", after: 3 });
+  search.taken(search.asked(), { result: "listening", after: 3 }, 1000);
   search.heard(nearbyReply({ listening: true, listens: 3 }));
   assert.equal(search.rows(networkReply()).length, 8);
   assert.equal(search.text(1500), "Listening for networks…");
@@ -484,8 +557,7 @@ test("a listen that is long in coming says why, and what to do meanwhile", () =>
   // The radio cannot listen while it is trying a network, and a network that
   // gives no address holds it for two minutes.
   const search = new NetworkSearch();
-  search.asked(1000);
-  search.taken({ result: "listening", after: 0 });
+  search.taken(search.asked(), { result: "listening", after: 0 }, 1000);
   assert.equal(search.text(1000 + SLOW_LISTEN_MS - 1), "Listening for networks…");
   assert.equal(
     search.text(1000 + SLOW_LISTEN_MS),
@@ -499,9 +571,13 @@ test("a listen is not asked for again while one is under way, until that one is 
   // the way out of waiting for it. Asked twice, the device listens once.
   const search = new NetworkSearch();
   assert.equal(search.askable(0), true);
-  search.asked(1000);
-  assert.equal(search.askable(1500), false);
-  search.taken({ result: "listening", after: 0 });
+  const request = search.asked();
+  assert.equal(search.askable(500), false);
+  // Not while the page is still sending the one it has, either: another
+  // would only take its place.
+  search.unanswered(request);
+  assert.equal(search.askable(1000 + SLOW_LISTEN_MS), false);
+  search.taken(request, { result: "listening", after: 0 }, 1000);
   assert.equal(search.askable(1000 + SLOW_LISTEN_MS - 1), false);
   assert.equal(search.askable(1000 + SLOW_LISTEN_MS), true);
   search.heard(nearbyReply({ listens: 1 }));
@@ -509,13 +585,15 @@ test("a listen is not asked for again while one is under way, until that one is 
 });
 
 test("a listen that could not be asked for says so, until it is asked for again", () => {
+  // The page has given up sending it by then.
   const search = new NetworkSearch();
-  search.asked(0);
-  search.lost();
+  const request = search.asked();
+  search.unanswered(request);
+  search.lost(request);
   assert.equal(search.waiting, false);
+  assert.equal(search.askable(50), true);
   assert.equal(search.text(50), "Couldn’t ask the label maker to listen.");
-  search.asked(100);
-  assert.equal(search.waiting, true);
+  search.asked();
   assert.equal(search.text(150), "Listening for networks…");
 });
 
@@ -524,20 +602,18 @@ test("an answer to the listen that the page cannot read counts as no answer", ()
   // listen heard from what the one before did, and the search would wait
   // for ever.
   const search = new NetworkSearch();
-  search.asked(0);
-  search.taken(null);
+  search.taken(search.asked(), null, 0);
   assert.equal(search.waiting, false);
   assert.equal(search.text(50), "Couldn’t ask the label maker to listen.");
-  search.asked(100);
-  search.taken({ result: "listening" });
+  search.taken(search.asked(), { result: "listening" }, 100);
   assert.equal(search.waiting, false);
+  assert.equal(search.text(150), "Couldn’t ask the label maker to listen.");
 });
 
 test("a listen that heard nothing says a name can still be typed in", () => {
   const search = new NetworkSearch();
   assert.equal(search.text(0), null);
-  search.asked(0);
-  search.taken({ result: "listening", after: 0 });
+  search.taken(search.asked(), { result: "listening", after: 0 }, 0);
   search.heard(nearbyReply({ networks: [] }));
   assert.equal(search.text(900), "No network heard. One that hides its name can be typed in below.");
 });
@@ -549,8 +625,7 @@ test("a listen that heard networks says how many it lists", () => {
   // strongest of what it heard, so the count is of the list.
   assert.equal(searched().text(900), "8 networks, the strongest first.");
   const search = new NetworkSearch();
-  search.asked(0);
-  search.taken({ result: "listening", after: 0 });
+  search.taken(search.asked(), { result: "listening", after: 0 }, 0);
   search.heard(nearbyReply({ networks: [{ ssid: "Workshop", rssi: -48, secured: true }] }));
   assert.equal(search.text(900), "1 network.");
 });

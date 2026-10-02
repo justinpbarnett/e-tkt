@@ -6,7 +6,8 @@
 // A reply can be lost after the device has done what it was asked. So every
 // command and every stop goes out under an id, which the device remembers
 // with what it answered: one sent again under its id is told again what it
-// was told, and nothing runs twice.
+// was told, and nothing runs twice. So does every change to how the device
+// is reached, and every listen for the networks in its reach.
 //
 // The device also names the command it last took, in every status, by the id
 // that command was sent under. So a poll that gets through says the command
@@ -97,8 +98,9 @@ export const GIVE_UP_AFTER_MS = 20000;
 // eight bytes do not come up twice.
 const ID_BYTES = 8;
 
-// The id a command or a stop is sent under, and sent again under. The device
-// keeps one of up to 36 bytes.
+// The id a command or a stop is sent under, and sent again under, and so is
+// a change to how the device is reached, and a listen for the networks in
+// its reach. The device keeps one of up to 36 bytes.
 export function newCommandId() {
   // Not crypto.randomUUID(): the device serves the page over plain HTTP, and
   // a browser offers that only to a page served securely.
@@ -181,8 +183,9 @@ const WAITED = Symbol("waited");
 //               is not called back, but no other follows it
 //   unanswered  told each time a try has had no answer and another is to
 //               follow, so the page can say so
-//   command     the Sending this is, when it is a command. Left out for a
-//               stop, which nothing but its own answer says anything of
+//   command     the Sending this is, when it is a command. Left out for
+//               anything else, which nothing but its own answer says
+//               anything of
 //   now         the time, in milliseconds
 //   pause       resolves once that many milliseconds have passed
 //
@@ -198,8 +201,8 @@ const WAITED = Symbol("waited");
 // device has not answered for GIVE_UP_AFTER_MS.
 export async function deliver({ attempt, wanted, unanswered, command = null, now, pause }) {
   const startedAt = now();
-  // One of its own for every delivery of a stop, and never settled: nothing
-  // then holds on to the deliveries that are over.
+  // One of its own for every delivery of anything else, and never settled:
+  // nothing then holds on to the deliveries that are over.
   const outcome = command === null ? new Promise(() => {}) : command.outcome;
   const held = () => command !== null && command.held();
   for (;;) {

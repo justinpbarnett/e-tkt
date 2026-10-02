@@ -215,6 +215,9 @@ The machine runs one at a time, and a second request is refused with a 409: the 
 The device keeps what it answered under its newest ids, and a request that comes again under one of them is told what it was told the first time, with nothing more done.
 Of a command it keeps only the answer that took it: one that was refused ran nothing, so sent again it is judged again, since the machine may be free by then.
 Of a stop it keeps every answer, a refusal too, because a stop sent again must not reach a command that began after it.
+A change to how the machine is reached goes out under one as well, and so does a listen for the **networks in reach**.
+Of a change it keeps only that it was made, and one sent again is answered with the network as it is by then, so it neither undoes a change made after it nor starts a try over.
+Of a listen it keeps the answer that took it, so one sent again starts no second listen.
 `/api/status` names the command the machine last took as `last_command_id`, so a poll that gets through says the command arrived when its own answer does not.
 The answers are kept in memory, so a restart forgets them, and a command sent again across one runs again.
 An id is at most 36 bytes, and a request under none is taken as it always was.
@@ -318,6 +321,7 @@ The panel changes it under Setup, and it is kept in EEPROM.
 It keeps up to `MAX_REMEMBERED`, in the order they are tried, and a network added again takes the place of the one of its name, at the front.
 A name is 1 to 32 bytes of text, and a password is nothing, for an open network, or 8 to 63 bytes, which is what WPA2 takes.
 A network sent again exactly as it is kept is still followed with a try at once, which is the panel asking for one.
+The same request come again under its **command id** is not: that is the panel making sure the first one arrived, and a try under way is left alone.
 The first start of this firmware takes over the one network the firmware before it kept in the radio itself.
 A password goes from here to the radio and nowhere else: none is logged, and no reply of the **Api** carries one.
 `NetworkSettings`, in EEPROM.
@@ -373,6 +377,7 @@ A reply too large for its document is a 500 and not a reply with fields missing,
 The routes under `/api/network` are how the panel reads and changes the **link**.
 `GET /api/network` says how the machine is reached, and `GET /api/network/nearby` the **networks in reach**, after a `POST` to `listen`.
 `POST` to `mode`, `remember`, `forget` and `router` changes the **network mode**, a **remembered network** and the **router option**.
+Each of those is made once however often it comes under its **command id**, and so is a listen.
 A request to remember a network carries its password in, and nothing carries one out.
 
 **Per-machine calibration** - `Machine.h`.
@@ -412,6 +417,8 @@ A command or a stop goes out under a **command id** and is sent again until it i
 After `GIVE_UP_AFTER_MS` the page stops trying and says so, because someone is standing at the machine waiting.
 Setup has a Network card, which says how the machine is reached and changes it: the **network mode**, the **remembered networks**, and the **own network** with its **router option**.
 A change there that can cost a phone its way to the machine asks first, and the card moves only when the machine says the change is made.
+A change made there, and a listen, is sent again under its **command id** until it is answered, since the answer can be lost over the very link the change is about.
+Meanwhile the card says so beside what the change was made with, and a change the page gives up on is said to be one that may or may not have been made.
 `script.js` reads the page and draws it.
 What the page says and decides is worked out in the ES modules beside it, which never touch the page, so `node --test "test/panel/*.test.js"` covers them: `link.js` for the sending, `network.js` for the Network card.
 `test/panel/capabilities.json` is the `/api/capabilities` reply those tests run against, with `network.json` and `nearby.json` beside it for the Network card, and the simulator's tests hold all three to the firmware's.

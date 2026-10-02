@@ -111,6 +111,15 @@ static Reply postUnder(const char* id, const char* path, const char* body) {
   return api->handle(request);
 }
 
+// A bare post sent under an id.
+static Reply postBareUnder(const char* id, const char* path) {
+  Request request;
+  request.method = Method::POST;
+  request.path = path;
+  request.query["id"] = id;
+  return api->handle(request);
+}
+
 // A stop sent under an id.
 static Reply postStopUnder(const char* id, const char* after) {
   Request request;
@@ -1806,8 +1815,7 @@ void test_a_mode_the_machine_does_not_have_is_refused(void) {
 }
 
 // A network is remembered from its name and password, and is the first one
-// tried from then on. Sent again, as the panel sends it when it hears nothing
-// back, it is still remembered once.
+// tried from then on. Added a second time, it is still remembered once.
 void test_a_network_is_remembered_from_its_name_and_password(void) {
   networkSettings->remember("Church", CHURCH_KEY);
   const char* body = "{\"ssid\":\"Basement\",\"password\":\"correct horse\"}";
@@ -2011,6 +2019,165 @@ void test_what_changes_the_network_is_asked_for_with_a_post(void) {
   TEST_ASSERT_FALSE(supervisor->nearby().listening);
 }
 
+// On a slow link the reply to a change can be lost after the device made the
+// change, and the panel then sends the change again. A network sent as it is
+// kept already is otherwise somebody asking for another try at it, and the
+// link drops the try that is under way for that. Sent again under its id it
+// is the same tap: the try under way runs on, and the machine joins.
+void test_a_network_sent_again_under_its_id_does_not_start_its_try_over(void) {
+  radio->add("Church", CHURCH_KEY)->joinMs = 8000;
+  const char* body = "{\"ssid\":\"Church\",\"password\":\"battery staple\"}";
+  TEST_ASSERT_EQUAL_INT(200,
+                        postUnder("tap-1", "/api/network/remember", body).code);
+  runLink(4000);
+  TEST_ASSERT_EQUAL_STRING(
+      "joining", json(get("/api/network"))["station"].as<const char*>());
+
+  const Reply again = postUnder("tap-1", "/api/network/remember", body);
+  runLink(6000);
+
+  TEST_ASSERT_EQUAL_INT(200, again.code);
+  TEST_ASSERT_EQUAL_STRING("Church",
+                           namesIn(json(again)["remembered"]).c_str());
+  TEST_ASSERT_EQUAL_INT(1, radio->joins.size());
+  TEST_ASSERT_EQUAL_INT(0, radio->leaves);
+  TEST_ASSERT_EQUAL_STRING(
+      "joined", json(get("/api/network"))["station"].as<const char*>());
+}
+
+// A new tap is a new id, and so is a request sent under none. The same
+// network sent that way is somebody asking for another try at it, as it was
+// before there were ids, and the link is told.
+void test_the_same_network_under_a_new_id_asks_for_another_try(void) {
+  const char* body = "{\"ssid\":\"Church\",\"password\":\"battery staple\"}";
+  postUnder("tap-1", "/api/network/remember", body);
+  const uint32_t first = networkSettings->revision();
+
+  postUnder("tap-1", "/api/network/remember", body);
+  TEST_ASSERT_EQUAL_UINT32(first, networkSettings->revision());
+
+  postUnder("tap-2", "/api/network/remember", body);
+  const uint32_t second = networkSettings->revision();
+  TEST_ASSERT_TRUE(second != first);
+
+  post("/api/network/remember", body);
+  TEST_ASSERT_TRUE(networkSettings->revision() != second);
+  TEST_ASSERT_EQUAL_INT(1, networkSettings->networks().size());
+}
+
+// A change that comes again late, after another one was made, is the tap it
+// was the first time, and that tap has had its turn: it does not undo what
+// came after it. It is answered with the network as it is by then, which is
+// what the panel draws.
+void test_a_change_sent_again_under_its_id_does_not_undo_the_one_after_it(
+    void) {
+  const char* own = "{\"mode\":\"own\"}";
+  const char* forget = "{\"ssid\":\"Basement\"}";
+  const char* noRouter = "{\"offered\":false}";
+  networkSettings->remember("Basement", BASEMENT_KEY);
+  postUnder("tap-1", "/api/network/mode", own);
+  postUnder("tap-2", "/api/network/forget", forget);
+  postUnder("tap-3", "/api/network/router", noRouter);
+  post("/api/network/mode", "{\"mode\":\"join\"}");
+  post("/api/network/remember",
+       "{\"ssid\":\"Basement\",\"password\":\"correct horse\"}");
+  post("/api/network/router", "{\"offered\":true}");
+
+  const Reply replies[] = {
+      postUnder("tap-1", "/api/network/mode", own),
+      postUnder("tap-2", "/api/network/forget", forget),
+      postUnder("tap-3", "/api/network/router", noRouter),
+  };
+
+  for (const Reply& reply : replies) {
+    TEST_ASSERT_EQUAL_INT(200, reply.code);
+    const JsonObject network = json(reply);
+    TEST_ASSERT_EQUAL_STRING("join", network["mode"].as<const char*>());
+    TEST_ASSERT_EQUAL_STRING("Basement",
+                             namesIn(network["remembered"]).c_str());
+    TEST_ASSERT_TRUE(network["router_offered"].as<bool>());
+  }
+  TEST_ASSERT_TRUE(NetworkMode::JOIN == networkSettings->mode());
+  TEST_ASSERT_EQUAL_INT(1, networkSettings->networks().size());
+  TEST_ASSERT_TRUE(networkSettings->routerOffered());
+}
+
+// A change the device refused changed nothing, so its id is not kept: sent
+// again once there is room for the network, it is made, which is what the
+// tap was for.
+void test_a_change_that_was_refused_is_made_when_it_is_sent_again(void) {
+  for (int i = 0; i < NetworkSettings::MAX_REMEMBERED; i++) {
+    networkSettings->remember(("Network " + std::to_string(i)).c_str(),
+                              "password1");
+  }
+  const char* body = "{\"ssid\":\"Church\",\"password\":\"battery staple\"}";
+  TEST_ASSERT_EQUAL_INT(409,
+                        postUnder("tap-1", "/api/network/remember", body).code);
+  post("/api/network/forget", "{\"ssid\":\"Network 0\"}");
+
+  const Reply again = postUnder("tap-1", "/api/network/remember", body);
+
+  TEST_ASSERT_EQUAL_INT(200, again.code);
+  TEST_ASSERT_EQUAL_STRING("Church",
+                           json(again)["remembered"][0].as<const char*>());
+}
+
+// The reply to a listen can be lost as well, and the listen may have ended
+// by the time the panel asks again. Asked again under its id it is answered
+// as it was, with the count its list comes after, and the radio is not taken
+// away a second time. A new id is a new listen.
+void test_a_listen_sent_again_under_its_id_does_not_listen_again(void) {
+  joinChurch();
+  const Reply asked = postBareUnder("tap-1", "/api/network/listen");
+  runLink(WIFI_STEP_MS);
+  TEST_ASSERT_EQUAL_INT(0, json(asked)["after"].as<int>());
+  TEST_ASSERT_EQUAL_INT(1,
+                        json(get("/api/network/nearby"))["listens"].as<int>());
+
+  const Reply again = postBareUnder("tap-1", "/api/network/listen");
+
+  TEST_ASSERT_EQUAL_INT(200, again.code);
+  TEST_ASSERT_EQUAL_STRING("listening",
+                           json(again)["result"].as<const char*>());
+  TEST_ASSERT_EQUAL_INT(0, json(again)["after"].as<int>());
+  TEST_ASSERT_FALSE(supervisor->nearby().listening);
+
+  const Reply next = postBareUnder("tap-2", "/api/network/listen");
+
+  TEST_ASSERT_EQUAL_INT(1, json(next)["after"].as<int>());
+  TEST_ASSERT_TRUE(supervisor->nearby().listening);
+}
+
+// An id too long to keep is refused here as it is for a command, and nothing
+// changes.
+void test_a_change_under_an_id_too_long_to_keep_is_refused(void) {
+  const char* id = "1234567890123456789012345678901234567";
+  const struct {
+    const char* path;
+    const char* body;
+  } changes[] = {
+      {"/api/network/mode", "{\"mode\":\"own\"}"},
+      {"/api/network/remember", "{\"ssid\":\"Cafe\"}"},
+      {"/api/network/forget", "{\"ssid\":\"Church\"}"},
+      {"/api/network/router", "{\"offered\":false}"},
+      {"/api/network/listen", "{}"},
+  };
+  networkSettings->remember("Church", CHURCH_KEY);
+  for (const auto& change : changes) {
+    const Reply reply = postUnder(id, change.path, change.body);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(400, reply.code, change.path);
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("An id may be at most 36 bytes",
+                                     errorOf(reply), change.path);
+  }
+  TEST_ASSERT_TRUE(NetworkMode::JOIN == networkSettings->mode());
+  TEST_ASSERT_EQUAL_STRING("Church",
+                           networkSettings->networks()[0].ssid.c_str());
+  TEST_ASSERT_EQUAL_INT(1, networkSettings->networks().size());
+  TEST_ASSERT_TRUE(networkSettings->routerOffered());
+  TEST_ASSERT_FALSE(supervisor->nearby().listening);
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_a_path_nothing_answers_is_not_found);
@@ -2126,5 +2293,12 @@ int main(int, char**) {
   RUN_TEST(test_whether_its_own_network_offers_a_router_is_set_strictly);
   RUN_TEST(test_what_changes_the_network_reads_its_body_as_a_command_does);
   RUN_TEST(test_what_changes_the_network_is_asked_for_with_a_post);
+  RUN_TEST(test_a_network_sent_again_under_its_id_does_not_start_its_try_over);
+  RUN_TEST(test_the_same_network_under_a_new_id_asks_for_another_try);
+  RUN_TEST(
+      test_a_change_sent_again_under_its_id_does_not_undo_the_one_after_it);
+  RUN_TEST(test_a_change_that_was_refused_is_made_when_it_is_sent_again);
+  RUN_TEST(test_a_listen_sent_again_under_its_id_does_not_listen_again);
+  RUN_TEST(test_a_change_under_an_id_too_long_to_keep_is_refused);
   return UNITY_END();
 }
