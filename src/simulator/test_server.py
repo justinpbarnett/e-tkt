@@ -59,6 +59,14 @@ def setUpModule():
         raise unittest.SkipTest(str(missing))
 
 
+def panel_reply(name):
+    """A reply of the device's as test/panel/ keeps it, for the panel's
+    tests to start from."""
+    with open(os.path.join(ROOT, "test", "panel", name),
+              encoding="utf-8") as reply:
+        return json.load(reply)
+
+
 class RelayTestCase(unittest.IsolatedAsyncioTestCase):
     # How many times faster than the machine this case's runs.
     speed = SPEED
@@ -497,6 +505,28 @@ class Network(RelayTestCase):
             lambda network: network["station"] == "joined")
         self.assertEqual(["Workshop"], network["remembered"])
 
+    async def test_the_panel_tests_use_the_network_the_firmware_describes(
+            self):
+        # test/panel/ works out what the Network card says of every state
+        # from the reply in network.json: a machine that has joined the
+        # workshop's network and closed its own. As with the capabilities, a
+        # copy that drifted would keep those tests passing against a device
+        # that no longer exists.
+        await self.remember("Workshop", "labelmaker")
+        network = await self.network(
+            lambda network: network["station"] == "joined"
+            and not network["own"]["open"])
+        self.assertEqual(panel_reply("network.json"), network)
+
+    async def test_the_panel_tests_use_the_networks_the_firmware_hears(self):
+        # And nearby.json is what a machine never set up has in its list
+        # after one listen: every network in the air that names itself.
+        response = await self.client.post("/api/network/listen")
+        after = (await response.json())["after"]
+        nearby = await self.until(
+            "/api/network/nearby", lambda nearby: nearby["listens"] > after)
+        self.assertEqual(panel_reply("nearby.json"), nearby)
+
 
 class Serial(RelayTestCase):
     serial = asyncio.subprocess.PIPE
@@ -703,9 +733,8 @@ class Panel(RelayTestCase):
         # that drifted from the firmware would keep those tests passing
         # against a device that no longer exists.
         response = await self.client.get("/api/capabilities")
-        with open(os.path.join(ROOT, "test", "panel", "capabilities.json"),
-                  encoding="utf-8") as reply:
-            self.assertEqual(json.load(reply), await response.json())
+        self.assertEqual(panel_reply("capabilities.json"),
+                         await response.json())
 
 
 class Text(RelayTestCase):

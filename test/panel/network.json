@@ -1,0 +1,16 @@
+{
+  "mode": "join",
+  "station": "joined",
+  "network": "Workshop",
+  "address": "192.168.1.50",
+  "host": "e-tkt-9c4f.local",
+  "own": {
+    "name": "E-TKT-9C4F",
+    "open": false,
+    "clients": 0,
+    "address": "192.168.4.1"
+  },
+  "remembered": ["Workshop"],
+  "max_remembered": 4,
+  "router_offered": true
+}

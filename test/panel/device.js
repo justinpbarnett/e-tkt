@@ -16,6 +16,20 @@ export function capabilitiesReply() {
   return JSON.parse(readFileSync(new URL("capabilities.json", import.meta.url), "utf8"));
 }
 
+// What api/network says of a machine that has joined the workshop's network
+// and closed its own, but for what changes says. network.json is the reply
+// the firmware gives in the simulator, word for word, held to it the same
+// way.
+export function networkReply(changes = {}) {
+  return { ...JSON.parse(readFileSync(new URL("network.json", import.meta.url), "utf8")), ...changes };
+}
+
+// What api/network/nearby says once that machine has listened: the networks
+// in the simulator's air, in nearby.json, held to the firmware's reply too.
+export function nearbyReply(changes = {}) {
+  return { ...JSON.parse(readFileSync(new URL("nearby.json", import.meta.url), "utf8")), ...changes };
+}
+
 // What the page knows of the command running, as script.js hands it to
 // activity(), stopOffer() and setupText() in status.js and to timeLeftText()
 // in timing.js: a cut the device has reported, but for what overrides says.

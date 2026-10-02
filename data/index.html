@@ -326,6 +326,69 @@
             </div>
           </div>
 
+          <!-- How the label maker is reached, as api/network says it, and
+               hidden until it has. A change made here is made once it is
+               confirmed, like one on the card above: none of it waits for
+               Save. A network's name comes off the air, from whoever named
+               that network, so script.js sets each one as text. -->
+          <div class="panel card" id="network-card" hidden>
+            <h2 class="section-heading">Network</h2>
+
+            <div class="setting" role="status">
+              <p class="reach-headline" id="reach-headline"></p>
+              <p class="note" id="reach-detail"></p>
+              <p class="note" id="reach-failure" data-tone="warning" hidden></p>
+            </div>
+
+            <div class="setting">
+              <p class="label" id="reach-mode-label">Reached over</p>
+              <div class="segmented" role="radiogroup" aria-labelledby="reach-mode-label">
+                <label class="segment">
+                  <input type="radio" name="reach-mode" value="join" />
+                  <span>A network</span>
+                </label>
+                <label class="segment">
+                  <input type="radio" name="reach-mode" value="own" />
+                  <span>Its own</span>
+                </label>
+              </div>
+              <p class="note" id="reach-mode-note"></p>
+            </div>
+
+            <div class="setting">
+              <div class="setting-heading">
+                <p class="label" id="remembered-label">Networks it remembers</p>
+                <p class="label" id="remembered-count"></p>
+              </div>
+              <ul class="network-list" id="remembered-list" role="list" aria-labelledby="remembered-label"></ul>
+              <p class="note" id="remembered-note"></p>
+              <div class="network-actions">
+                <button type="button" class="btn btn-secondary btn-compact" id="add-network-button">Add network</button>
+              </div>
+            </div>
+
+            <div class="setting">
+              <p class="label">Its own network</p>
+              <p class="network-name" id="own-name"></p>
+              <p class="network-tag" id="own-state"></p>
+              <p class="note" id="own-note"></p>
+              <label class="check">
+                <input type="checkbox" id="router-input" aria-describedby="router-note" />
+                <span class="check-box" aria-hidden="true">
+                  <svg class="icon icon-check" viewBox="0 0 14 14" aria-hidden="true" focusable="false">
+                    <path d="M2.5 7.5l3 3 6-7" />
+                  </svg>
+                </span>
+                <span class="check-text">Offer it as a way to the internet</span>
+              </label>
+              <p class="note" id="router-note">
+                On, a phone should treat it as an ordinary network and come back to it by itself, and may lose its
+                internet while it is on it. Off, a phone should keep its internet over mobile data, and may need to be
+                put on this network by hand each time.
+              </p>
+            </div>
+          </div>
+
           <div class="panel card">
             <h2 class="section-heading">Calibration</h2>
 
@@ -514,6 +577,101 @@
       </form>
     </dialog>
 
+    <!-- One dialog for every change on the Network card that can cost a phone
+         its way to the label maker. script.js fills it with what the change
+         comes to before it is made. -->
+    <dialog
+      class="dialog"
+      id="network-confirm-dialog"
+      aria-labelledby="network-confirm-title"
+      aria-describedby="network-confirm-summary"
+    >
+      <form method="dialog" class="dialog-body">
+        <h2 class="dialog-title" id="network-confirm-title"></h2>
+        <p id="network-confirm-summary"></p>
+        <div class="dialog-actions">
+          <button type="submit" class="btn btn-secondary" value="cancel">Cancel</button>
+          <button type="submit" class="btn btn-primary" value="confirm" id="network-confirm-button"></button>
+        </div>
+      </form>
+    </dialog>
+
+    <!-- A network for the label maker to remember: picked from the ones in
+         its reach, or typed in for one that hides its name or is not in
+         reach yet. The title takes the focus as the dialog opens, so a
+         phone's keyboard stays down until a field is tapped. -->
+    <dialog class="dialog" id="network-dialog" aria-labelledby="network-title" aria-describedby="network-intro">
+      <form method="dialog" class="dialog-body" id="network-form" novalidate>
+        <h2 class="dialog-title" id="network-title" tabindex="-1">Add a network</h2>
+        <p id="network-intro"></p>
+        <p class="note" id="network-full" data-tone="warning" hidden></p>
+
+        <div class="field">
+          <div class="setting-heading">
+            <p class="label" id="nearby-label">Networks in its reach</p>
+            <button type="button" class="btn btn-ghost btn-compact" id="listen-button">Listen again</button>
+          </div>
+          <p class="note" id="nearby-text" role="status"></p>
+          <ul class="network-list" id="nearby-list" role="list" aria-labelledby="nearby-label"></ul>
+        </div>
+
+        <div class="field">
+          <label class="label" for="network-name">Name</label>
+          <input
+            type="text"
+            class="input"
+            id="network-name"
+            enterkeyhint="next"
+            autocomplete="off"
+            autocorrect="off"
+            autocapitalize="none"
+            spellcheck="false"
+            aria-describedby="network-name-note"
+          />
+          <p class="note" id="network-name-note" hidden></p>
+        </div>
+
+        <div class="field">
+          <label class="label" for="network-password">Password</label>
+          <div id="network-password-entry">
+            <input
+              type="password"
+              class="input"
+              id="network-password"
+              enterkeyhint="done"
+              autocomplete="off"
+              autocorrect="off"
+              autocapitalize="none"
+              spellcheck="false"
+              aria-describedby="network-password-note"
+            />
+            <label class="check">
+              <input type="checkbox" id="network-password-show" />
+              <span class="check-box" aria-hidden="true">
+                <svg class="icon icon-check" viewBox="0 0 14 14" aria-hidden="true" focusable="false">
+                  <path d="M2.5 7.5l3 3 6-7" />
+                </svg>
+              </span>
+              <span class="check-text">Show password</span>
+            </label>
+          </div>
+          <p class="note" id="network-password-note" hidden></p>
+        </div>
+
+        <p class="note" id="network-held" data-tone="warning" hidden>
+          The label maker is busy. A network can be added once it is done.
+        </p>
+        <p class="note" id="network-error" data-tone="warning" role="alert" hidden></p>
+        <div class="dialog-actions">
+          <button type="submit" class="btn btn-secondary" value="cancel" formnovalidate>Cancel</button>
+          <button type="submit" class="btn btn-primary btn-stacked" value="add" id="network-add">
+            <span class="idle-text">Add network</span>
+            <span class="running-text">Adding…</span>
+          </button>
+        </div>
+      </form>
+    </dialog>
+
     <dialog class="dialog" id="restart-dialog" aria-labelledby="restart-title" aria-describedby="restart-summary">
       <div class="dialog-body">
         <h2 class="dialog-title" id="restart-title">Restarting</h2>
@@ -523,6 +681,40 @@
         </p>
       </div>
     </dialog>
+
+    <!-- The rows of the two lists of networks, for script.js to copy and
+         fill: one the label maker remembers, and one in its reach. The second
+         is a button that picks its network, with its signal and whether it
+         has a password drawn for the eye. script.js names the button with
+         the same in words. -->
+    <template id="remembered-row">
+      <li class="network-row">
+        <div class="network-row-text">
+          <span class="network-name"></span>
+          <span class="network-tag"></span>
+        </div>
+        <button type="button" class="btn btn-ghost btn-compact network-forget">Forget</button>
+      </li>
+    </template>
+    <template id="nearby-row">
+      <li>
+        <button type="button" class="network-pick">
+          <span class="network-row-text">
+            <span class="network-name"></span>
+            <span class="network-tag" hidden>Remembered</span>
+          </span>
+          <svg class="icon icon-lock" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <rect x="5" y="11" width="14" height="9" rx="2" />
+            <path d="M8 11V8a4 4 0 0 1 8 0v3" />
+          </svg>
+          <svg class="icon icon-signal" viewBox="0 0 13 20" aria-hidden="true" focusable="false">
+            <path class="signal-bar" d="M1.5 15v-2" />
+            <path class="signal-bar" d="M6.5 15V9" />
+            <path class="signal-bar" d="M11.5 15V5" />
+          </svg>
+        </button>
+      </li>
+    </template>
 
     <script type="module" src="script.js"></script>
   </body>

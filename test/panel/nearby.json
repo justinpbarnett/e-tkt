@@ -1,0 +1,46 @@
+{
+  "listening": false,
+  "listens": 1,
+  "networks": [
+    {
+      "ssid": "Workshop",
+      "rssi": -48,
+      "secured": true
+    },
+    {
+      "ssid": "E-TKT-51B2",
+      "rssi": -58,
+      "secured": true
+    },
+    {
+      "ssid": "Church Guest",
+      "rssi": -63,
+      "secured": false
+    },
+    {
+      "ssid": "<b>Cafe</b> & \"Friends\"",
+      "rssi": -67,
+      "secured": true
+    },
+    {
+      "ssid": "Full House",
+      "rssi": -70,
+      "secured": false
+    },
+    {
+      "ssid": "The Longest Network Name Allowed",
+      "rssi": -77,
+      "secured": true
+    },
+    {
+      "ssid": "Jugendcafé 🎸",
+      "rssi": -81,
+      "secured": true
+    },
+    {
+      "ssid": "Far Corner",
+      "rssi": -86,
+      "secured": true
+    }
+  ]
+}

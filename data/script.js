@@ -39,6 +39,21 @@ import {
   unprintableCharacters,
 } from "./label.js";
 import { Link, NEVER_STARTED, Sending, TAKEN, UNKNOWN, deliver, lastHeardText, newCommandId } from "./link.js";
+import {
+  NetworkSearch,
+  addingIntro,
+  failureText,
+  forgetChange,
+  modeChange,
+  modeNote,
+  networkToAdd,
+  ownSummary,
+  reachSummary,
+  readNetwork,
+  rememberedRows,
+  rememberedSummary,
+  routerChange,
+} from "./network.js";
 import { plural, quantity, settledCopies, steppedCopies } from "./quantity.js";
 import {
   activity,
@@ -96,6 +111,11 @@ const ESTIMATE_DELAY_MS = 300;
 // scrolls to follow it: clear of the fades that mark more tape past the edge.
 const CARET_ROOM = 56;
 
+// How often api/network is asked while Setup is open, and how often
+// api/network/nearby while the Add dialog waits for a listen to end.
+const NETWORK_POLL_MS = 3000;
+const NEARBY_POLL_MS = 1000;
+
 // What the device will accept: the characters a label may contain, what the
 // ones the wheel does not carry come out as instead, the range the align and
 // force settings are offered in, how many labels one request may ask for,
@@ -150,6 +170,20 @@ const state = {
   problem: null,
   // Set once the settings are saved and the device is restarting.
   restarting: false,
+  // How the device is reached, as api/network last said it, or null until
+  // it has, and for a device that has no such thing to say.
+  network: null,
+  // The Add dialog's search for the networks in reach of the device. Kept
+  // from one opening to the next, so what it heard last time shows while it
+  // listens again.
+  search: new NetworkSearch(),
+  // Set while a change to how the device is reached is on its way to it.
+  networkBusy: false,
+  // The change the confirm dialog is asking about: the path it posts to,
+  // and what it posts.
+  networkChange: null,
+  // What went wrong adding a network, for the Add dialog to say.
+  addProblem: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -199,6 +233,21 @@ const el = {
   rollMeter: $("roll-meter"),
   unloadButton: $("unload-button"),
   reelButton: $("reel-button"),
+  networkCard: $("network-card"),
+  reachHeadline: $("reach-headline"),
+  reachDetail: $("reach-detail"),
+  reachFailure: $("reach-failure"),
+  reachModes: document.querySelectorAll('[name="reach-mode"]'),
+  reachModeNote: $("reach-mode-note"),
+  rememberedCount: $("remembered-count"),
+  rememberedList: $("remembered-list"),
+  rememberedRow: $("remembered-row"),
+  rememberedNote: $("remembered-note"),
+  addNetworkButton: $("add-network-button"),
+  ownName: $("own-name"),
+  ownState: $("own-state"),
+  ownNote: $("own-note"),
+  routerInput: $("router-input"),
   alignValue: $("align-value"),
   forceValue: $("force-value"),
   stepButtons: document.querySelectorAll("[data-setting]"),
@@ -224,6 +273,28 @@ const el = {
   discardSummary: $("discard-summary"),
   saveDialog: $("save-dialog"),
   saveSummary: $("save-summary"),
+  networkConfirmDialog: $("network-confirm-dialog"),
+  networkConfirmTitle: $("network-confirm-title"),
+  networkConfirmSummary: $("network-confirm-summary"),
+  networkConfirmButton: $("network-confirm-button"),
+  networkDialog: $("network-dialog"),
+  networkForm: $("network-form"),
+  networkTitle: $("network-title"),
+  networkIntro: $("network-intro"),
+  networkFull: $("network-full"),
+  listenButton: $("listen-button"),
+  nearbyText: $("nearby-text"),
+  nearbyList: $("nearby-list"),
+  nearbyRow: $("nearby-row"),
+  networkName: $("network-name"),
+  networkNameNote: $("network-name-note"),
+  networkPasswordEntry: $("network-password-entry"),
+  networkPassword: $("network-password"),
+  networkPasswordShow: $("network-password-show"),
+  networkPasswordNote: $("network-password-note"),
+  networkHeld: $("network-held"),
+  networkError: $("network-error"),
+  networkAdd: $("network-add"),
   restartDialog: $("restart-dialog"),
   countdown: $("countdown"),
 };
@@ -239,7 +310,7 @@ function loadTapeFont() {
     display: "swap",
   });
   document.fonts.add(face);
-  face.load().then(drawTape, () => {});
+  return face.load().then(drawTape, () => {});
 }
 
 async function startup() {
@@ -258,10 +329,16 @@ async function startup() {
 
   // One after the other, not side by side: the device serves the page's own
   // files at the same time, and it has only a handful of sockets. The tape
-  // face is last, so it does not take a socket from either of these.
+  // face comes after the two the page cannot work without, so it does not
+  // take a socket from either of them.
   await retrieveCapabilities();
   await poll();
-  loadTapeFont();
+  await loadTapeFont();
+  // Only Setup shows how the device is reached, and asks again as it opens.
+  // Asked here first, so the card is in its place by then and does not come
+  // up under a finger that was after what is below it.
+  await askNetwork();
+  render();
 }
 
 function wireEvents() {
@@ -389,6 +466,67 @@ function wireEvents() {
       settingsCommand();
     }
   });
+
+  for (const radio of el.reachModes) {
+    radio.addEventListener("change", () => reachModeChosen(radio));
+  }
+  el.rememberedList.addEventListener("click", (event) => {
+    const forget = event.target.closest("button");
+    if (forget !== null) {
+      forgetNetwork(forget.dataset.ssid);
+    }
+  });
+  el.addNetworkButton.addEventListener("click", openNetworkDialog);
+  el.routerInput.addEventListener("change", routerChosen);
+  el.networkConfirmDialog.addEventListener("close", () => {
+    if (el.networkConfirmDialog.returnValue === "confirm") {
+      sendNetworkChange();
+    } else {
+      state.networkChange = null;
+    }
+  });
+
+  el.listenButton.addEventListener("click", () => {
+    listenForNetworks();
+    // The button is held while the label maker listens, and a keyboard on it
+    // would be left nowhere. From the title, the list is the next stop.
+    el.networkTitle.focus();
+  });
+  el.nearbyList.addEventListener("click", (event) => {
+    const pick = event.target.closest("button");
+    if (pick !== null) {
+      pickNetwork(pick.dataset.ssid);
+    }
+  });
+  for (const field of [el.networkName, el.networkPassword]) {
+    field.addEventListener("input", networkTyped);
+  }
+  el.networkPasswordShow.addEventListener("change", () => {
+    el.networkPassword.type = el.networkPasswordShow.checked ? "text" : "password";
+  });
+  el.networkForm.addEventListener("keydown", (event) => {
+    // Enter in a form submits it with the first submit button in it, and
+    // here that is Cancel. Enter after a name goes on to its password, and
+    // after that it means add the network. A button keeps its own Enter.
+    if (event.key !== "Enter" || event.target.closest("button") !== null) {
+      return;
+    }
+    event.preventDefault();
+    if (event.target === el.networkName && !el.networkPasswordEntry.hidden) {
+      el.networkPassword.focus();
+    } else {
+      el.networkForm.requestSubmit(el.networkAdd);
+    }
+  });
+  el.networkForm.addEventListener("submit", (event) => {
+    // Add leaves the dialog up until the device has the network, and
+    // addNetwork() closes it then.
+    if (event.submitter === el.networkAdd) {
+      event.preventDefault();
+      addNetwork();
+    }
+  });
+  el.networkDialog.addEventListener("close", closeNetworkDialog);
   // Nothing to go back to while the device restarts. Escape is refused, and
   // since a browser may close a dialog anyway on a second Escape, it is put
   // straight back up if it does.
@@ -402,6 +540,7 @@ function wireEvents() {
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) {
       poll();
+      pollNetwork();
     }
   });
 }
@@ -965,12 +1104,14 @@ function scrollStopsIntoPlace(row, origin) {
   scrollPage(Math.max(0, Math.min(stuckBy(row), origin.getBoundingClientRect().top - SCROLL_ROOM)));
 }
 
-// Brings what a stop tapped here came to into view, once it has come to
-// something. The stops stay in sight wherever the page is scrolled, but
-// what they come to has its own place on the page, which can be off the
-// screen, or under the stops if they are still up. All of it, and clear of
-// the stops, as far as that goes without taking its top off the screen.
-function revealStopOutcome() {
+// Brings what a tap came to into view, once it has come to something: a
+// stop tapped here, or a change on the Network card that could not be made.
+// The stops stay in sight wherever the page is scrolled, and the card is
+// where its change was asked for, but what either comes to has its own
+// place on the page, which can be off the screen, or under the stops if
+// they are still up. All of it, and clear of the stops, as far as that goes
+// without taking its top off the screen.
+function revealOutcome() {
   const view = state.view === "setup" ? el.setupView : el.printView;
   const box =
     view.querySelector("[data-problem]:not([hidden])") ?? view.querySelector("[data-stop-notice]:not([hidden])");
@@ -1093,6 +1234,7 @@ function openSetup() {
   render();
   window.scrollTo(0, 0);
   el.setupView.focus({ preventScroll: true });
+  pollNetwork();
 }
 
 function leaveSetup() {
@@ -1176,6 +1318,295 @@ function renderReelDialog() {
   el.reelMore.disabled = !typed.moreAvailable;
   setText(el.reelRange, rollRange(device));
   setTone(el.reelRange, typed.lengthMm === null ? "warning" : null);
+}
+
+//-------------//
+//   network   //
+//-------------//
+
+let networkTimer = null;
+let networkAsking = false;
+// When api/network was last asked, at a time from performance.now().
+let networkAskedAt = -Infinity;
+// Set by a device that has no api/network to ask, or one whose answer this
+// page cannot read. Neither is asked again.
+let networkAbsent = false;
+// Counts the changes as each is sent and as each is answered, so that an
+// answer to api/network asked for before one is not taken for what came of
+// it.
+let networkChanges = 0;
+
+// Whether Setup is up to show what the device says of its network.
+function networkWanted() {
+  return state.view === "setup" && !document.hidden && !state.restarting && !networkAbsent;
+}
+
+// Whether the Add dialog is waiting to hear what a listen came to.
+function listenAwaited() {
+  return el.networkDialog.open && state.search.waiting;
+}
+
+// Asks how the device is reached for as long as Setup shows it, and what it
+// has heard while the Add dialog waits for a listen to end. One request
+// after the other, as at startup: the status poll goes on beside these, and
+// the device has only a handful of sockets.
+async function pollNetwork() {
+  clearTimeout(networkTimer);
+  if (networkAsking || !networkWanted()) {
+    return;
+  }
+  networkAsking = true;
+  try {
+    if (listenAwaited()) {
+      await askNearby();
+    }
+    if (performance.now() - networkAskedAt >= NETWORK_POLL_MS) {
+      await askNetwork();
+    }
+  } finally {
+    networkAsking = false;
+    render();
+    if (networkWanted()) {
+      networkTimer = setTimeout(pollNetwork, listenAwaited() ? NEARBY_POLL_MS : NETWORK_POLL_MS);
+    }
+  }
+}
+
+// Asks the device how it is reached. An answer that does not come, or comes
+// cut short, leaves the card as it was until the next one. A device that
+// has no such thing to ask, or answers in a way this page cannot read, gets
+// no card.
+async function askNetwork() {
+  networkAskedAt = performance.now();
+  const changes = networkChanges;
+  let network = null;
+  try {
+    const response = await fetchFromDevice("api/network", { timeout: 5000 });
+    if (response.ok) {
+      network = readNetwork(await response.json());
+    } else if (response.status !== 404) {
+      return;
+    }
+  } catch (error) {
+    // The status poll is what says the device is out of reach.
+    return;
+  }
+  // What a change made since came to is newer than this.
+  if (changes === networkChanges) {
+    state.network = network;
+    networkAbsent = network === null;
+  }
+}
+
+// Asks the device what it has heard, for the search to take.
+async function askNearby() {
+  try {
+    const response = await fetchFromDevice("api/network/nearby", { timeout: 5000 });
+    if (response.ok) {
+      state.search.heard(await response.json());
+    }
+  } catch (error) {
+    // Asked again in a moment, for as long as the dialog waits.
+  }
+}
+
+// Asks the device to listen for the networks in its reach. What it hears is
+// in api/network/nearby once it has listened, and pollNetwork() asks for
+// that.
+async function listenForNetworks() {
+  state.search.asked(performance.now());
+  render();
+  try {
+    const response = await postJson("api/network/listen", {}, { timeout: 5000 });
+    if (response.ok) {
+      state.search.taken(await readJson(response));
+    } else {
+      state.search.lost();
+    }
+  } catch (error) {
+    state.search.lost();
+  }
+  render();
+  pollNetwork();
+}
+
+// Sends the device one change to how it is reached, and takes what it says
+// its network comes to after it. Returns what went wrong, in words for the
+// page, or null. Nothing of it is logged: what is sent may hold a network's
+// password.
+async function changeNetwork(path, body) {
+  state.networkBusy = true;
+  networkChanges += 1;
+  render();
+  try {
+    const response = await postJson(path, body);
+    const reply = await readJson(response);
+    if (!response.ok) {
+      const reason = reply !== null && typeof reply.error === "string" ? reply.error : null;
+      return reason ?? "The label maker refused that, and did not say why (HTTP " + response.status + ").";
+    }
+    const network = readNetwork(reply);
+    if (network !== null) {
+      state.network = network;
+      networkAskedAt = performance.now();
+    }
+    return null;
+  } catch (error) {
+    return "Couldn’t reach the label maker. Check that it’s switched on, then try again.";
+  } finally {
+    state.networkBusy = false;
+    networkChanges += 1;
+    render();
+  }
+}
+
+// A way of reaching the label maker was picked. The radios go straight back
+// to the one the device has, and move when it says the change is made.
+function reachModeChosen(radio) {
+  const network = state.network;
+  if (network !== null && radio.value !== network.mode) {
+    confirmNetworkChange(modeChange(network, radio.value), "api/network/mode", { mode: radio.value });
+  }
+  render();
+}
+
+// The same for the tick that has its own network offer a way to the
+// internet.
+function routerChosen() {
+  const network = state.network;
+  const offered = el.routerInput.checked;
+  if (network !== null && offered !== network.router_offered) {
+    confirmNetworkChange(routerChange(network), "api/network/router", { offered: offered });
+  }
+  render();
+}
+
+function forgetNetwork(ssid) {
+  if (state.network !== null) {
+    confirmNetworkChange(forgetChange(state.network, ssid), "api/network/forget", { ssid: ssid });
+  }
+}
+
+// Makes a change on the Network card: once it is confirmed, when it comes
+// with the words to ask by, and at once when it does not.
+function confirmNetworkChange(words, path, body) {
+  if (state.networkBusy) {
+    return;
+  }
+  state.networkChange = { path: path, body: body };
+  if (words === null) {
+    sendNetworkChange();
+    return;
+  }
+  setText(el.networkConfirmTitle, words.title);
+  setText(el.networkConfirmSummary, words.summary);
+  setText(el.networkConfirmButton, words.confirm);
+  openDialog(el.networkConfirmDialog);
+}
+
+// Sends the change that was asked for, and says so on the page if it could
+// not be made. The card's controls are held while it is on its way, and one
+// that is held loses the keyboard: it is given back to the one the change
+// was made with, or if that was the button of a network now forgotten, to
+// the button under the list.
+async function sendNetworkChange() {
+  const change = state.networkChange;
+  state.networkChange = null;
+  if (change === null) {
+    return;
+  }
+  state.problem = null;
+  const asker = document.activeElement;
+  // Asked now: a network's button is off the card once it is forgotten.
+  const onCard = el.networkCard.contains(asker);
+  const problem = await changeNetwork(change.path, change.body);
+  if (problem !== null) {
+    showProblem(problem);
+    render();
+  }
+  if (onCard && document.activeElement === document.body) {
+    (asker.isConnected ? asker : el.addNetworkButton).focus({ preventScroll: true });
+  }
+  if (problem !== null) {
+    revealOutcome();
+  }
+}
+
+function openNetworkDialog() {
+  if (state.network === null) {
+    return;
+  }
+  state.addProblem = null;
+  openDialog(el.networkDialog);
+  render();
+  // Not left on the first thing in the dialog that can take it, where a
+  // screen reader would start part of the way down.
+  el.networkTitle.focus();
+  listenForNetworks();
+}
+
+// A password is not left in the page once the dialog is done with it, and
+// the next network starts from nothing.
+function closeNetworkDialog() {
+  el.networkName.value = "";
+  el.networkPassword.value = "";
+  el.networkPassword.type = "password";
+  el.networkPasswordShow.checked = false;
+  state.addProblem = null;
+}
+
+// The network in the Add dialog's fields, checked against what the device
+// would take.
+function typedNetwork() {
+  return networkToAdd({ ssid: el.networkName.value, password: el.networkPassword.value }, state.network, state.search);
+}
+
+// What went wrong with the network as it was no longer applies to it.
+function networkTyped() {
+  state.addProblem = null;
+  render();
+}
+
+// A network in reach was picked: its name goes in the field, and the
+// keyboard goes on to what the network needs next.
+function pickNetwork(ssid) {
+  el.networkName.value = ssid;
+  el.networkPassword.value = "";
+  networkTyped();
+  if (!el.networkPasswordEntry.hidden) {
+    el.networkPassword.focus();
+  } else if (!el.networkAdd.disabled) {
+    el.networkAdd.focus();
+  }
+}
+
+// Has the device remember the network in the dialog, and closes the dialog
+// once it does. The dialog says what went wrong if it does not, or the page
+// does, if the dialog was closed in the meantime.
+async function addNetwork() {
+  if (state.network === null || state.networkBusy || runningCommand() !== null) {
+    return;
+  }
+  const adding = typedNetwork();
+  if (adding.body === null) {
+    return;
+  }
+  state.addProblem = null;
+  const asker = document.activeElement;
+  const problem = await changeNetwork("api/network/remember", adding.body);
+  if (problem === null) {
+    el.networkDialog.close();
+  } else if (el.networkDialog.open) {
+    state.addProblem = problem;
+  } else {
+    showProblem(problem);
+  }
+  render();
+  // Add is held while the network is on its way, and a keyboard on it is
+  // left nowhere. It gets Add back to try again with.
+  if (el.networkDialog.open && asker === el.networkAdd && document.activeElement !== asker) {
+    el.networkAdd.focus();
+  }
 }
 
 //-------------//
@@ -1285,7 +1716,7 @@ function render() {
   // it could not be stopped, when the page says so.
   if (state.revealStop && (!busy || state.problem !== null)) {
     state.revealStop = false;
-    revealStopOutcome();
+    revealOutcome();
   }
   markStuck();
 }
@@ -1462,6 +1893,10 @@ function renderSetupView(running, offer, focused) {
   for (const button of [el.unloadButton, el.reelButton, el.testAlignButton, el.testFullButton]) {
     showRunning(button, command === button.dataset.command);
   }
+  // How the device is reached is left alone while it runs, and while one
+  // change to it is still on its way.
+  renderNetworkCard(busy || offline || state.restarting || state.networkBusy);
+  renderNetworkDialog(busy);
   // Saving restarts the label maker, which is not worth doing for the
   // numbers it already has.
   el.saveButton.disabled =
@@ -1487,6 +1922,115 @@ function renderSetupView(running, offer, focused) {
 // has both of its labels, and style.css shows the one this picks.
 function showRunning(button, running) {
   button.toggleAttribute("data-running", running);
+}
+
+// The Network card, from what api/network last said. held is set while
+// nothing on it is to be changed.
+function renderNetworkCard(held) {
+  const network = state.network;
+  el.networkCard.hidden = network === null;
+  if (network === null) {
+    return;
+  }
+  const reach = reachSummary(network);
+  setText(el.reachHeadline, reach.headline);
+  setParts(el.reachDetail, reach.detail);
+  const failure = failureText(network);
+  el.reachFailure.hidden = failure === null;
+  setText(el.reachFailure, failure ?? "");
+
+  // Where the device has it, whatever was last tapped: a change shows here
+  // once the device says it is made.
+  for (const radio of el.reachModes) {
+    radio.checked = radio.value === network.mode;
+    radio.disabled = held;
+  }
+  setText(el.reachModeNote, modeNote(network));
+
+  const remembered = rememberedSummary(network);
+  setText(el.rememberedCount, remembered.count);
+  el.rememberedNote.hidden = remembered.note === null;
+  setText(el.rememberedNote, remembered.note ?? "");
+  // Before the list is drawn, which hands the keyboard to this button when
+  // the network it was on is gone.
+  el.addNetworkButton.disabled = held;
+  drawRows(el.rememberedList, el.rememberedRow, rememberedRows(network), fillRemembered, el.addNetworkButton);
+  for (const forget of el.rememberedList.querySelectorAll("button")) {
+    forget.disabled = held;
+  }
+
+  const own = ownSummary(network);
+  setText(el.ownName, network.own.name);
+  setText(el.ownState, own.state);
+  setText(el.ownNote, own.note);
+  el.routerInput.checked = network.router_offered;
+  el.routerInput.disabled = held;
+}
+
+function fillRemembered(item, row) {
+  item.querySelector(".network-name").textContent = row.ssid;
+  const tag = item.querySelector(".network-tag");
+  tag.hidden = row.tag === null;
+  tag.textContent = row.tag ?? "";
+  const forget = item.querySelector("button");
+  forget.dataset.ssid = row.ssid;
+  forget.setAttribute("aria-label", "Forget " + row.ssid);
+}
+
+// The Add dialog, while it is up: the networks in reach, and what is typed
+// in held against what the device would take. The fields are the typist's,
+// and nothing here writes to them.
+function renderNetworkDialog(busy) {
+  const network = state.network;
+  if (network === null || !el.networkDialog.open) {
+    return;
+  }
+  const now = performance.now();
+  setText(el.networkIntro, addingIntro(network));
+  setText(el.nearbyText, state.search.text(now) ?? "");
+  el.listenButton.disabled = busy || !state.search.askable(now);
+  drawRows(el.nearbyList, el.nearbyRow, state.search.rows(network), fillNearby, el.networkTitle);
+  for (const pick of el.nearbyList.querySelectorAll("button")) {
+    if (pick.dataset.ssid === el.networkName.value) {
+      pick.setAttribute("aria-current", "true");
+    } else {
+      pick.removeAttribute("aria-current");
+    }
+  }
+
+  const adding = typedNetwork();
+  el.networkFull.hidden = adding.full === null;
+  setText(el.networkFull, adding.full ?? "");
+  showCheck(el.networkName, el.networkNameNote, adding.name);
+  // A network heard without a password is not asked for one.
+  el.networkPasswordEntry.hidden = adding.password.wanted === "no";
+  showCheck(el.networkPassword, el.networkPasswordNote, adding.password);
+  el.networkHeld.hidden = !busy;
+  el.networkError.hidden = state.addProblem === null;
+  setText(el.networkError, state.addProblem ?? "");
+  el.networkAdd.disabled = adding.body === null || state.networkBusy || busy;
+  showRunning(el.networkAdd, state.networkBusy);
+}
+
+// The eye gets a lock and the bars of the signal, drawn by style.css from
+// what is set here. The button is named with the same in words.
+function fillNearby(item, row) {
+  const pick = item.querySelector("button");
+  pick.dataset.ssid = row.ssid;
+  pick.setAttribute("aria-label", row.ssid + ". " + row.facts);
+  item.querySelector(".network-name").textContent = row.ssid;
+  item.querySelector(".network-tag").hidden = !row.remembered;
+  item.querySelector(".icon-lock").toggleAttribute("hidden", !row.secured);
+  item.querySelector(".icon-signal").dataset.signal = row.signal;
+}
+
+// What a check of a field in the Add dialog came to, under the field: a
+// note, as a warning when what is typed is a mistake.
+function showCheck(field, note, check) {
+  field.setAttribute("aria-invalid", check.invalid ? "true" : "false");
+  note.hidden = check.note === null;
+  setText(note, check.note ?? "");
+  setTone(note, check.invalid ? "warning" : null);
 }
 
 // What the last stop left behind, in whichever view is open, once the
@@ -1551,6 +2095,66 @@ function setTone(element, tone) {
     delete element.dataset.tone;
   } else {
     element.dataset.tone = tone;
+  }
+}
+
+// What was last drawn in each element that holds more than text.
+const drawn = new Map();
+
+// Whether what is to be drawn in an element differs from what was drawn in
+// it last, which it is noted as from here on. As with setText(), only what
+// has changed is written: what is built again under a keyboard, or under a
+// finger on its way down, is lost to it.
+function outdated(element, content) {
+  const now = JSON.stringify(content);
+  if (drawn.get(element) === now) {
+    return false;
+  }
+  drawn.set(element, now);
+  return true;
+}
+
+// Draws a sentence given in parts, each one text or a link to make of an
+// address.
+function setParts(element, parts) {
+  if (!outdated(element, parts)) {
+    return;
+  }
+  element.replaceChildren(
+    ...parts.map((part) => {
+      if (typeof part === "string") {
+        return part;
+      }
+      const link = document.createElement("a");
+      link.href = part.link;
+      link.textContent = part.link;
+      // The page stays as it is, with what is typed into it.
+      link.target = "_blank";
+      link.rel = "noopener";
+      return link;
+    }),
+  );
+}
+
+// Draws a list of networks: a copy of the template for each row, filled in
+// by fill(). A keyboard that was in the list goes back to the button of the
+// network it was on, or to fallback when that network is gone.
+function drawRows(list, template, rows, fill, fallback) {
+  if (!outdated(list, rows)) {
+    return;
+  }
+  const focused = document.activeElement;
+  const ssid = list.contains(focused) ? focused.dataset.ssid : null;
+  list.replaceChildren(
+    ...rows.map((row) => {
+      const item = template.content.firstElementChild.cloneNode(true);
+      fill(item, row);
+      return item;
+    }),
+  );
+  if (ssid !== null) {
+    const buttons = [...list.querySelectorAll("button")];
+    (buttons.find((button) => button.dataset.ssid === ssid) ?? fallback).focus({ preventScroll: true });
   }
 }
 
