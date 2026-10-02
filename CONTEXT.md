@@ -64,6 +64,17 @@ The job runner picks it as the job begins: the pair being trialled for the two t
 Before there was one, each press looked its own up, and the full test cut at the saved align after it stamped its characters at the align it was testing.
 `Calibration`, in `Calibration.h`.
 
+**Button** - the one tact switch on the machine, which works it with no phone and no network to reach it over.
+While a job runs, a press stops it the moment the button goes down, as the panel's stop does.
+While nothing runs, a press prints the **last run** again, as the button comes up.
+Held for `BUTTON_HOLD_MS` while nothing runs, it unloads the roll, and the next press loads one in place of printing.
+So a roll is changed with a hold and two presses: unload, load, and the run again.
+Held down as the machine starts, for all of `BUTTON_BOOT_HOLD_MS`, it does none of that: the machine forgets every **remembered network** and the password of its **own network**, and restarts.
+A reading that has not held for `BUTTON_DEBOUNCE_MS` is no press, because the pin has read low with nobody near it.
+A press that comes down before the machine has sat idle for `BUTTON_ARMING_MS` starts nothing, so a finger on its way to stop a job that has just ended does not print the run again.
+It used to be the wifi reset button and nothing else, and the pin is still named `WIFI_RESET_PIN`.
+`Button`, read every `BUTTON_POLL_MS` from a task of its own, since a press is to stop a job while the command loop is busy running it.
+
 ## What a label is
 
 **Label** - the text a user asks for.
@@ -85,14 +96,25 @@ Reading the maximum as a typed length is what first made it 247 and made the dev
 A second module named `Characters` used to sit a letter away from it, holding the notes and the OLED glyphs.
 The notes belong to the slots, so they moved here, and the glyphs are the screen's business, so they moved into `OledDisplay`.
 
-**Screen** - one of the device's fixed OLED banners: connecting, wifi setup, wifi reset, finished, and so on.
+**Screen** - one of the device's fixed OLED banners: wifi reset, cutting, finished, new roll, and so on.
 One table in `OledDisplay.cpp` says what each one draws, rather than one method each.
+None of them is about joining a network: the machine starts and works without one, so how it is reached is a part of the **idle screen**.
 `Screen`.
 
 **Display** - what the machine shows on its own screen, told in terms of the job rather than of pixels: a screen, the idle screen, a label's progress, a saved calibration.
 `Display` is an interface with two adapters.
 `OledDisplay` draws on the 128x64 OLED, and `FakeDisplay` in `test/fakes` records what the job runner asked for, and when.
 A display draws and returns: how long a screen stays up is for its caller to say, and the screen is started once, at boot.
+
+**Idle screen** - what the machine shows while it waits for a job: ready, or stopped after a job that was stopped, and how the machine is reached.
+That last part is the connection info: a network's name, a line under it, and a QR code when there is something to scan.
+On a network, it is the network, the machine's address there, and a code that opens the panel.
+With its **own network** open, it is that network's name, its password, and a code a phone's camera joins the network from.
+Once a phone has joined, it is the panel's address there and a code that opens it, for `WIFI_ADDRESS_SHOWN_MS`, and then the code to join again, which is what the next phone needs.
+The **link** writes all three and knows what they mean, and the screen only lays them out.
+The link changes while the machine prints, so the link's task only says what the screen is to show, and the command loop draws it once the machine is idle.
+While the **roll is out** the machine shows the new roll screen in its place.
+`ConnectionInfo` in `Display.h`, `LinkSupervisor::publish()`, and `ETKT::showIdle()`.
 
 **Progress** - how far through a label the machine is, 0 to 99.
 It stops at 99 rather than 100 because feeding the tail, and the cut on a label that is cut, still have to happen after the last character is pressed.
@@ -128,7 +150,16 @@ The roll's count is left as it was.
 The tape that comes back is still on the roll, but the machine cannot tell how much came back, because once the end is out of the cog the motor turns without moving it.
 So the roll reads a little shorter than it is rather than longer, and a stop partway cannot say whether the tape is still in the cog, which the panel asks the user to check.
 The panel offers it in Setup beside loading a new roll, not beside feed and cut: an unload by mistake during a shift means loading the roll again, which starts its count again as if it were new.
+A hold of the **button** asks for it too.
 `ETKT::unloadCommandInternal()` and `Feeder::backOut()`.
+
+**Roll out** - what an unload leaves: the tape is backed away from the cutter, and no roll has been threaded through to it since.
+The roll is out from the first step back, however far a stop lets the unload get, because nothing can say whether the end is still in the cog.
+Only a load that reaches the cutter puts it in again, so a load that was stopped leaves it out.
+It is kept in EEPROM, so a machine switched off between the two still knows.
+While the roll is out the machine's screen says new roll where the **idle screen** would be, and a press of the button loads a roll in place of printing.
+Only the machine's screen and its button know: the panel does not say it, and a label sent from the panel is not refused for it.
+`RollState::out`, `Roll::takeOut()` and `Roll::putIn()`.
 
 **Lead** - the blank feed ahead of a label's first character, `LEAD_FEEDS`.
 It leaves a margin ahead of the text for the cut at the end of the label before.
@@ -179,6 +210,16 @@ It builds and runs on a host against fakes, so `test/test_etkt` checks those rul
 **Busy** - a command is running.
 The machine runs one at a time, and a second request is refused with a 409: the request was fine, the machine was not.
 
+**Command id** - what the panel sends a command or a stop under, as `?id=`, so that one whose answer was lost on the way back can be sent again and not run twice.
+The device keeps what it answered under its newest ids, and a request that comes again under one of them is told what it was told the first time, with nothing more done.
+Of a command it keeps only the answer that took it: one that was refused ran nothing, so sent again it is judged again, since the machine may be free by then.
+Of a stop it keeps every answer, a refusal too, because a stop sent again must not reach a command that began after it.
+`/api/status` names the command the machine last took as `last_command_id`, so a poll that gets through says the command arrived when its own answer does not.
+The answers are kept in memory, so a restart forgets them, and a command sent again across one runs again.
+An id is at most 36 bytes, and a request under none is taken as it always was.
+How many are kept is `remembered_ids` in `/api/capabilities`.
+`Api::once()`, and `data/link.js` for the panel's half.
+
 **Run** - one `tag` request: the same label pressed `copies` times, one after another.
 Whether a command prints one is a **command fact**, and `tag` is the only command it holds for.
 `copies` is 1 to `MAX_COPIES`, and a request without it prints one.
@@ -189,6 +230,13 @@ The panel's "Cut after each label" box is `cut`, and the browser keeps the choic
 
 **Quantity** - the panel's way of asking for a run: one, multiple (2 up to `MAX_COPIES`), or max.
 Max is the labels that fit, capped at `MAX_COPIES`, worked out in the panel and sent as a number; the device has no idea of the end of the roll.
+
+**Last run** - the last run the machine started, finished or not: the label, how many of it, and whether each is cut.
+It is what a press of the **button** prints again, so a run can be repeated with no phone and no network to ask it over.
+It is kept in EEPROM, so it is still there after a reboot, and written only when it differs from the one kept, so printing the same run over and over writes nothing.
+The whole run comes again, not what a stop left of it, and the tape left is not looked at, as it is not for a run sent any other way.
+A machine that has never started a run has none, and a press then does nothing.
+`LastRun`, and `ETKT::repeat()`.
 
 **Estimate** - how long a run takes, worked out before it is sent: `POST /api/tag/estimate`, with the body the `tag` would be sent with.
 It answers with how long one label takes once the run is under way, `label_ms`, and how long the whole run takes, `run_ms`.
@@ -209,9 +257,12 @@ The motors halt within a step and a tune within a note.
 The press is the exception: once it is on its way down it finishes the stroke and comes back up, because a servo stopped partway is a press held against the wheel.
 Whatever was being pressed is left on the tape as far as it got, uncut.
 A command can be stopped when its row says it is **stoppable**, which is anything but a save, since a save moves nothing and ends in a reboot.
-The panel offers it, as the red stop button, whenever a stoppable command runs.
+The panel offers it, as the red stop button, whenever a stoppable command runs, and a press of the **button** on the machine asks for it too.
 It is not a command: it does not wait its turn, because it is about the command that is running.
 A stop with nothing running is not an error, since the job may have just ended.
+A stop tapped while its command is still on its way to the machine names that command, as `?for=` and the **command id** it was sent under.
+The machine then stops that command if it is the one running, and leaves a command that is somebody else's to run on.
+A command that has not arrived is refused when it does, with a 409, because the operator has already said stop, and the stop is answered `not_started`.
 `/api/status` reports one that has been asked for and not yet obeyed as `stop`, so a panel opened partway through a stop says so too.
 The operator is not the only cause: a job that finds the wheel **lost** stops itself the same way.
 The first cause stands, so pressing stop while a lost wheel parks does not hide why the job ended.
@@ -234,11 +285,74 @@ The machine still skips what is left of the celebration, because a stop was aske
 The OLED says stopped where it would say ready.
 `StoppedCommand`.
 
+## How the machine is reached
+
+**Link** - how the panel gets to the machine: over a network the machine has joined, or over the machine's **own network**.
+The machine does not wait for either.
+It starts, takes a job from its **button**, and answers the panel as soon as there is a way in, and the link is kept up beside it from a task of its own.
+Joining, it tries the networks it remembers in turn, for ever.
+A network that is there and turns the machine away gets `WIFI_TRIES_PER_NETWORK` tries before the next one gets its turn, and one that is not there gets one.
+Every try is started from here, because the core's own reconnect gives up on most of the reasons a weak signal produces.
+After `WIFI_OWN_AFTER_MS` with no network joined, the machine's own network opens beside the tries, so there is a way in whatever the Wi-Fi is doing.
+The tries are then spaced out, and more so with a phone on the own network, because every try takes the radio away from that phone.
+Once a network is joined and nobody is on the own network, it closes again, `WIFI_OWN_LINGER_MS` later.
+Before there was a link the machine did nothing until it had joined a network, and opened a setup portal when it could not.
+`LinkSupervisor`, whose `step()` runs every `WIFI_STEP_MS`, and whose timings are in `Configuration.h`.
+
+**Network mode** - which of the two the machine is set to: join, or own.
+In join mode it joins a **remembered network** and falls back on its own.
+In own mode it joins nothing and its own network is always open, which is for a room whose Wi-Fi cannot be relied on.
+The panel changes it under Setup, and it is kept in EEPROM.
+`NetworkMode`, kept by `NetworkSettings`.
+
+**Remembered network** - a network the machine has been given the name and the password of.
+It keeps up to `MAX_REMEMBERED`, in the order they are tried, and a network added again takes the place of the one of its name, at the front.
+A name is 1 to 32 bytes of text, and a password is nothing, for an open network, or 8 to 63 bytes, which is what WPA2 takes.
+A network sent again exactly as it is kept is still followed with a try at once, which is the panel asking for one.
+The first start of this firmware takes over the one network the firmware before it kept in the radio itself.
+A password goes from here to the radio and nowhere else: none is logged, and no reply of the **Api** carries one.
+`NetworkSettings`, in EEPROM.
+
+**Own network** - the Wi-Fi network the machine runs itself, with the whole panel on it at `WIFI_OWN_ADDRESS`.
+Its name is `E-TKT-` and the **machine id**, so three machines on one table are three networks.
+Its password is ten letters and digits the machine makes once and keeps, with none of the ones that pass for one another on a small screen.
+It is shown on the **idle screen** and in the code a phone's camera joins from, and it is not served by the Api: whoever can read the screen is standing at the machine.
+A network with no password is never opened, and holding the button through a start makes a new one.
+It takes `WIFI_OWN_CLIENTS` phones at most.
+While the machine joins nothing it sits on the quietest of channels 1, 6 and 11, and beside a joined network it has to sit on that network's channel, since there is one radio.
+There is no captive portal: a phone joins, then opens the address, and both are a code on the screen.
+
+**Router option** - whether the own network tells a phone that it is the way to the internet.
+A phone treats it as an ordinary network when it does, and sends everything there, which goes nowhere.
+When it does not, a phone can keep its mobile data for everything else while it reaches the panel over the machine's network.
+How each phone takes it is for the phone to decide, so it is a setting to try and not a promise.
+Changing it closes the own network and opens it again, since a phone reads it as it joins.
+`NetworkSettings::routerOffered()`, and `offerRouter` in `Radio::openAccessPoint()`.
+
+**Machine id** - what tells one machine from another: the end of its radio's MAC address, as four characters such as `9C4F`.
+The own network is named after it, and so is the name the machine answers to on a network, `e-tkt-9c4f.local`, which was `e-tkt.local` on every machine before.
+`Esp32Radio::machineId()`, `NetworkSettings::ownName()` and `hostName()`.
+
+**Networks in reach** - the networks the radio heard the last time the panel asked it to listen, the strongest first and each name once.
+The panel's Add network dialog asks for a listen as it opens.
+A listen takes the radio off its channel for a few seconds, so it is done only when asked for, and it waits for a try at a network to end.
+At most `MAX_NEARBY` are kept, and a network that hides its name, or whose name is not text, is left out.
+A name comes off the air from whoever named the network, so the panel sets each one as text and never as markup, and the log says only how many were heard.
+`LinkSupervisor::listen()` and `nearby()`.
+
+**Join failure** - why the last try at a network failed, as far as the radio can tell: not found, refused, no address, or something else.
+Refused is a network that was there and did not let the machine on, and a wrong password and a signal too weak to finish the handshake look the same from the machine.
+No address is a network that took the machine on and then gave it none within `WIFI_DHCP_MS`, as a network with no addresses left to give does.
+`/api/network` reports it with the network it was for and the number the radio gave, until the machine is on a network again or the remembered networks change.
+`JoinFailure`.
+
 ## Where the parts meet
 
-**Driver seam** - `Drivers.h` declares the servo and stepper interfaces the modules take, and `Display.h` the screen's.
-So the job runner and every module it drives build against recording fakes on a host, and against ESP32Servo, AccelStepper and the OLED on the board.
-Adapters: `ArduinoDrivers.h` and `OledDisplay` for the device, `test/fakes` for the tests and the **simulator**.
+**Driver seam** - `Drivers.h` declares the servo and stepper interfaces the modules take, `Display.h` the screen's, and `Radio.h` the Wi-Fi radio's.
+So the job runner, the **link** and every module they drive build against recording fakes on a host, and against ESP32Servo, AccelStepper, the OLED and the chip's radio on the board.
+Adapters: `ArduinoDrivers.h`, `OledDisplay` and `Esp32Radio` for the device, `test/fakes` for the tests and the **simulator**.
+`FakeRadio` has an air of its own, which a test scripts: networks that are there, that turn the machine away, that give no address, and how many phones are on the machine's network.
+So `test/test_link` walks the link through an evening of bad Wi-Fi in milliseconds, and only `Esp32Radio` waits for a real radio.
 `test/stubs` stands in for the rest of what the board supplies: the Arduino core, Preferences and the sounder.
 
 **Api** - `Api.cpp`, everything the device answers under `/api/`.
@@ -247,6 +361,10 @@ It takes a `Request` and gives back a `Reply`, so the host tests check every rep
 The webserver in `Network.cpp` is an adapter in front of it.
 It turns each HTTP request under `/api/` into a `Request`, sends the `Reply` back as it comes, and has no rules of its own.
 A reply too large for its document is a 500 and not a reply with fields missing, and every 500 also goes in the **log**.
+The routes under `/api/network` are how the panel reads and changes the **link**.
+`GET /api/network` says how the machine is reached, and `GET /api/network/nearby` the **networks in reach**, after a `POST` to `listen`.
+`POST` to `mode`, `remember`, `forget` and `router` changes the **network mode**, a **remembered network** and the **router option**.
+A request to remember a network carries its password in, and nothing carries one out.
 
 **Per-machine calibration** - `Machine.h`.
 The seven numbers that differ between two physically built E-TKTs: the two press angles, the press bite, the hall sensor's polarity and threshold, the align offset, and the feeder direction.
@@ -266,6 +384,11 @@ It used to be a Python copy of the firmware, which drifted until every button re
 The fake steppers step on AccelStepper's schedule against the stubs' clock, and every millisecond of that clock waits for the wall clock, sped up `--speed` times.
 So a label takes as long in the simulator as on the machine, wheel and tape and all, or a tenth of that at `--speed 10`.
 A host that cannot keep up runs the machine slower than asked, and never bends its time.
+`--lose PERCENT` makes the link a weak one: that many in a hundred requests to the Api get no answer, half of them lost on the way in and half answered with the answer lost on the way back, which is the half that used to run a command twice.
+The **link** runs in it as well, against the `FakeRadio`, with an air that `main.cpp` fills: a network to join, one that turns the machine away twice, one that gives no address, one with markup for a name.
+So the panel's Network card is worked against the firmware's own replies.
+What it cannot show is what only a radio does: a listen takes no time there, and nobody joins the machine's own network.
+It has no **button** either.
 
 ## Reading the machine
 
@@ -274,6 +397,12 @@ A host that cannot keep up runs the machine slower than asked, and never bends i
 **Panel** - the web UI in `data/`, served from SPIFFS.
 It asks the device what it will accept at startup (`/api/capabilities`) instead of deciding for itself.
 It polls `/api/status` every second, and every five while the page is hidden, so the tape left and a label sent from another phone show without a reload.
+It is built for a **link** that loses what is sent over it: a basement, or a hall with a thousand phones on one Wi-Fi.
+A poll that goes unanswered changes nothing on the page, and after three in a row the page says it cannot reach the machine and how long ago it last heard from it, and holds the buttons that need the machine.
+A command or a stop goes out under a **command id** and is sent again until it is answered, and a status that names the command ends the wait as well.
+After `GIVE_UP_AFTER_MS` the page stops trying and says so, because someone is standing at the machine waiting.
+Setup has a Network card, which says how the machine is reached and changes it: the **network mode**, the **remembered networks**, and the **own network** with its **router option**.
+A change there that can cost a phone its way to the machine asks first, and the card moves only when the machine says the change is made.
 `script.js` reads the page and draws it.
-What the page says and decides is worked out in the ES modules beside it, which never touch the page, so `node --test "test/panel/*.test.js"` covers them.
-`test/panel/capabilities.json` is the `/api/capabilities` reply those tests run against, and the simulator's tests hold it to the firmware's.
+What the page says and decides is worked out in the ES modules beside it, which never touch the page, so `node --test "test/panel/*.test.js"` covers them: `link.js` for the sending, `network.js` for the Network card.
+`test/panel/capabilities.json` is the `/api/capabilities` reply those tests run against, with `network.json` and `nearby.json` beside it for the Network card, and the simulator's tests hold all three to the firmware's.

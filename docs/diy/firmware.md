@@ -25,4 +25,8 @@ parent: 🛠️ do it yourself!
 
 *\* don't forget to hold the \*FN button to enter DFU mode*
 
+Steps 3 and 4 go together, from the same copy of the repository.
+The app is the only place the device is given a network, so an older app in front of this firmware leaves no way to do that, and a newer app in front of an older firmware asks for what is not there.
+Networks are not part of either upload: they are given to the device afterwards, in the app, as the 📶 connection page says.
+
 

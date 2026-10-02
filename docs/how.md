@@ -11,13 +11,16 @@ description: "E-TKT"
 
 <img src="https://user-images.githubusercontent.com/15098003/196457261-b6343e3f-528d-4cbe-a548-1b4f4463e4a1.png">
 
-An *ESP32* commands the label production and also serves an on demand web application (local) to any device connected in a local network.
+An *ESP32* commands the label production and also serves an on demand web application (local) to any device connected in a local network, or in the network the machine runs itself.
 
 ***Neither internet is needed, nor installing any app.***
 
 ### Configuration
 
-The whole process of connecting the E-TKT machine to a local network and then launching the local app is aided by a small ***OLED display*** that provides instructions and a dynamically generated *QR code* with the *URL*, according to the IP attributed by the WLAN.
+The whole process of reaching the E-TKT machine and then launching the local app is aided by a small ***OLED display***.
+With no local network to join, it shows the machine's own network, its password, and a dynamically generated *QR code* that joins a phone to it, and then one with the *URL* of the app.
+Once the machine has been given a local network in the app, the *QR code* holds the *URL* according to the IP attributed by the WLAN.
+A button on the machine stops a job, prints the last run of labels again and changes the roll, so the machine also works with no network at all.
 
 ### Commands
 

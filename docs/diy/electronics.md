@@ -72,10 +72,11 @@ parent: 🛠️ do it yourself!
 ### Character selection (daisy wheel)
 - A NEMA stepper driven by a A4988 breakout and a KY 003 hall sensor for homing the daisy wheel.
 
-### Wifi reset
-- Held while the device boots, this button clears the saved wifi credentials and the device restarts.
-- The next boot opens the setup network, because nothing is saved.
-- A saved network is retried until it joins. A slow join does not need this button.
+### Button ("WI-FI")
+- Held while the device boots, this button makes the device forget every network it remembers, and the device restarts.
+- The next boot opens the device's own network, under a new password, because nothing is remembered.
+- A remembered network is retried until it joins, so a slow join does not need this button.
+- Once the device is running, the same button works it without a phone: a press stops a job, a press with nothing running prints the last run of labels again, and a hold unloads the roll.
 
 ### Feeder
 - 12v reduced stepper motor (28BYJ-48) driven by a ULN2003 darlington array.
