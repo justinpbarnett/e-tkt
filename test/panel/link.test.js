@@ -179,9 +179,9 @@ test("a command a stop was sent after is not sent again, and waits for the stop 
   // out: it names the command, and the device says what it found.
   const link = lossyLink([NO_ANSWER, ACCEPTED]);
   const command = new Sending();
-  assert.equal(command.held(), false);
+  assert.equal(command.followedByStop(), false);
   command.stopSent();
-  assert.equal(command.held(), true);
+  assert.equal(command.followedByStop(), true);
   const delivery = deliverOver(link, command);
   assert.equal(await soFar(delivery), WAITING);
   assert.equal(link.tries, 1);

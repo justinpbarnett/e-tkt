@@ -435,7 +435,7 @@ test("a command sent from here is the end of what the last stop had to say", () 
   assert.equal(stops.unreachable(request), null);
 });
 
-test("a stop tapped while its command is still on its way names that command, and holds it", () => {
+test("a stop tapped while its command is still on its way names that command, and is the end of sending it", () => {
   // The device may not have the command yet, and the stop can get there
   // first. Named by the id it was sent under, the command is then kept from
   // starting when it does arrive. The page sends it no more: the operator has
@@ -445,7 +445,7 @@ test("a stop tapped while its command is still on its way names that command, an
   stops.commandStarting();
   const request = stops.ask("after_label", command, SENT);
   assert.equal(stopPath(request, STOP_ID), "api/stop?id=5d7e21b6843f9a0c&after=label&for=" + command.id);
-  assert.equal(command.held(), true);
+  assert.equal(command.followedByStop(), true);
   assert.equal(stops.pending(null), "after_label");
   // A stop asked for again names it too, and nothing has been said of the
   // command yet.

@@ -131,19 +131,19 @@ export class Sending {
     this.#say = resolve;
   });
   // Whether a stop has been sent after it.
-  #held = false;
+  #followedByStop = false;
   // Whether a status has named it.
   #named = false;
 
   // A stop has been sent after it, which names it.
   stopSent() {
-    this.#held = true;
+    this.#followedByStop = true;
   }
 
   // Whether a stop has been sent after it. The page then sends it no more,
   // and what became of it is for the stop to find out.
-  held() {
-    return this.#held;
+  followedByStop() {
+    return this.#followedByStop;
   }
 
   // What became of it. Said once: whatever is said after that changes
@@ -204,12 +204,12 @@ export async function deliver({ attempt, wanted, unanswered, command = null, now
   // One of its own for every delivery of anything else, and never settled:
   // nothing then holds on to the deliveries that are over.
   const outcome = command === null ? new Promise(() => {}) : command.outcome;
-  const held = () => command !== null && command.held();
+  const followedByStop = () => command !== null && command.followedByStop();
   for (;;) {
     try {
       return await Promise.race([outcome, attempt()]);
     } catch (error) {
-      if (held()) {
+      if (followedByStop()) {
         return await outcome;
       }
       if (!wanted() || now() - startedAt >= GIVE_UP_AFTER_MS) {
@@ -220,7 +220,7 @@ export async function deliver({ attempt, wanted, unanswered, command = null, now
       if (first !== WAITED) {
         return first;
       }
-      if (held()) {
+      if (followedByStop()) {
         return await outcome;
       }
       if (!wanted()) {
