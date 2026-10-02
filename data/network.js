@@ -12,7 +12,7 @@
 // and a password may be, how many networks it remembers, and how long its
 // own network takes to open and to close. None of them is written down here.
 
-import { NO_ANSWER_YET } from "./status.js";
+import { NO_ANSWER_YET, refusalText } from "./status.js";
 import { withUnit } from "./tape.js";
 
 // How often api/network is asked while Setup is open, and how often
@@ -454,8 +454,7 @@ export class NetworkCard {
   changeAnswered(response, reply, now) {
     this.#changeOver();
     if (!response.ok) {
-      const reason = reply !== null && typeof reply.error === "string" ? reply.error : null;
-      return reason ?? "The label maker refused that, and did not say why (HTTP " + response.status + ").";
+      return refusalText(response, reply);
     }
     const network = readNetwork(reply);
     if (network !== null) {

@@ -8,6 +8,7 @@ import {
   printPercentage,
   printingRun,
   readCapabilities,
+  refusalText,
   setupText,
   stopOffer,
 } from "../../data/status.js";
@@ -397,4 +398,32 @@ test("only a run of labels is offered a stop after the label", () => {
 test("a run whose count the page cannot read is offered only the red stop", () => {
   const unreadable = { busy: true, command: "tag", copy: 2, copies: "5", progress: 10 };
   assert.equal(stopOffer(running({ command: "tag", status: unreadable }), labelMaker()).afterLabel, null);
+});
+
+test("a refusal is told in the device's own words", () => {
+  // The device says why in the error of its reply, and knows better than
+  // the page does.
+  const refused = { ok: false, status: 400 };
+  assert.equal(refusalText(refused, { error: "The body must be a JSON object" }), "The body must be a JSON object");
+});
+
+test("a refusal the device gave no reason for says so, with what it answered", () => {
+  // No body, as from older firmware or something standing in for the
+  // device, or one that is not what the page reads. The HTTP status is then
+  // all there is to go on at the bench.
+  const refused = { ok: false, status: 409 };
+  const silent = "The label maker refused that, and did not say why (HTTP 409).";
+  assert.equal(refusalText(refused, null), silent);
+  assert.equal(refusalText(refused, {}), silent);
+  assert.equal(refusalText(refused, { error: 409 }), silent);
+  assert.equal(refusalText(refused, "Not found"), silent);
+});
+
+test("a refusal with no reason can say what the device would not do", () => {
+  // "Refused that" says little of a stop. The device's own words still come
+  // first.
+  const refused = { ok: false, status: 503 };
+  const silent = "The label maker would not stop, and did not say why (HTTP 503).";
+  assert.equal(refusalText(refused, null, "would not stop"), silent);
+  assert.equal(refusalText(refused, { error: "Nothing to stop" }, "would not stop"), "Nothing to stop");
 });

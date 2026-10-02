@@ -65,6 +65,7 @@ import {
   printingRun,
   printPercentage,
   readCapabilities,
+  refusalText,
   setupText,
   stopOffer,
 } from "./status.js";
@@ -86,6 +87,23 @@ import { Estimates, timeText } from "./timing.js";
 // back, and rarely enough not to keep a phone's radio awake for nothing.
 const POLL_MS = 1000;
 const HIDDEN_POLL_MS = 5000;
+
+// How long the device is given to answer one try of what the page asks it or
+// sends it, before the page takes that try for lost.
+const ANSWER_MS = 5000;
+
+// And one try of a command, or of a change to how the device is reached.
+// Longer: the last try given up on is the page saying it could not reach the
+// device, of something the device may have done.
+const COMMAND_ANSWER_MS = 8000;
+
+// How long the page waits before it asks again what the device accepts, when
+// the device has not said.
+const CAPABILITIES_RETRY_MS = 2000;
+
+// How often the page brings the time since the device was last heard up to
+// date, while it says it has lost touch. That time is told to the second.
+const LAST_HEARD_TICK_MS = 1000;
 
 // How long a stop button, or what takes its place once the stop is done,
 // ignores taps after it comes up. The stop comes up where the finger that
@@ -598,7 +616,7 @@ function toggleTheme() {
 // constants, so there is no local fallback to fall back to.
 async function retrieveCapabilities() {
   try {
-    const response = await fetchFromDevice("api/capabilities", { timeout: 5000 });
+    const response = await fetchFromDevice("api/capabilities");
     if (response.status === 404) {
       throw new CapabilitiesMismatch("api/capabilities is not there");
     }
@@ -619,7 +637,7 @@ async function retrieveCapabilities() {
       );
       render();
     }
-    setTimeout(retrieveCapabilities, 2000);
+    setTimeout(retrieveCapabilities, CAPABILITIES_RETRY_MS);
     return;
   }
 
@@ -875,11 +893,11 @@ async function askEstimate() {
     return;
   }
   try {
-    const response = await postJson("api/tag/estimate", run, { timeout: 5000 });
+    const response = await postJson("api/tag/estimate", run);
     const reply = await readJson(response);
     if (!response.ok) {
       console.warn("Unable to estimate the run");
-      console.warn(reply !== null && typeof reply.error === "string" ? reply.error : response.status);
+      console.warn(refusalText(response, reply));
     }
     state.estimates.answered(request, reply);
   } catch (error) {
@@ -917,7 +935,7 @@ async function send(name, data = {}, { sendAgain = true } = {}) {
   const path = "api/" + name + "?id=" + sending.id;
   try {
     const answer = await sendUntilAnswered({
-      attempt: () => postJson(path, data),
+      attempt: () => postJson(path, data, { timeout: COMMAND_ANSWER_MS }),
       wanted: () => sendAgain,
       unanswered: () => {
         state.unanswered = true;
@@ -940,10 +958,10 @@ async function send(name, data = {}, { sendAgain = true } = {}) {
       // Refused because a stop sent after it got there first, the command
       // was stopped, and the page says that instead.
       if (!state.stops.commandRefused(reply)) {
-        const reason = reply && typeof reply.error === "string" ? reply.error : null;
+        const problem = refusalText(answer, reply);
         console.error("Unable to " + name);
-        console.error(reason ?? answer.status);
-        showProblem(reason ?? "The label maker refused that, and did not say why (HTTP " + answer.status + ").");
+        console.error(problem);
+        showProblem(problem);
       }
     }
   } catch (error) {
@@ -1031,11 +1049,12 @@ async function postStop(request) {
   // time on whatever the machine does next.
   const path = stopPath(request, newCommandId());
   try {
-    // A stop is no use late, so the device is given less time than usual
-    // to answer one before the page says it has not got through. The page
-    // goes on trying after that, for as long as the stop is still wanted.
+    // A stop is no use late, so the device is given less time to answer one
+    // than to answer a command, before the page says it has not got through.
+    // The page goes on trying after that, for as long as the stop is still
+    // wanted.
     const response = await sendUntilAnswered({
-      attempt: () => fetchFromDevice(path, { method: "POST", timeout: 5000 }),
+      attempt: () => fetchFromDevice(path, { method: "POST" }),
       wanted: () => state.stops.wanted(request),
       unanswered: () => {
         const problem = state.stops.unanswered(request);
@@ -1367,7 +1386,7 @@ async function pollNetwork() {
 async function askNetwork() {
   const asking = state.networkCard.asked(performance.now());
   try {
-    const response = await fetchFromDevice("api/network", { timeout: 5000 });
+    const response = await fetchFromDevice("api/network");
     state.networkCard.answered(asking, response, response.ok ? await response.json() : null);
   } catch (error) {
     // The status poll is what says the device is out of reach.
@@ -1377,7 +1396,7 @@ async function askNetwork() {
 // Asks the device what it has heard, for the search to take.
 async function askNearby() {
   try {
-    const response = await fetchFromDevice("api/network/nearby", { timeout: 5000 });
+    const response = await fetchFromDevice("api/network/nearby");
     if (response.ok) {
       state.search.heard(await response.json());
     }
@@ -1400,7 +1419,7 @@ async function listenForNetworks() {
   render();
   try {
     const response = await sendUntilAnswered({
-      attempt: () => postJson(path, {}, { timeout: 5000 }),
+      attempt: () => postJson(path, {}),
       wanted: () => el.networkDialog.open && state.search.wanted(request),
       unanswered: () => {
         state.search.unanswered(request);
@@ -1436,7 +1455,7 @@ async function changeNetwork(change) {
   const path = change.path + "?id=" + newCommandId();
   try {
     const response = await sendUntilAnswered({
-      attempt: () => postJson(path, change.body),
+      attempt: () => postJson(path, change.body, { timeout: COMMAND_ANSWER_MS }),
       wanted: () => true,
       unanswered: () => {
         card.changeUnanswered();
@@ -1639,7 +1658,7 @@ async function poll() {
   clearTimeout(pollTimer);
   const requestedAt = performance.now();
   try {
-    const response = await fetchWithTimeout("api/status", { timeout: 5000 });
+    const response = await fetchWithTimeout("api/status");
     if (!response.ok) {
       throw new Error("api/status answered " + response.status);
     }
@@ -1736,8 +1755,8 @@ function render() {
   markStuck();
 }
 
-// Brings the time since the device was last heard up to date, every second
-// that the page says it has lost touch.
+// Brings the time since the device was last heard up to date, for as long as
+// the page says it has lost touch.
 let lastHeardTimer = null;
 
 function renderOffline(offline) {
@@ -1746,7 +1765,7 @@ function renderOffline(offline) {
   el.offline.hidden = !shown;
   if (shown) {
     setText(el.lastHeard, lastHeardText(state.link.sinceHeard(performance.now())));
-    lastHeardTimer = setTimeout(() => renderOffline(state.link.lost()), 1000);
+    lastHeardTimer = setTimeout(() => renderOffline(state.link.lost()), LAST_HEARD_TICK_MS);
   }
 }
 
@@ -2190,10 +2209,11 @@ function drawRows(list, template, rows, fill, fallback) {
 //   utils   //
 //-----------//
 
-// Helper method to make fetch requests with a configurable timeout.
+// Helper method to make fetch requests with a configurable timeout, which
+// is ANSWER_MS unless the caller gives another.
 // See: https://dmitripavlutin.com/timeout-fetch-request/
 async function fetchWithTimeout(resource, options = {}) {
-  const { timeout = 8000 } = options;
+  const { timeout = ANSWER_MS } = options;
 
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeout);

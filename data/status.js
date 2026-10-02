@@ -81,6 +81,16 @@ export const WAITING_TO_HEAR = "Waiting to hear from the label maker…";
 // a listen for the networks in its reach.
 export const NO_ANSWER_YET = "No answer yet. Trying again…";
 
+// What the page says of something the device refused: the reason the device
+// gave, in the error of its reply, or that it gave none. response is the
+// fetch Response, and reply its body as JSON, or null when it had none. did
+// is what the device did, for when it gave no reason, from a caller with
+// closer words for it than that it refused.
+export function refusalText(response, reply, did = "refused that") {
+  const reason = reply !== null && typeof reply.error === "string" ? reply.error : null;
+  return reason ?? "The label maker " + did + ", and did not say why (HTTP " + response.status + ").";
+}
+
 // What the panel says of each command, keyed by the name the device answers
 // to. That name is also the path this panel posts to, api/<name>, and the
 // string /api/status reports back while the command runs.

@@ -15,7 +15,7 @@
 // such a stop is also what became of the command, which link.js is told.
 
 import { NEVER_STARTED, TAKEN, UNKNOWN } from "./link.js";
-import { stoppedText } from "./status.js";
+import { refusalText, stoppedText } from "./status.js";
 
 // What the page says when a stop reaches the device after the command it
 // was meant for has finished.
@@ -86,9 +86,8 @@ export class Stops {
       request.command.became(becameOf(response, reply));
     }
     if (!response.ok) {
-      const reason = reply && typeof reply.error === "string" ? reply.error : null;
       this.#request = null;
-      return reason ?? "The label maker would not stop, and did not say why (HTTP " + response.status + ").";
+      return refusalText(response, reply, "would not stop");
     }
     if (reply !== null && reply.result === "not_started") {
       // Not a failure either: the stop got there before its command, which
