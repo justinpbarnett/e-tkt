@@ -154,14 +154,10 @@ const state = {
   status: null,
   // Whether the device is answering the page, and when it last did.
   link: new Link(),
-  // The command whose POST is on its way.
-  posting: null,
-  // Set while that command has had no answer, and the page is sending it
-  // again.
-  unanswered: false,
-  // The command this page last sent, as a Sending: the id it went under, and
-  // what became of it when a status, or a stop sent after it, says so before
-  // its own answer does.
+  // The command this page last sent, as a Sending: its name and the id it
+  // went under, whether the page is still sending it, and what became of it
+  // when a status, or a stop sent after it, says so before its own answer
+  // does. null until the page has sent one.
   sent: null,
   // A command the device has accepted that no poll has reported on yet.
   // Without it a quick command could come and go between two polls and the
@@ -925,10 +921,9 @@ async function send(name, data = {}, { sendAgain = true } = {}) {
   state.problem = null;
   state.stops.commandStarting();
   state.revealStop = false;
-  state.posting = name;
   // One id for every try, so a device that took the command, and whose
   // answer was lost, says so to the next try and does not run it twice.
-  const sending = new Sending();
+  const sending = new Sending(name);
   state.sent = sending;
   render();
   let accepted = false;
@@ -938,7 +933,7 @@ async function send(name, data = {}, { sendAgain = true } = {}) {
       attempt: () => postJson(path, data, { timeout: COMMAND_ANSWER_MS }),
       wanted: () => sendAgain,
       unanswered: () => {
-        state.unanswered = true;
+        sending.unanswered();
         render();
       },
       command: sending,
@@ -969,8 +964,7 @@ async function send(name, data = {}, { sendAgain = true } = {}) {
     console.error(error);
     showProblem("Couldn’t reach the label maker. Check that it’s switched on, then try again.", "command");
   } finally {
-    state.posting = null;
-    state.unanswered = false;
+    sending.over();
     render();
   }
   if (accepted) {
@@ -1036,8 +1030,7 @@ function requestStop(kind, row) {
   state.problem = null;
   // A command still on its way is the one the stop is for, and the page
   // sends it no more: the stop goes now, and says what became of it.
-  const request = state.stops.ask(kind, state.posting === null ? null : state.sent, performance.now());
-  state.unanswered = false;
+  const request = state.stops.ask(kind, state.sent, performance.now());
   state.revealStop = true;
   render();
   postStop(request);
@@ -1702,8 +1695,8 @@ function applyStatus(status, requestedAt) {
 
 // The command the device is running, or about to, or null when it is idle.
 function runningCommand() {
-  if (state.posting !== null) {
-    return state.posting;
+  if (state.sent !== null && state.sent.onItsWay()) {
+    return state.sent.name;
   }
   if (state.pending !== null) {
     return state.pending.name;
@@ -1730,7 +1723,7 @@ function render() {
     stop: state.stops.pending(state.status),
     sentCopies: state.sentCopies,
     offline: offline,
-    unanswered: state.unanswered,
+    unanswered: state.sent !== null && state.sent.tryingAgain(),
   };
   const offer = busy ? stopOffer(running, device) : null;
   // Read before anything is disabled or hidden: either can take focus away,

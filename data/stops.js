@@ -42,10 +42,12 @@ export class Stops {
   // device now, which is at a time from performance.now(). Whatever the last
   // stop had to say, this one is the end of it.
   //
-  // command is the command still on its way, as a Sending, or null when the
-  // device has the command the stop is for. One still on its way is sent no
-  // more.
-  ask(kind, command, at) {
+  // sent is the command this page last sent, as a Sending, or null when it
+  // has sent none. While that command is still on its way the stop is for it
+  // alone, and it is sent no more. Once it is not, the stop is for whatever
+  // the device is running.
+  ask(kind, sent, at) {
+    const command = sent !== null && sent.onItsWay() ? sent : null;
     this.#request = { kind: kind, command: command, sentAt: at, acceptedAt: null };
     this.#note = null;
     if (command !== null) {

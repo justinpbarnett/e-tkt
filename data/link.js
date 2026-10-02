@@ -119,9 +119,12 @@ export const NEVER_STARTED = Symbol("never started");
 // without a word about the command.
 export const UNKNOWN = Symbol("unknown");
 
-// A command on its way to the device: the id it goes under, and what became
-// of it when something other than its own answer says.
+// A command this page sends to the device: the name the device answers to it
+// by, the id it goes under, whether the page is still sending it, and what
+// became of it when something other than its own answer says.
 export class Sending {
+  // The name the device answers to it by.
+  name;
   // The id every try of it goes under.
   id = newCommandId();
   // Says what became of it, to whoever waits on outcome.
@@ -130,10 +133,42 @@ export class Sending {
   outcome = new Promise((resolve) => {
     this.#say = resolve;
   });
+  // Whether the page is still sending it.
+  #onItsWay = true;
+  // Whether a try of it has had no answer.
+  #unanswered = false;
   // Whether a stop has been sent after it.
   #followedByStop = false;
   // Whether a status has named it.
   #named = false;
+
+  constructor(name) {
+    this.name = name;
+  }
+
+  // Whether the page is still sending it. The device may have it by now or
+  // not, and the page shows it running until it knows.
+  onItsWay() {
+    return this.#onItsWay;
+  }
+
+  // The page has done sending it: it was answered, something else said what
+  // became of it, or the page gave up on it.
+  over() {
+    this.#onItsWay = false;
+  }
+
+  // A try of it has had no answer, and another is to follow.
+  unanswered() {
+    this.#unanswered = true;
+  }
+
+  // Whether the page is sending it again, a try of it having had no answer.
+  // Not once a stop has been sent after it, or the page has done sending it:
+  // no other try follows then.
+  tryingAgain() {
+    return this.#unanswered && this.#onItsWay && !this.#followedByStop;
+  }
 
   // A stop has been sent after it, which names it.
   stopSent() {

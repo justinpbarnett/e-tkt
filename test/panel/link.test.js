@@ -145,7 +145,7 @@ test("a status that names the command ends the wait for its answer", async () =>
     link.tries += 1;
     return stillOut();
   };
-  const command = new Sending();
+  const command = new Sending("tag");
   const delivery = deliverOver(link, command);
   // A status that names another command, or none, says nothing of this one.
   assert.equal(command.statusArrived({ busy: true, last_command_id: "5d7e21b6843f9a0c" }), false);
@@ -164,7 +164,7 @@ test("a command the device says it took is not sent again", async () => {
   // The status comes in while the page waits to send the command again. It
   // waits no longer, and no other try follows.
   const link = lossyLink([NO_ANSWER, ACCEPTED]);
-  const command = new Sending();
+  const command = new Sending("tag");
   link.pause = () => {
     command.statusArrived({ busy: true, last_command_id: command.id });
     return stillOut();
@@ -178,7 +178,7 @@ test("a command a stop was sent after is not sent again, and waits for the stop 
   // stopped. Whether the try that went out got there is for the stop to find
   // out: it names the command, and the device says what it found.
   const link = lossyLink([NO_ANSWER, ACCEPTED]);
-  const command = new Sending();
+  const command = new Sending("tag");
   assert.equal(command.followedByStop(), false);
   command.stopSent();
   assert.equal(command.followedByStop(), true);
@@ -196,7 +196,7 @@ test("a stop sent while the page waits to send the command again is the end of t
   // The try before it may have got there all the same, so this one too waits
   // for the stop to say, and takes what it says: here, that it does not know.
   const link = lossyLink([NO_ANSWER, ACCEPTED]);
-  const command = new Sending();
+  const command = new Sending("tag");
   link.pause = async () => {
     command.stopSent();
   };
@@ -216,7 +216,7 @@ test("the answer to a try already out still counts once a stop has been sent", a
     new Promise((resolve) => {
       answer = resolve;
     });
-  const command = new Sending();
+  const command = new Sending("tag");
   const delivery = deliverOver(link, command);
   command.stopSent();
   answer(ACCEPTED);
@@ -227,12 +227,40 @@ test("what became of a command is said once", async () => {
   // A stop that found the command never started is not gainsaid by anything
   // heard later: the device refuses the command from then on.
   const link = lossyLink([NO_ANSWER]);
-  const command = new Sending();
+  const command = new Sending("tag");
   command.stopSent();
   const delivery = deliverOver(link, command);
   command.became(NEVER_STARTED);
   command.became(TAKEN);
   assert.equal(await delivery, NEVER_STARTED);
+});
+
+test("a command is on its way from when it is sent until the page has done sending it", () => {
+  // The page shows it running for that long, by the name the device answers
+  // to it by, before the device has said anything of it.
+  const command = new Sending("tag");
+  assert.equal(command.name, "tag");
+  assert.equal(command.onItsWay(), true);
+  command.over();
+  assert.equal(command.onItsWay(), false);
+});
+
+test("a command is being sent again once a try of it has had no answer, for as long as another is to follow", () => {
+  // The page says there is no answer yet and that it is trying again, which
+  // is so only while it is.
+  const command = new Sending("tag");
+  assert.equal(command.tryingAgain(), false);
+  command.unanswered();
+  assert.equal(command.tryingAgain(), true);
+  // A stop sent after it is the end of trying, and the page says what it
+  // says of the stop.
+  command.stopSent();
+  assert.equal(command.tryingAgain(), false);
+  // So is the end of sending it: an answer, or the page giving up on one.
+  const answered = new Sending("feed");
+  answered.unanswered();
+  answered.over();
+  assert.equal(answered.tryingAgain(), false);
 });
 
 test("every command goes out under an id of its own, short enough for the device to keep", () => {
@@ -242,9 +270,9 @@ test("every command goes out under an id of its own, short enough for the device
   assert.match(id, /^[0-9a-f]{16}$/);
   assert.notEqual(newCommandId(), id);
   // A command on its way has one, which every try of it goes under.
-  const command = new Sending();
+  const command = new Sending("tag");
   assert.match(command.id, /^[0-9a-f]{16}$/);
-  assert.notEqual(new Sending().id, command.id);
+  assert.notEqual(new Sending("tag").id, command.id);
 });
 
 test("the page is in touch until more than two polls in a row go unanswered", () => {
