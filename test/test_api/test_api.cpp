@@ -31,24 +31,17 @@ static NetworkSettings* networkSettings;
 static LinkSupervisor* supervisor;
 static Api* api;
 
+// Builds the machine, which boots it, and names what the tests work.
 void setUp(void) {
   stubReset();
   machine = new HostMachine();
-  radio = new FakeRadio();
-  networkSettings = new NetworkSettings(&machine->logger);
-  networkSettings->initialize("9C4F");
-  supervisor = new LinkSupervisor(&machine->logger, radio, networkSettings,
-                                  &machine->display);
-  api = new Api(&machine->etkt, supervisor, networkSettings, &machine->logger);
+  radio = &machine->radio;
+  networkSettings = &machine->networkSettings;
+  supervisor = &machine->linkSupervisor;
+  api = &machine->api;
 }
 
-void tearDown(void) {
-  delete api;
-  delete supervisor;
-  delete networkSettings;
-  delete radio;
-  delete machine;
-}
+void tearDown(void) { delete machine; }
 
 static Reply get(const char* path) {
   Request request;

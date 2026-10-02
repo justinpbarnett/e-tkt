@@ -78,16 +78,11 @@
 #include "FakeRadio.h"
 #include "HostMachine.h"
 #include "LinkSupervisor.h"
-#include "NetworkSettings.h"
 
 // What the heap reports free. The panel does not read either number. They
 // are what a machine reports between jobs, so the status looks like one.
 static const size_t HEAP_FREE_BYTES = 200000;
 static const size_t HEAP_LARGEST_FREE_BLOCK_BYTES = 110000;
-
-// What tells this machine from the others, as the end of its MAC address
-// does on the board. Its own network and its host name are named after it.
-static const char MACHINE_ID[] = "9C4F";
 
 // The password of every network in the air that has one.
 static const char AIR_PASSWORD[] = "labelmaker";
@@ -289,14 +284,10 @@ class Simulator {
 
   Requests requests;
 
-  // The machine, how it is reached, and the Api in front of both. All NULL
+  // The machine, with how it is reached and the Api in front of both. NULL
   // while it boots: requests that arrive meanwhile wait on stdin, as on the
   // board, where no webserver is up yet to take them.
   HostMachine* machine = NULL;
-  FakeRadio* radio = NULL;
-  NetworkSettings* networkSettings = NULL;
-  LinkSupervisor* linkSupervisor = NULL;
-  Api* api = NULL;
 
   // When the link was last looked at, by the machine's clock.
   unsigned long linkSteppedMs = 0;
@@ -339,12 +330,12 @@ class Simulator {
    * passed, and not by how often it was asked.
    */
   void keepLink() {
-    if (this->linkSupervisor == NULL ||
+    if (this->machine == NULL ||
         stubClockMs() - this->linkSteppedMs < WIFI_STEP_MS) {
       return;
     }
     this->linkSteppedMs = stubClockMs();
-    this->linkSupervisor->step();
+    this->machine->linkSupervisor.step();
   }
 
   /**
@@ -382,7 +373,7 @@ class Simulator {
       const double aheadMs = (double)stubClockMs() - this->dueMs();
       const long waitUs =
           aheadMs > 0 ? (long)std::ceil(aheadMs * 1000.0 / this->speed) : 0;
-      if (this->api == NULL) {
+      if (this->machine == NULL) {
         if (waitUs == 0) {
           break;
         }
@@ -418,7 +409,7 @@ class Simulator {
       writeReply(refused);
       return;
     }
-    writeReply(this->api->handle(request));
+    writeReply(this->machine->api.handle(request));
   }
 
   /**
@@ -436,10 +427,6 @@ class Simulator {
   void forget() {
     if (this->machine != NULL) {
       this->machine->forget();
-    }
-    if (this->radio != NULL) {
-      this->radio->joins.clear();
-      this->radio->openings.clear();
     }
     stubAnalogWrites().clear();
     stubDigitalWrites().clear();
@@ -464,14 +451,6 @@ class Simulator {
    * lived in RAM. The flash stays.
    */
   void boot() {
-    delete this->api;
-    this->api = NULL;
-    delete this->linkSupervisor;
-    this->linkSupervisor = NULL;
-    delete this->networkSettings;
-    this->networkSettings = NULL;
-    delete this->radio;
-    this->radio = NULL;
     // The old magnet goes with the old machine, and the new one installs its
     // own.
     stubAnalogRead() = nullptr;
@@ -483,17 +462,9 @@ class Simulator {
     this->wallStart = std::chrono::steady_clock::now();
 
     this->machine = new HostMachine();
-    this->radio = new FakeRadio();
-    fillAir(this->radio);
-    this->networkSettings = new NetworkSettings(&this->machine->logger);
-    this->networkSettings->initialize(MACHINE_ID);
-    this->linkSupervisor =
-        new LinkSupervisor(&this->machine->logger, this->radio,
-                           this->networkSettings, &this->machine->display);
-    this->api = new Api(&this->machine->etkt, this->linkSupervisor,
-                        this->networkSettings, &this->machine->logger);
+    fillAir(&this->machine->radio);
     // The first look is the one the board takes as its webserver starts.
-    this->linkSupervisor->step();
+    this->machine->linkSupervisor.step();
     this->linkSteppedMs = stubClockMs();
     this->forget();
     this->drainSerial();

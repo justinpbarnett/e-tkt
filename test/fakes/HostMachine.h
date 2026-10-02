@@ -3,29 +3,35 @@
 // The whole label maker on the host, module for module, built the way
 // LabelMaker.cpp builds it on the board. Where it meets the hardware it has
 // fakes instead: FakeServo and FakeStepper for the three motors, FakeDisplay
-// for the OLED, a FakeMagnet on the wheel's hub, and the stubs for the core,
-// the sounder and the EEPROM.
+// for the OLED, a FakeMagnet on the wheel's hub, a FakeRadio for the Wi-Fi
+// radio, and the stubs for the core, the sounder and the EEPROM.
 //
 // For the tests that drive the machine from outside, through the job runner
 // or the Api, and so need every module rather than one, and for the
 // simulator in src/simulator, which runs one behind the Api. Build one after
 // stubReset(), which clears the hooks it installs. By the time the
-// constructor returns the machine has booted: the wheel has found home, and
-// the screen's record of what booting drew is cleared.
+// constructor returns the machine has booted: the wheel has found home, the
+// network settings are read, and the screen's record of what booting drew is
+// cleared. Its link has not taken a step. On the board a task of its own
+// steps it, and here whoever wants the link to run does.
 
 #include <vector>
 
+#include "Api.h"
 #include "Arduino.h"
 #include "DaisyWheel.h"
 #include "ETKT.h"
 #include "FakeDisplay.h"
 #include "FakeDrivers.h"
 #include "FakeMagnet.h"
+#include "FakeRadio.h"
 #include "Feeder.h"
 #include "HallSwitch.h"
 #include "LastRun.h"
 #include "Light.h"
+#include "LinkSupervisor.h"
 #include "Logger.h"
+#include "NetworkSettings.h"
 #include "Press.h"
 #include "Printhead.h"
 #include "Roll.h"
@@ -33,6 +39,10 @@
 #include "Sound.h"
 #include "StopSignal.h"
 #include "StrokeLog.h"
+
+// What tells this machine from the others, as the end of its MAC address
+// does on the board. Its own network and its host name are named after it.
+static const char HOST_MACHINE_ID[] = "9C4F";
 
 class HostMachine {
  public:
@@ -59,6 +69,12 @@ class HostMachine {
   DaisyWheel daisywheel;
   Printhead printhead;
   ETKT etkt;
+  // How the machine is reached, and everything it answers under /api/. The
+  // radio's air is empty until somebody puts a network in it.
+  FakeRadio radio;
+  NetworkSettings networkSettings;
+  LinkSupervisor linkSupervisor;
+  Api api;
 
   HostMachine()
       // Anywhere but where the shaft starts, so the boot home has to find it.
@@ -76,9 +92,13 @@ class HostMachine {
         daisywheel(&logger, &hall, &charStepper, &stopSignal, &feeder),
         printhead(&logger, &daisywheel, &press, &stopSignal, &feeder),
         etkt(&logger, &settings, &display, &printhead, &feeder, &roll, &lastRun,
-             &sound, &ledFinish, &ledChar, &stopSignal) {
+             &sound, &ledFinish, &ledChar, &stopSignal),
+        networkSettings(&logger),
+        linkSupervisor(&logger, &radio, &networkSettings, &display),
+        api(&etkt, &linkSupervisor, &networkSettings, &logger) {
     this->magnet.install();
     this->etkt.initialize();
+    this->networkSettings.initialize(HOST_MACHINE_ID);
     this->display.clear();
   }
 
@@ -96,6 +116,8 @@ class HostMachine {
     this->charStepper.clear();
     this->feedStepper.clear();
     this->display.clear();
+    this->radio.joins.clear();
+    this->radio.openings.clear();
     std::vector<Stroke>& made = this->strokes.strokes;
     if (made.size() > 1) {
       made.erase(made.begin(), made.end() - 1);
