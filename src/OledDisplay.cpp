@@ -207,6 +207,10 @@ const ScreenSpec SCREEN_SPECS[] = {
      nullptr, 0x0073, 27, 90},
     {Screen::WIFI_JOINING, ScreenLayout::NOTICE, false, "CONNECTING", 15,
      "Connecting to the", "saved network...", 0x011a, 0, 0},
+    // Where the idle screen would be while the roll is out: see
+    // ETKT::showIdle(). REELING's arrows, for the load the button then does.
+    {Screen::NEW_ROLL, ScreenLayout::NOTICE, false, "NEW ROLL", 15,
+     "Put the new roll in,", "then press the button.", 0x00d5, 0, 0},
     {Screen::REBOOTING, ScreenLayout::BANNER, false, "REBOOTING...", 38,
      nullptr, nullptr, NO_GLYPH, 0, 0},
 };
@@ -230,7 +234,7 @@ void drawBanner(U8G2_SSD1306_128X64_NONAME_F_HW_I2C* u8g2,
 }
 
 // Draws a titled notice with two lines of body text and one icon beside the
-// title. The shape behind WIFI_SETUP, WIFI_RESET and WIFI_JOINING.
+// title. The shape behind WIFI_SETUP, WIFI_RESET, WIFI_JOINING and NEW_ROLL.
 void drawNotice(U8G2_SSD1306_128X64_NONAME_F_HW_I2C* u8g2,
                 const ScreenSpec& spec) {
   u8g2->setFont(u8g2_font_nine_by_five_nbp_t_all);

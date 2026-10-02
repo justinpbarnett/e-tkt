@@ -15,6 +15,7 @@
 static const char* ROLL_NAMESPACE = "roll";
 static const char* LENGTH_KEY = "length";
 static const char* USED_KEY = "used";
+static const char* OUT_KEY = "out";
 
 Roll::Roll(Logger* logger) { this->logger = logger; }
 
@@ -30,9 +31,15 @@ void Roll::initialize() {
   if (!this->preferences.isKey(USED_KEY)) {
     this->preferences.putUInt(USED_KEY, 0);
   }
+  // Nor is it one with its roll out: every machine that was built before
+  // this was kept has a roll in it, as far as anyone can tell.
+  if (!this->preferences.isKey(OUT_KEY)) {
+    this->preferences.putBool(OUT_KEY, false);
+  }
   const uint32_t stored =
       this->preferences.getUInt(LENGTH_KEY, DEFAULT_ROLL_LENGTH_MM);
   this->current.feedsUsed = this->preferences.getUInt(USED_KEY, 0);
+  this->current.out = this->preferences.getBool(OUT_KEY, false);
   this->preferences.end();
 
   // Only load() writes the length, and it clamps, so this is a value from
@@ -47,7 +54,8 @@ void Roll::initialize() {
                        " mm");
   }
   this->logger->log(String("Roll: ") + loaded.lengthMm + " mm, " +
-                    loaded.feedsUsed + " feeds used");
+                    loaded.feedsUsed + " feeds used" +
+                    (loaded.out ? ", out of the machine" : ""));
 }
 
 void Roll::load(uint32_t lengthMm) {
@@ -87,6 +95,26 @@ void Roll::use(uint32_t feeds) {
   this->preferences.putUInt(USED_KEY, this->current.feedsUsed);
   this->preferences.end();
   this->lock.unlock();
+}
+
+void Roll::takeOut() { this->markOut(true); }
+
+void Roll::putIn() { this->markOut(false); }
+
+void Roll::markOut(bool out) {
+  this->lock.lock();
+  const bool changed = this->current.out != out;
+  if (changed) {
+    this->current.out = out;
+    this->preferences.begin(ROLL_NAMESPACE, false);
+    this->preferences.putBool(OUT_KEY, out);
+    this->preferences.end();
+  }
+  this->lock.unlock();
+
+  if (changed) {
+    this->logger->log(out ? "Roll out of the machine" : "Roll in the machine");
+  }
 }
 
 RollState Roll::state() {

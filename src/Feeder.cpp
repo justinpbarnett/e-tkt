@@ -113,14 +113,16 @@ void Feeder::feed(int repeat) {
   this->finish();
 }
 
-void Feeder::backOut(int feeds) {
+bool Feeder::backOut(int feeds) {
   // The feeds under way were asked for forward, so they finish that way
   // before the motor turns round.
   this->finish();
+  const long from = this->stepper->currentPosition();
   this->backingOut = true;
   this->start(feeds);
   this->finish();
   this->backingOut = false;
+  return this->stepper->currentPosition() != from;
 }
 
 unsigned long Feeder::feedUs(int feeds) const {

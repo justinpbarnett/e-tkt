@@ -416,6 +416,24 @@ void test_a_stop_halts_a_back_out_where_it_is(void) {
   TEST_ASSERT_EQUAL_INT32(0, feeder->feeds());
 }
 
+void test_backing_out_says_the_tape_was_moved_however_far(void) {
+  // What the job runner goes by. A roll backed away from the cutter at all,
+  // even by a back out a stop cut short at its first step, is no longer
+  // loaded.
+  feeder->initialize();
+  TEST_ASSERT_TRUE(feeder->backOut(2));
+  stopAtStep = 2 * FEED_STEP + 1;
+  TEST_ASSERT_TRUE(feeder->backOut(5));
+}
+
+void test_a_back_out_a_stop_was_ahead_of_says_the_tape_was_left(void) {
+  // And one the motor never turned for has left the roll where it was.
+  feeder->initialize();
+  stop->raise(StopCause::OPERATOR);
+  TEST_ASSERT_FALSE(feeder->backOut(5));
+  TEST_ASSERT_EQUAL_INT32(0, stepper->currentPosition());
+}
+
 // --- how long it takes -------------------------------------------------
 
 void test_the_estimate_of_feeding_is_how_long_it_takes(void) {
@@ -473,6 +491,8 @@ int main(int, char**) {
   RUN_TEST(test_feeds_under_way_go_on_forward_before_backing_out);
   RUN_TEST(test_a_feed_after_backing_out_goes_forward_again);
   RUN_TEST(test_a_stop_halts_a_back_out_where_it_is);
+  RUN_TEST(test_backing_out_says_the_tape_was_moved_however_far);
+  RUN_TEST(test_a_back_out_a_stop_was_ahead_of_says_the_tape_was_left);
   RUN_TEST(test_the_estimate_of_feeding_is_how_long_it_takes);
   RUN_TEST(test_no_feeds_take_no_time);
   return UNITY_END();

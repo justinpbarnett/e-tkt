@@ -11,6 +11,7 @@
 #include "Configuration.h"
 #include "Display.h"
 #include "Feeder.h"
+#include "LastRun.h"
 #include "Light.h"
 #include "Logger.h"
 #include "Printhead.h"
@@ -143,8 +144,9 @@ const char* commandName(Command command) {
 }
 
 ETKT::ETKT(Logger* logger, Settings* settings, Display* display,
-           Printhead* printhead, Feeder* feeder, Roll* roll, Sound* sound,
-           Light* ledFinish, Light* ledChar, StopSignal* stopSignal) {
+           Printhead* printhead, Feeder* feeder, Roll* roll, LastRun* lastRun,
+           Sound* sound, Light* ledFinish, Light* ledChar,
+           StopSignal* stopSignal) {
   // Upstream never assigned this one, and initialize() dereferences it on its
   // first line. It only ever worked because Logger holds no state, so the
   // uninitialised pointer was never actually read through.
@@ -154,6 +156,7 @@ ETKT::ETKT(Logger* logger, Settings* settings, Display* display,
   this->printhead = printhead;
   this->feeder = feeder;
   this->roll = roll;
+  this->lastRun = lastRun;
   this->sound = sound;
   this->ledFinish = ledFinish;
   this->ledChar = ledChar;
@@ -182,6 +185,7 @@ void ETKT::initialize() {
   this->sound->initialize();
   this->settings->initialize();
   this->roll->initialize();
+  this->lastRun->initialize();
   this->display->initialize();
   this->printhead->initialize(this->savedCalibration());
   this->feeder->initialize();
@@ -244,6 +248,13 @@ StatusUpdate ETKT::createStatus() {
   return status;
 }
 
+bool ETKT::busy() {
+  this->lock.lock();
+  const bool busy = this->command != NULL;
+  this->lock.unlock();
+  return busy;
+}
+
 void ETKT::submit(const CommandOptions& options, const String& id) {
   // Copied on the way in. The webserver builds its options on the request
   // task's stack and the device needs them to outlive the request, but who
@@ -263,6 +274,20 @@ void ETKT::submit(const CommandOptions& options, const String& id) {
   this->lastStopped = StoppedCommand();
   this->submitted.notify_one();
   this->lock.unlock();
+}
+
+bool ETKT::repeat() {
+  Run last;
+  if (!this->lastRun->read(&last)) {
+    return false;
+  }
+  CommandOptions options;
+  options.command = Command::TAG;
+  options.label = last.label;
+  options.copies = last.copies;
+  options.cut = last.cut;
+  this->submit(options);
+  return true;
 }
 
 bool ETKT::isForLastCommand(const String& id) const {
@@ -421,7 +446,17 @@ void ETKT::loop() {
   // redraw with a QR code on it, and a job posted while it draws is one a
   // parked machine can take. Only this task draws, so the next job's first
   // screen still waits for this one.
-  this->display->renderIdle(stopped);
+  this->showIdle(stopped);
+}
+
+void ETKT::showIdle(bool stopped) {
+  // A machine with no roll in it has nothing to be ready for, so it says
+  // what it is waiting for instead.
+  if (this->roll->state().out) {
+    this->display->render(Screen::NEW_ROLL);
+  } else {
+    this->display->renderIdle(stopped);
+  }
 }
 
 void ETKT::feedCommandInternal() {
@@ -451,6 +486,12 @@ void ETKT::reelCommandInternal() {
   this->roll->load(length);
 
   this->feeder->feed(REEL_FEEDS);
+  // Threaded through to the cutter, unless a stop cut the feeds short. A
+  // load is stopped because the tape is not catching, and the roll is then
+  // no more in the machine than it was.
+  if (!this->stopSignal->cutShort()) {
+    this->roll->putIn();
+  }
   this->ledFinish->off();
   this->ledChar->off();
 }
@@ -464,7 +505,15 @@ void ETKT::unloadCommandInternal() {
   // As far back as a reel threads the tape forward: from past the cutter to
   // behind the cog. The roll's count is left as it was, and Feeder::feeds()
   // says why.
-  this->feeder->backOut(REEL_FEEDS);
+  //
+  // The roll is out from the first step back, however far a stop lets it
+  // get. Stopped partway, nothing can say whether the end is still in the
+  // cog, and a run printed from there would start on no tape: a load puts
+  // that right whichever it was. Only a stop that was ahead of the motor
+  // leaves the roll in, with its tape at the cutter where it was.
+  if (this->feeder->backOut(REEL_FEEDS)) {
+    this->roll->takeOut();
+  }
   this->ledFinish->off();
   this->ledChar->off();
 }
@@ -538,6 +587,14 @@ void ETKT::moveCommandInternal() {
 }
 
 void ETKT::tagCommandInternal() {
+  // Kept as it begins, and as it was asked for, so a run that is stopped, or
+  // that the tape runs out on, is the one the button prints again.
+  Run asked;
+  asked.label = this->command->label;
+  asked.copies = this->command->copies;
+  asked.cut = this->command->cut;
+  this->lastRun->keep(asked);
+
   const String label = asPrinted(this->command->label);
   const int copies = this->command->copies;
   // At the calibration the run presses at, before anything moves.

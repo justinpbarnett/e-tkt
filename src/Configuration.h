@@ -217,3 +217,34 @@ constexpr uint32_t WIFI_SETUP_AFTER_MS = 60000;
 // How often, while still offline, to say that the join is still going.
 // The log keeps 32 lines, so this is a summary and not one line a try.
 constexpr uint32_t WIFI_REPORT_MS = 60000;
+
+/**
+ * The Button
+ *
+ * The tact switch on WIFI_RESET_PIN. Held through a boot it clears the
+ * saved network, which was all it did. Once the machine is up it now works
+ * the machine with no phone and no network: a press stops a job, a press
+ * with nothing running prints the last run again, and a hold unloads the
+ * roll. See Button.
+ */
+
+// How often the button is read.
+constexpr uint32_t BUTTON_POLL_MS = 10;
+
+// How long a reading has to hold before it counts. A contact bounces for a
+// few milliseconds as it closes, and this pin has read low with nobody near
+// it: a boot took that for the button and cleared the saved network. Longer
+// than either, and too short to feel as a wait on a stop.
+constexpr uint32_t BUTTON_DEBOUNCE_MS = 50;
+
+// How long the button is held, with nothing running, for the roll to be
+// unloaded. A press is let go well inside this, and a hold is not long
+// enough to be a chore: a roll is changed about every seventy labels.
+constexpr uint32_t BUTTON_HOLD_MS = 1500;
+
+// How long the machine has to have sat idle before a press starts anything.
+// A finger on its way to stop a job can land just after the job has ended
+// by itself, and that press would otherwise print the whole run again. The
+// panel holds its stop buttons back for the same reason, the other way
+// round.
+constexpr uint32_t BUTTON_ARMING_MS = 1000;

@@ -1,5 +1,6 @@
-// Host-side tests for the job runner, ETKT, through the four calls the rest
-// of the firmware makes on it: submit, stop, createStatus and loop.
+// Host-side tests for the job runner, ETKT, through the calls the rest of
+// the firmware makes on it: submit, repeat, stop, createStatus, busy, loop
+// and showIdle.
 //
 // Every stop rule the operator relies on lives in ETKT -- what can be
 // stopped, what a stop leaves on the tape, what the panel is told afterwards
@@ -35,8 +36,8 @@ static Roll* roll;
 static Feeder* feeder;
 static ETKT* etkt;
 
-void setUp(void) {
-  stubReset();
+// Builds the machine, which boots it, and names its modules.
+static void boot(void) {
   machine = new HostMachine();
   pressServo = &machine->pressServo;
   charStepper = &machine->charStepper;
@@ -51,7 +52,18 @@ void setUp(void) {
   etkt = &machine->etkt;
 }
 
+void setUp(void) {
+  stubReset();
+  boot();
+}
+
 void tearDown(void) { delete machine; }
+
+// The machine switched off and on again: a new one over the same flash.
+static void reboot(void) {
+  delete machine;
+  boot();
+}
 
 static void submit(Command command) {
   CommandOptions options;
@@ -72,6 +84,15 @@ static bool refused(Command command) {
   return false;
 }
 
+static bool repeatRefused(void) {
+  try {
+    etkt->repeat();
+  } catch (const PrinterBusyException&) {
+    return true;
+  }
+  return false;
+}
+
 // --- running a job -------------------------------------------------------
 
 void test_a_submitted_feed_runs_and_the_machine_goes_idle(void) {
@@ -84,6 +105,22 @@ void test_a_submitted_feed_runs_and_the_machine_goes_idle(void) {
   TEST_ASSERT_EQUAL_INT(Command::IDLE, status.currentCommand);
   // One feed comes off the roll, and the panel's tape gauge reads it here.
   TEST_ASSERT_EQUAL_UINT32(1, status.roll.feedsUsed);
+}
+
+void test_the_machine_is_busy_from_taking_a_job_until_the_job_ends(void) {
+  // What the button on the machine goes by, a hundred times a second, to
+  // tell a press that stops a job from one that starts one.
+  TEST_ASSERT_FALSE(etkt->busy());
+  submit(Command::FEED);
+  TEST_ASSERT_TRUE(etkt->busy());
+  static bool busyThroughout;
+  busyThroughout = true;
+  stubAfterDelay() = [] { busyThroughout = busyThroughout && etkt->busy(); };
+
+  etkt->loop();
+
+  TEST_ASSERT_TRUE(busyThroughout);
+  TEST_ASSERT_FALSE(etkt->busy());
 }
 
 // A run of labels, start to finish. Each label of "AB" is seven feeds --
@@ -253,13 +290,15 @@ void test_an_unload_backs_the_tape_out_as_far_as_a_reel_threads_it(void) {
   submit(Command::REEL);
   etkt->loop();
   TEST_ASSERT_TRUE(feedStepper->currentPosition() != 0);
+  display->clear();
 
   submit(Command::UNLOAD);
   etkt->loop();
 
   TEST_ASSERT_EQUAL_INT32(0, feedStepper->currentPosition());
   TEST_ASSERT_FALSE(feedStepper->energized);
-  TEST_ASSERT_EQUAL_INT((int)Screen::UNLOADING, (int)display->screens().back());
+  TEST_ASSERT_EQUAL_INT((int)Screen::UNLOADING,
+                        (int)display->screens().front());
   TEST_ASSERT_EQUAL_INT(Command::IDLE, etkt->createStatus().currentCommand);
 }
 
@@ -285,7 +324,8 @@ void test_an_unload_leaves_the_roll_count_as_it_was(void) {
 
 // A stop halts an unload where the tape is and lets go of it, so the rest
 // can be pulled out by hand. Nothing was pressed, so nothing is left on the
-// tape to cut off.
+// tape to cut off. The stop is on record for the panel, and the machine's own
+// screen asks for the next roll: see the roll change, below.
 void test_a_stopped_unload_lets_go_of_the_tape_and_leaves_nothing_to_cut(void) {
   submit(Command::REEL);
   etkt->loop();
@@ -305,7 +345,6 @@ void test_a_stopped_unload_lets_go_of_the_tape_and_leaves_nothing_to_cut(void) {
   TEST_ASSERT_FALSE(status.stopped.unfinished);
   TEST_ASSERT_FALSE(feedStepper->energized);
   TEST_ASSERT_TRUE(feedStepper->currentPosition() != 0);
-  TEST_ASSERT_TRUE(display->last(DisplayCall::RENDER_IDLE)->stopped);
 }
 
 // Saving is the one job that ends in a reboot. The calibration has to be in
@@ -693,6 +732,272 @@ void test_the_next_job_clears_the_last_stop(void) {
   etkt->loop();
 }
 
+// --- printing the last run again -------------------------------------------
+
+// The button on the machine prints the last run again, with no phone and no
+// network to ask it over: the same label, as many of it, cut or not.
+void test_the_last_run_can_be_printed_again(void) {
+  etkt->submit(tagOptions("AB", 2, false));
+  etkt->loop();
+  strokes->strokes.clear();
+
+  TEST_ASSERT_TRUE(etkt->repeat());
+  const StatusUpdate status = etkt->createStatus();
+  TEST_ASSERT_EQUAL_INT(Command::TAG, status.currentCommand);
+  TEST_ASSERT_EQUAL_STRING("AB", status.currentLabel.c_str());
+  TEST_ASSERT_EQUAL_INT(2, status.copies);
+  etkt->loop();
+
+  // A and B, twice, and nothing at the cut mark, on as much tape again.
+  TEST_ASSERT_EQUAL_INT(4, (int)strokes->strokes.size());
+  TEST_ASSERT_EQUAL_UINT32(28, etkt->createStatus().roll.feedsUsed);
+  TEST_ASSERT_EQUAL_INT(Command::IDLE, etkt->createStatus().stopped.command);
+}
+
+// The machine is switched off between sessions, and the run to print again
+// in the morning is the one printed the night before. Symbols and all: a
+// label of them is three bytes a character where it is kept.
+void test_the_last_run_outlives_a_reboot(void) {
+  etkt->submit(tagOptions("♡ €5.00 ☆", 3, false));
+  etkt->loop();
+
+  reboot();
+
+  TEST_ASSERT_TRUE(etkt->repeat());
+  const StatusUpdate status = etkt->createStatus();
+  TEST_ASSERT_EQUAL_INT(Command::TAG, status.currentCommand);
+  TEST_ASSERT_EQUAL_STRING("♡ €5.00 ☆", status.currentLabel.c_str());
+  TEST_ASSERT_EQUAL_INT(3, status.copies);
+  etkt->loop();
+  // Seven characters to press, three times, and still not cut.
+  TEST_ASSERT_EQUAL_INT(21, (int)strokes->strokes.size());
+}
+
+// A machine that has printed no run has none to print again, and says so:
+// the button then does nothing, rather than pressing a label of nothing.
+// Jobs that are not runs of labels leave nothing to repeat either.
+void test_a_machine_that_has_printed_no_run_has_none_to_repeat(void) {
+  submit(Command::FEED);
+  etkt->loop();
+
+  TEST_ASSERT_FALSE(etkt->repeat());
+
+  TEST_ASSERT_EQUAL_INT(Command::IDLE, etkt->createStatus().currentCommand);
+}
+
+// The last run is a job like any other, and one at a time: asked for while
+// another job has the machine, it is refused as a second tap would be.
+void test_the_last_run_is_refused_while_another_job_has_the_machine(void) {
+  submitTag("AB", 1);
+  etkt->loop();
+  submit(Command::FEED);
+
+  TEST_ASSERT_TRUE(repeatRefused());
+
+  TEST_ASSERT_EQUAL_INT(Command::FEED, etkt->createStatus().currentCommand);
+  etkt->loop();
+}
+
+// A run stopped partway is still the last run, and all of it. The operator
+// who stopped it to change the roll wants the run they asked for, not what
+// happened to be left of it.
+void test_a_stopped_run_is_still_the_last_run_as_it_was_asked_for(void) {
+  display->onCall = [](const DisplayCall& call) {
+    if (call.kind == DisplayCall::RENDER_PROGRESS && call.copy == 2) {
+      etkt->stop();
+    }
+  };
+  submitTag("AB", 3);
+  etkt->loop();
+  display->onCall = nullptr;
+  TEST_ASSERT_EQUAL_INT(1, etkt->createStatus().stopped.printed);
+
+  TEST_ASSERT_TRUE(etkt->repeat());
+
+  TEST_ASSERT_EQUAL_INT(3, etkt->createStatus().copies);
+  etkt->loop();
+  TEST_ASSERT_EQUAL_INT(Command::IDLE, etkt->createStatus().stopped.command);
+}
+
+// The run printed again is the newest one, whatever was printed before it.
+void test_a_new_run_takes_the_place_of_the_last_one(void) {
+  submitTag("AB", 2);
+  etkt->loop();
+  etkt->submit(tagOptions("C", 1, false));
+  etkt->loop();
+  strokes->strokes.clear();
+
+  TEST_ASSERT_TRUE(etkt->repeat());
+
+  const StatusUpdate status = etkt->createStatus();
+  TEST_ASSERT_EQUAL_STRING("C", status.currentLabel.c_str());
+  TEST_ASSERT_EQUAL_INT(1, status.copies);
+  etkt->loop();
+  TEST_ASSERT_EQUAL_INT(1, (int)strokes->strokes.size());
+}
+
+// What is read back from the flash is started with nobody having typed it,
+// so a stored run that is only partly a run is none at all: the machine
+// does not guess at the rest of it.
+void test_a_stored_run_that_cannot_be_read_is_not_printed(void) {
+  const char* const unreadable[] = {
+      "",
+      "AB",
+      "{\"label\":\"AB\"}",
+      "{\"label\":\"AB\",\"copies\":0,\"cut\":true}",
+      "{\"label\":\"AB\",\"copies\":501,\"cut\":true}",
+      "{\"label\":\"AB\",\"copies\":\"2\",\"cut\":true}",
+      "{\"label\":\"AB\",\"copies\":2,\"cut\":\"yes\"}",
+      "{\"label\":7,\"copies\":2,\"cut\":true}",
+      "{\"label\":\"AB\",\"copies\":2,\"cut\":tr",
+  };
+  for (const char* text : unreadable) {
+    stubNvsText()["lastrun"]["run"] = text;
+    reboot();
+
+    TEST_ASSERT_FALSE_MESSAGE(etkt->repeat(), text);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(Command::IDLE,
+                                  etkt->createStatus().currentCommand, text);
+  }
+
+  // And one that is whole is read, so it is the text above that is refused.
+  stubNvsText()["lastrun"]["run"] =
+      "{\"label\":\"AB\",\"copies\":2,\"cut\":true}";
+  reboot();
+  TEST_ASSERT_TRUE(etkt->repeat());
+  etkt->loop();
+}
+
+// --- changing the roll at the machine --------------------------------------
+// The roll runs out about every seventy labels, which makes the change the
+// thing done most often at the machine. So the machine keeps track of whether
+// its roll is out, through a reboot, and asks for the next one on its own
+// screen, where the button can answer it with no phone and no network.
+
+// A roll that has been unloaded is out, and where the idle screen would be
+// the machine says what it wants next: a new roll, and the button.
+void test_an_unloaded_roll_is_out_and_the_machine_asks_for_the_next(void) {
+  submit(Command::REEL);
+  etkt->loop();
+  TEST_ASSERT_FALSE(etkt->createStatus().roll.out);
+  display->clear();
+
+  submit(Command::UNLOAD);
+  etkt->loop();
+
+  TEST_ASSERT_TRUE(etkt->createStatus().roll.out);
+  TEST_ASSERT_EQUAL_INT((int)Screen::NEW_ROLL, (int)display->screens().back());
+  TEST_ASSERT_EQUAL_INT(0, display->countOf(DisplayCall::RENDER_IDLE));
+}
+
+// An unload stopped partway has left the end of the tape somewhere short of
+// the cutter, and cannot say whether it is still in the cog. A run printed
+// from there would start on no tape, so the roll counts as out, and a load
+// is what puts it right, whichever it was.
+void test_an_unload_stopped_partway_takes_the_roll_out_all_the_same(void) {
+  submit(Command::REEL);
+  etkt->loop();
+  static long threaded;
+  threaded = feedStepper->currentPosition();
+  feedStepper->afterStep = [] {
+    if (feedStepper->currentPosition() != threaded) {
+      etkt->stop();
+    }
+  };
+
+  submit(Command::UNLOAD);
+  etkt->loop();
+
+  TEST_ASSERT_EQUAL_INT(Command::UNLOAD,
+                        (int)etkt->createStatus().stopped.command);
+  TEST_ASSERT_TRUE(etkt->createStatus().roll.out);
+  TEST_ASSERT_EQUAL_INT((int)Screen::NEW_ROLL, (int)display->screens().back());
+}
+
+// A stop that is ahead of the unload leaves the tape at the cutter, where it
+// was, and the roll in: the machine goes back to its idle screen, and the
+// next run prints on it.
+void test_an_unload_stopped_before_the_tape_moves_leaves_the_roll_in(void) {
+  submit(Command::REEL);
+  etkt->loop();
+  const long threaded = feedStepper->currentPosition();
+
+  submit(Command::UNLOAD);
+  etkt->stop();
+  etkt->loop();
+
+  TEST_ASSERT_EQUAL_INT32(threaded, feedStepper->currentPosition());
+  TEST_ASSERT_FALSE(etkt->createStatus().roll.out);
+  TEST_ASSERT_TRUE(display->last(DisplayCall::RENDER_IDLE)->stopped);
+}
+
+// A load that runs to its end has threaded the new roll through to the
+// cutter, and the idle screen comes back.
+void test_a_load_that_runs_to_its_end_puts_the_roll_back_in(void) {
+  submit(Command::UNLOAD);
+  etkt->loop();
+  TEST_ASSERT_TRUE(etkt->createStatus().roll.out);
+  display->clear();
+
+  submit(Command::REEL);
+  etkt->loop();
+
+  TEST_ASSERT_FALSE(etkt->createStatus().roll.out);
+  TEST_ASSERT_EQUAL_INT((int)Screen::REELING, (int)display->screens().back());
+  TEST_ASSERT_EQUAL_INT(1, display->countOf(DisplayCall::RENDER_IDLE));
+}
+
+// A load is stopped because the tape is not catching. The roll is no more
+// threaded than it was, so it stays out and the machine goes on asking: the
+// next press of the button loads it again, rather than printing on it.
+void test_a_load_stopped_partway_leaves_the_roll_out(void) {
+  submit(Command::UNLOAD);
+  etkt->loop();
+  static long backedOut;
+  backedOut = feedStepper->currentPosition();
+  feedStepper->afterStep = [] {
+    if (feedStepper->currentPosition() != backedOut) {
+      etkt->stop();
+    }
+  };
+
+  submit(Command::REEL);
+  etkt->loop();
+
+  TEST_ASSERT_EQUAL_INT(Command::REEL,
+                        (int)etkt->createStatus().stopped.command);
+  TEST_ASSERT_TRUE(etkt->createStatus().roll.out);
+  TEST_ASSERT_EQUAL_INT((int)Screen::NEW_ROLL, (int)display->screens().back());
+}
+
+// The machine is switched off with its roll out as easily as with one in,
+// and says so again when it comes back up: what it shows once it has booted
+// is the notice, not the idle screen.
+void test_a_roll_that_is_out_is_still_out_after_a_reboot(void) {
+  submit(Command::UNLOAD);
+  etkt->loop();
+
+  reboot();
+
+  TEST_ASSERT_TRUE(etkt->createStatus().roll.out);
+  etkt->showIdle();
+  TEST_ASSERT_EQUAL_INT((int)Screen::NEW_ROLL, (int)display->screens().back());
+  TEST_ASSERT_EQUAL_INT(0, display->countOf(DisplayCall::RENDER_IDLE));
+}
+
+// A machine that has never kept track takes its roll to be in, as every
+// machine built before this did, and shows the idle screen once it has
+// booted.
+void test_a_machine_with_its_roll_in_shows_the_idle_screen(void) {
+  TEST_ASSERT_FALSE(etkt->createStatus().roll.out);
+
+  etkt->showIdle();
+
+  TEST_ASSERT_EQUAL_INT(1, display->countOf(DisplayCall::RENDER_IDLE));
+  TEST_ASSERT_FALSE(display->last(DisplayCall::RENDER_IDLE)->stopped);
+  TEST_ASSERT_EQUAL_INT(0, (int)display->screens().size());
+}
+
 // --- how long it takes ---------------------------------------------------
 
 // Where the estimate counts a job's home from: see Printhead::homeUs().
@@ -871,6 +1176,7 @@ void test_a_run_stopping_now_has_no_time_left(void) {
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_a_submitted_feed_runs_and_the_machine_goes_idle);
+  RUN_TEST(test_the_machine_is_busy_from_taking_a_job_until_the_job_ends);
   RUN_TEST(test_a_finished_run_shows_finished_and_records_no_stop);
   RUN_TEST(test_a_run_reports_which_label_it_is_on_and_how_far_into_it);
   RUN_TEST(test_the_wheel_turns_while_the_tape_feeds_up_to_each_character);
@@ -898,6 +1204,20 @@ int main(int, char**) {
   RUN_TEST(test_a_run_stopped_after_a_label_finishes_that_label_only);
   RUN_TEST(test_a_stop_during_the_finish_ends_the_celebration);
   RUN_TEST(test_the_next_job_clears_the_last_stop);
+  RUN_TEST(test_the_last_run_can_be_printed_again);
+  RUN_TEST(test_the_last_run_outlives_a_reboot);
+  RUN_TEST(test_a_machine_that_has_printed_no_run_has_none_to_repeat);
+  RUN_TEST(test_the_last_run_is_refused_while_another_job_has_the_machine);
+  RUN_TEST(test_a_stopped_run_is_still_the_last_run_as_it_was_asked_for);
+  RUN_TEST(test_a_new_run_takes_the_place_of_the_last_one);
+  RUN_TEST(test_a_stored_run_that_cannot_be_read_is_not_printed);
+  RUN_TEST(test_an_unloaded_roll_is_out_and_the_machine_asks_for_the_next);
+  RUN_TEST(test_an_unload_stopped_partway_takes_the_roll_out_all_the_same);
+  RUN_TEST(test_an_unload_stopped_before_the_tape_moves_leaves_the_roll_in);
+  RUN_TEST(test_a_load_that_runs_to_its_end_puts_the_roll_back_in);
+  RUN_TEST(test_a_load_stopped_partway_leaves_the_roll_out);
+  RUN_TEST(test_a_roll_that_is_out_is_still_out_after_a_reboot);
+  RUN_TEST(test_a_machine_with_its_roll_in_shows_the_idle_screen);
   RUN_TEST(test_the_estimate_of_a_run_is_how_long_it_takes);
   RUN_TEST(test_a_run_reports_how_long_it_has_left);
   RUN_TEST(test_a_run_counts_down_from_the_label_time_it_measures);

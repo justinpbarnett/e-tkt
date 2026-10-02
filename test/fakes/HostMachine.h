@@ -23,6 +23,7 @@
 #include "FakeMagnet.h"
 #include "Feeder.h"
 #include "HallSwitch.h"
+#include "LastRun.h"
 #include "Light.h"
 #include "Logger.h"
 #include "Press.h"
@@ -48,6 +49,7 @@ class HostMachine {
   Sound sound;
   Settings settings;
   Roll roll;
+  LastRun lastRun;
   Light ledFinish;
   Light ledChar;
   Press press;
@@ -65,6 +67,7 @@ class HostMachine {
         sound(&stopSignal),
         settings(&logger),
         roll(&logger),
+        lastRun(&logger),
         ledFinish(FINISH_LED_PIN, &stopSignal),
         ledChar(CHARACTER_LED_PIN, &stopSignal),
         press(&logger, SERVO_PIN, &ledChar, &pressServo),
@@ -72,8 +75,8 @@ class HostMachine {
         feeder(&logger, &feedStepper, &stopSignal),
         daisywheel(&logger, &hall, &charStepper, &stopSignal, &feeder),
         printhead(&logger, &daisywheel, &press, &stopSignal, &feeder),
-        etkt(&logger, &settings, &display, &printhead, &feeder, &roll, &sound,
-             &ledFinish, &ledChar, &stopSignal) {
+        etkt(&logger, &settings, &display, &printhead, &feeder, &roll, &lastRun,
+             &sound, &ledFinish, &ledChar, &stopSignal) {
     this->magnet.install();
     this->etkt.initialize();
     this->display.clear();

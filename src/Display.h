@@ -32,6 +32,7 @@ enum class Screen {
   TESTING,
   FINISHED,
   WIFI_JOINING,
+  NEW_ROLL,
   REBOOTING,
 };
 

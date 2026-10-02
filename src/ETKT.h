@@ -9,6 +9,7 @@
 #include "Configuration.h"
 #include "Display.h"
 #include "Feeder.h"
+#include "LastRun.h"
 #include "Light.h"
 #include "Logger.h"
 #include "Printhead.h"
@@ -393,6 +394,7 @@ class ETKT {
   Feeder* feeder;
   Sound* sound;
   Roll* roll;
+  LastRun* lastRun;
 
   // Device state, which should only ever be modified inside an exclusive lock.
   CommandOptions* command = NULL;
@@ -502,8 +504,8 @@ class ETKT {
 
  public:
   ETKT(Logger* logger, Settings* settings, Display* display,
-       Printhead* printhead, Feeder* feeder, Roll* roll, Sound* sound,
-       Light* ledFinish, Light* ledChar, StopSignal* stopSignal);
+       Printhead* printhead, Feeder* feeder, Roll* roll, LastRun* lastRun,
+       Sound* sound, Light* ledFinish, Light* ledChar, StopSignal* stopSignal);
   ~ETKT();
 
   /**
@@ -533,6 +535,34 @@ class ETKT {
    * way.
    */
   void submit(const CommandOptions& options, const String& id = "");
+
+  /**
+   * @brief Hands the job runner the last run of labels again: the same
+   * label, as many of it, cut or not. What the button on the machine does
+   * while nothing runs, so a run can be printed again with no phone and no
+   * network to ask it over.
+   *
+   * The last run is the last one the machine started, finished or not, and
+   * is kept through a reboot: see LastRun. Returns false, and starts
+   * nothing, when the machine has never started one. Throws
+   * PrinterBusyException if a command is already in flight, as submit()
+   * does.
+   *
+   * It is sent under no id, so the status then names none.
+   */
+  bool repeat();
+
+  /**
+   * @brief Draws what the machine shows while it waits for a job: the idle
+   * screen, or, while the roll is out, the notice that asks for the next
+   * one.
+   *
+   * loop() draws it as each job ends, and setup() once the machine has
+   * booted. `stopped` is whether the job that just ended was stopped, which
+   * the idle screen says. For the task that runs loop() only: the screen is
+   * not drawn from two tasks.
+   */
+  void showIdle(bool stopped = false);
 
   /**
    * @brief Stops what the machine is doing, now.
@@ -609,4 +639,13 @@ class ETKT {
    * no gain.
    */
   StatusUpdate createStatus();
+
+  /**
+   * @brief Whether a command is in flight: taken, and not yet let go.
+   *
+   * What createStatus() reports as a currentCommand other than IDLE, for a
+   * caller that asks many times a second and wants nothing else: the button
+   * on the machine. Safe to call from any task.
+   */
+  bool busy();
 };

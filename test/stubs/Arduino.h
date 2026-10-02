@@ -194,6 +194,13 @@ inline std::map<std::string, std::map<std::string, uint32_t>>& stubNvs() {
   return nvs;
 }
 
+// The text it keeps, the same way. A key holds a number or text, never both.
+inline std::map<std::string, std::map<std::string, std::string>>&
+stubNvsText() {
+  static std::map<std::string, std::map<std::string, std::string>> nvs;
+  return nvs;
+}
+
 // Every note ESP32Tone was asked for. See ESP32Tone.h beside this file.
 struct StubTone {
   int pin;
@@ -239,6 +246,7 @@ inline void stubReset() {
   stubAnalogRead() = nullptr;
   stubDigitalRead() = nullptr;
   stubNvs().clear();
+  stubNvsText().clear();
   stubTones().clear();
   stubRestarts() = 0;
   stubHeap().freeBytes = 0;

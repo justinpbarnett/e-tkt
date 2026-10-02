@@ -123,8 +123,12 @@ class Feeder : public Background {
    *
    * A stop halts it as it halts a feed. With ENABLE_FEED off nothing moves,
    * and it waits half a second in place of the feeds.
+   *
+   * Returns whether the motor turned the tape back at all. However little,
+   * the end of the tape is then no longer at the cutter, and what it does not
+   * say is whether the end is still in the cog.
    */
-  void backOut(int feeds);
+  bool backOut(int feeds);
 
   /**
    * @brief How long feed(feeds) takes: from start() to the tape settled and

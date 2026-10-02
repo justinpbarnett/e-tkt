@@ -35,11 +35,13 @@
 
 #include "Api.h"
 #include "ArduinoDrivers.h"
+#include "Button.h"
 #include "Configuration.h"
 #include "DaisyWheel.h"
 #include "ETKT.h"
 #include "Feeder.h"
 #include "HallSwitch.h"
+#include "LastRun.h"
 #include "Light.h"
 #include "Logger.h"
 #include "Network.h"
@@ -88,6 +90,7 @@ Sound* sound = new Sound(stopSignal);
 OledDisplay* display = new OledDisplay(sound, screen);
 Settings* settings = new Settings(logger);
 Roll* roll = new Roll(logger);
+LastRun* lastRun = new LastRun(logger);
 Light* ledFinish = new Light(FINISH_LED_PIN, stopSignal);
 Light* ledChar = new Light(CHARACTER_LED_PIN, stopSignal);
 Press* press = new Press(logger, SERVO_PIN, ledChar, pressServo);
@@ -99,12 +102,24 @@ DaisyWheel* daisywheel =
     new DaisyWheel(logger, hall, charStepper, stopSignal, feeder);
 Printhead* printhead =
     new Printhead(logger, daisywheel, press, stopSignal, feeder);
-ETKT* etkt = new ETKT(logger, settings, display, printhead, feeder, roll, sound,
-                      ledFinish, ledChar, stopSignal);
+ETKT* etkt = new ETKT(logger, settings, display, printhead, feeder, roll,
+                      lastRun, sound, ledFinish, ledChar, stopSignal);
 // Everything the device answers under /api/, which the webserver hands every
 // such request to.
 Api* api = new Api(etkt, logger);
 Network* network = new Network(logger, display, api, WIFI_RESET_PIN);
+// The same switch the network reads once, at boot. From then on it is the
+// button's.
+Button* button = new Button(WIFI_RESET_PIN, etkt, logger);
+
+// Reads the button for as long as the machine is on. A task of its own, so
+// that a press stops a job while loop() below is busy running it.
+static void buttonTask(void*) {
+  for (;;) {
+    button->poll();
+    vTaskDelay(pdMS_TO_TICKS(BUTTON_POLL_MS));
+  }
+}
 
 void setup() {
   // Initialize hardware
@@ -116,8 +131,14 @@ void setup() {
   // Start WiFi, network.
   network->initialize();
 
-  // Display the ready "idle" screen.
-  display->renderIdle(false);
+  // Display the ready "idle" screen, or the notice that the roll is out.
+  etkt->showIdle();
+
+  // Core 0, beside the Wi-Fi join's task and for its reason: core 1 is the
+  // motors'. A press logs, and the log lines allocate, so the stack is that
+  // task's size too.
+  button->initialize();
+  xTaskCreatePinnedToCore(buttonTask, "button", 6144, NULL, 1, NULL, 0);
 }
 
 void loop() { etkt->loop(); }
