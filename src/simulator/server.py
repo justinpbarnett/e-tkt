@@ -21,9 +21,9 @@ without sudo. --speed 10 runs the machine ten times as fast. --lose 30 is a
 weak network, which leaves 30 in a hundred requests to the api unanswered.
 
 The machine has no network to start with, so it opens its own. The radio it
-has is a list of networks, which main.cpp names: one lets it in, one turns it
-away twice first, one has no address to give. The password of every one that
-has a password is labelmaker.
+has is a list of networks, which fillAir() in main.cpp names, each with what
+it does to a machine that tries it. AIR_PASSWORD there is the password of the
+ones that have one.
 """
 
 import asyncio

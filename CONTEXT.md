@@ -401,7 +401,7 @@ The fake steppers step on AccelStepper's schedule against the stubs' clock, and 
 So a label takes as long in the simulator as on the machine, wheel and tape and all, or a tenth of that at `--speed 10`.
 A host that cannot keep up runs the machine slower than asked, and never bends its time.
 `--lose PERCENT` makes the link a weak one: that many in a hundred requests to the Api get no answer, half of them lost on the way in and half answered with the answer lost on the way back, which is the half that used to run a command twice.
-The **link** runs in it as well, against the `FakeRadio`, with an air that `main.cpp` fills: a network to join, one that turns the machine away twice, one that gives no address, one with markup for a name.
+The **link** runs in it as well, against the `FakeRadio`, with an air that `fillAir()` in `main.cpp` fills, where each network is named with what it is there for.
 So the panel's Network card is worked against the firmware's own replies.
 What it cannot show is what only a radio does: a listen takes no time there, and nobody joins the machine's own network.
 It has no **button** either.

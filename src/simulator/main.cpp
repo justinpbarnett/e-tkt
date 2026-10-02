@@ -33,24 +33,11 @@
 // firmware's own too, on the radio in test/fakes, which has an air where the
 // board has an antenna: a list of networks, and how each one answers a machine
 // that tries it. So the panel's network card can be tried against whatever a
-// network does, and the host joins and opens nothing. The machine is
-// E-TKT-9C4F, and it hears
-//
-//   Workshop                          which lets it in
-//   E-TKT-51B2                        another label maker's own network
-//   Church Guest                      no password, and two access points
-//   <b>Cafe</b> & "Friends"           a name a page has to show as it is
-//   Full House                        no password, and no address to give
-//   The Longest Network Name Allowed  as long as a name gets
-//   Jugendcafé 🎸                      a name that is not all ASCII
-//   Far Corner                        weak, and turns it away twice first
-//
-// and one that hides its name. Every one with a password has the same
-// password: labelmaker. A network takes two seconds to let the machine in,
-// and one more to give it an address. Listening on every channel takes no
-// time, where the radio takes a few seconds over it: the board listens
-// beside its job runner, and here it would be time taken out of a label.
-// Nobody joins the machine's own network.
+// network does, and the host joins and opens nothing. fillAir() below names
+// the networks this machine hears, each with what it is there for, and
+// AIR_PASSWORD is the password of the ones that have one. What the air cannot
+// show is what only a radio does: a listen takes no time here, and nobody
+// joins the machine's own network.
 //
 // server.py builds and runs it. By hand:
 //   pio run -e simulator
@@ -84,10 +71,10 @@
 static const size_t HEAP_FREE_BYTES = 200000;
 static const size_t HEAP_LARGEST_FREE_BLOCK_BYTES = 110000;
 
+// --- The air ---
+
 // The password of every network in the air that has one.
 static const char AIR_PASSWORD[] = "labelmaker";
-
-// --- The air ---
 
 static FakeNetwork* broadcast(FakeRadio* radio, const char* ssid,
                               const char* password, int channel, int rssi) {
@@ -98,28 +85,37 @@ static FakeNetwork* broadcast(FakeRadio* radio, const char* ssid,
 }
 
 /**
- * @brief Puts in the air the networks the machine hears. The top of this
- * file says what each one is there for.
+ * @brief Puts in the air the networks the machine hears, each one there for
+ * something the panel's Network card has to deal with.
  */
 static void fillAir(FakeRadio* radio) {
   // The board listens beside its job runner. Here a listen that took time
   // would take it out of a label.
   radio->surveyMs = 0;
 
+  // The one to join: it lets the machine in at the first try.
   broadcast(radio, "Workshop", AIR_PASSWORD, 6, -48);
+  // One that hides its name, which the firmware leaves out of what it lists.
   broadcast(radio, "", AIR_PASSWORD, 6, -55);
+  // Another label maker's own network.
   broadcast(radio, "E-TKT-51B2", AIR_PASSWORD, 1, -58)->address = "192.168.4.2";
-  // Two access points under one name. The fake radio joins the one put in
-  // the air last, so that is the louder one, as it is for a real radio.
+  // No password, and two access points under one name. The fake radio joins
+  // the one put in the air last, so that is the louder one, as it is for a
+  // real radio.
   broadcast(radio, "Church Guest", "", 11, -71)->address = "10.20.4.87";
   broadcast(radio, "Church Guest", "", 1, -63)->address = "10.20.4.87";
+  // A name with markup in it, which a page has to show as it is.
   broadcast(radio, "<b>Cafe</b> & \"Friends\"", AIR_PASSWORD, 11, -67)
       ->address = "192.168.0.14";
+  // No password, and no address to give.
   broadcast(radio, "Full House", "", 6, -70)->givesAddress = false;
+  // As long as a name gets.
   broadcast(radio, "The Longest Network Name Allowed", AIR_PASSWORD, 1, -77)
       ->address = "172.16.30.5";
+  // A name that is not all ASCII.
   broadcast(radio, "Jugendcafé 🎸", AIR_PASSWORD, 6, -81)->address =
       "192.168.178.61";
+  // Weak, and it turns the machine away twice before it lets it in.
   FakeNetwork* farCorner =
       broadcast(radio, "Far Corner", AIR_PASSWORD, 11, -86);
   farCorner->address = "192.168.7.23";
