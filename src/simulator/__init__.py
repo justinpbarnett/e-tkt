@@ -3,8 +3,8 @@
 See server.py.
 """
 
-from .server import (BuildFailed, DeviceError, NoPlatformIO, Server, build,
-                     weak_link)
+from .server import (BuildFailed, DeviceError, Lost, NoPlatformIO, Server,
+                     build, weak_link)
 
-__all__ = ["BuildFailed", "DeviceError", "NoPlatformIO", "Server", "build",
-           "weak_link"]
+__all__ = ["BuildFailed", "DeviceError", "Lost", "NoPlatformIO", "Server",
+           "build", "weak_link"]

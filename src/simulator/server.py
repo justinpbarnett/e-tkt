@@ -27,6 +27,7 @@ ones that have one.
 """
 
 import asyncio
+import enum
 import json
 import os
 import random
@@ -76,6 +77,18 @@ class BuildFailed(Exception):
 
 class DeviceError(Exception):
     """The firmware could not be started, or stopped before it booted."""
+
+
+class Lost(enum.Enum):
+    """What a network loses of one request under /api/."""
+
+    # Neither: the machine gets the request, and its answer gets back.
+    NOTHING = enum.auto()
+    # The request, on its way in. The machine is never asked.
+    REQUEST = enum.auto()
+    # The reply, on its way back. The machine did what it was asked, and
+    # whoever asked hears nothing.
+    REPLY = enum.auto()
 
 
 def platformio():
@@ -131,7 +144,7 @@ def read_reply(line):
 
 
 def weak_link(share, chance=random.random):
-    """What a network that loses `share` of what is sent over it does to
+    """What a network that loses `share` of what is sent over it loses of
     each request, as Server takes it. Half of what it loses never reaches
     the machine. The other half the machine answers, and the answer never
     gets back, which is the half that used to run a command twice.
@@ -141,8 +154,8 @@ def weak_link(share, chance=random.random):
     def loses():
         drawn = chance()
         if drawn < share / 2:
-            return "request"
-        return "reply" if drawn < share else None
+            return Lost.REQUEST
+        return Lost.REPLY if drawn < share else Lost.NOTHING
     return loses
 
 
@@ -176,10 +189,8 @@ class Server:
         sends down its serial port goes: None for this process's stderr, or
         anything asyncio.create_subprocess_exec takes, such as
         asyncio.subprocess.DEVNULL. `loses` says what the network loses of
-        each request under /api/, as weak_link() does: "request" for one
-        that never reaches the machine, "reply" for one whose answer never
-        gets back, and None for one that gets through. None for a network
-        that loses nothing.
+        each request under /api/, as a Lost, the way weak_link() does. None
+        for a network that loses nothing.
         """
         self.program = program
         self.speed = speed
@@ -265,8 +276,8 @@ class Server:
     async def relay(self, request):
         """Hands one request under /api/ to the firmware, as ApiHandler in
         Network.cpp hands one to the Api, and sends back its reply."""
-        lost = self.loses() if self.loses is not None else None
-        if lost == "request":
+        lost = self.loses() if self.loses is not None else Lost.NOTHING
+        if lost is Lost.REQUEST:
             return await self.unanswered(request)
         asked = {
             "method": request.method,
@@ -278,7 +289,7 @@ class Server:
                 "utf-8", "surrogateescape"),
         }
         reply = await self.ask(asked)
-        if lost == "reply":
+        if lost is Lost.REPLY:
             return await self.unanswered(request)
         if reply is None:
             return web.json_response({"error": self.gone()}, status=502)

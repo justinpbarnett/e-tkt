@@ -89,7 +89,7 @@ class RelayTestCase(unittest.IsolatedAsyncioTestCase):
     def loses(self):
         """What the link loses of each request, as Server takes it: nothing,
         unless a case says otherwise."""
-        return None
+        return server.Lost.NOTHING
 
     async def status(self):
         response = await self.client.get("/api/status")
@@ -575,7 +575,7 @@ class WeakLink(RelayTestCase):
         self.fates = []
 
     def loses(self):
-        return self.fates.pop(0) if self.fates else None
+        return self.fates.pop(0) if self.fates else server.Lost.NOTHING
 
     async def print_unanswered(self, lost):
         """Asks for a long run of labels over a link that loses `lost`, and
@@ -590,7 +590,7 @@ class WeakLink(RelayTestCase):
     async def test_a_request_lost_on_its_way_never_reaches_the_firmware(self):
         # Half of what a weak network loses. The panel hears nothing, and
         # the machine was never asked.
-        await self.print_unanswered("request")
+        await self.print_unanswered(server.Lost.REQUEST)
         status = await self.status()
         self.assertFalse(status["busy"])
         self.assertNotIn("last_command_id", status)
@@ -601,7 +601,7 @@ class WeakLink(RelayTestCase):
         # machine has the command, and the panel has heard nothing. Sent
         # again under its id, it is answered as it was and not refused as a
         # second command would be.
-        await self.print_unanswered("reply")
+        await self.print_unanswered(server.Lost.REPLY)
         self.assertTrue((await self.status())["busy"])
         response = await self.client.post(
             "/api/tag?id=3f9a0c5d7e21b684",
@@ -614,7 +614,7 @@ class WeakLink(RelayTestCase):
         # The polls after a lost reply can get through, and they name the
         # command the machine took by the id it was sent under. So the panel
         # learns that its command arrived without waiting to be answered.
-        await self.print_unanswered("reply")
+        await self.print_unanswered(server.Lost.REPLY)
         self.assertEqual("3f9a0c5d7e21b684",
                          (await self.status())["last_command_id"])
 
@@ -622,7 +622,7 @@ class WeakLink(RelayTestCase):
         # The panel polls while a command of its own goes unanswered, and
         # sends the command again. Neither waits for the lost one to be
         # given up on.
-        self.fates = ["request"]
+        self.fates = [server.Lost.REQUEST]
         lost = asyncio.ensure_future(self.client.get(
             "/api/status", timeout=ClientTimeout(total=JOB_SECONDS)))
         await asyncio.sleep(0.05)
@@ -637,12 +637,14 @@ class Losing(unittest.TestCase):
         # 20 on the way back.
         drawn = iter([0.0, 0.19, 0.2, 0.39, 0.4, 0.99])
         loses = server.weak_link(0.4, lambda: next(drawn))
-        self.assertEqual(["request", "request", "reply", "reply", None, None],
-                         [loses() for _ in range(6)])
+        self.assertEqual(
+            [server.Lost.REQUEST, server.Lost.REQUEST, server.Lost.REPLY,
+             server.Lost.REPLY, server.Lost.NOTHING, server.Lost.NOTHING],
+            [loses() for _ in range(6)])
 
     def test_a_link_that_loses_nothing_loses_nothing(self):
         loses = server.weak_link(0, lambda: 0.0)
-        self.assertIsNone(loses())
+        self.assertIs(server.Lost.NOTHING, loses())
 
 
 class Starting(unittest.IsolatedAsyncioTestCase):
