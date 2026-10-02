@@ -66,9 +66,10 @@ Before there was one, each press looked its own up, and the full test cut at the
 
 **Button** - the one tact switch on the machine, which works it with no phone and no network to reach it over.
 While a job runs, a press stops it the moment the button goes down, as the panel's stop does.
-While nothing runs, a press prints the **last run** again, as the button comes up.
+While nothing runs, a press prints the **last run** as the button comes up: what is left of it when it was cut short, and all of it again when it ran to its end.
 Held for `BUTTON_HOLD_MS` while nothing runs, it unloads the roll, and the next press loads one in place of printing.
-So a roll is changed with a hold and two presses: unload, load, and the run again.
+So a roll is changed with a hold and two presses: unload, load, and the run carries on.
+A press comes before those when the tape ran out while the run printed, to stop it.
 Held down as the machine starts, for all of `BUTTON_BOOT_HOLD_MS`, it does none of that: the machine forgets every **remembered network** and the password of its **own network**, and restarts.
 A reading that has not held for `BUTTON_DEBOUNCE_MS` is no press, because the pin has read low with nobody near it.
 A press that comes down before the machine has sat idle for `BUTTON_ARMING_MS` starts nothing, so a finger on its way to stop a job that has just ended does not print the run again.
@@ -231,12 +232,19 @@ The panel's "Cut after each label" box is `cut`, and the browser keeps the choic
 **Quantity** - the panel's way of asking for a run: one, multiple (2 up to `MAX_COPIES`), or max.
 Max is the labels that fit, capped at `MAX_COPIES`, worked out in the panel and sent as a number; the device has no idea of the end of the roll.
 
-**Last run** - the last run the machine started, finished or not: the label, how many of it, and whether each is cut.
-It is what a press of the **button** prints again, so a run can be repeated with no phone and no network to ask it over.
-It is kept in EEPROM, so it is still there after a reboot, and written only when it differs from the one kept, so printing the same run over and over writes nothing.
-The whole run comes again, not what a stop left of it, and the tape left is not looked at, as it is not for a run sent any other way.
+**Last run** - the last run the machine started, and how far it got: the label, how many of it, whether each is cut, and how many of them are printed.
+It is what a press of the **button** prints, so a run can be repeated, or carried on after a roll change, with no phone and no network to ask it over.
+A run that printed all of its labels comes whole again.
+One that ended before that is carried on at the first label it did not finish, whichever way it ended: a **stop**, a **stop after this label**, or a **lost** wheel.
+The run carried on keeps the numbers it was asked for, so it starts at 26 of 40 and not at 1 of 15: on the screen, in the status, and in a **stopped** record if it is stopped again.
+The same run sent from the panel is a new run, and starts at its first label.
+The machine cannot tell that the tape has run out, so the labels it pressed on no tape before somebody stopped it count as printed, and are not printed again.
+It is kept in EEPROM, so it is still there after a reboot.
+It is written only when it differs from what is kept: as a run begins, and as it ends for a run that ends short or that was carried on, never at every label.
+So printing the same run over and over writes nothing, and a machine that loses power in the middle of a run knows the run, but not how far it got since it began.
+The tape left is not looked at, as it is not for a run sent any other way.
 A machine that has never started a run has none, and a press then does nothing.
-`LastRun`, and `ETKT::repeat()`.
+`LastRun`, and `ETKT::printLastRun()`.
 
 **Estimate** - how long a run takes, worked out before it is sent: `POST /api/tag/estimate`, with the body the `tag` would be sent with.
 It answers with how long one label takes once the run is under way, `label_ms`, and how long the whole run takes, `run_ms`.

@@ -1,6 +1,6 @@
 // Host-side tests for the job runner, ETKT, through the calls the rest of
-// the firmware makes on it: submit, repeat, stop, createStatus, busy, loop
-// and showIdle.
+// the firmware makes on it: submit, printLastRun, stop, createStatus, busy,
+// loop and showIdle.
 //
 // Every stop rule the operator relies on lives in ETKT -- what can be
 // stopped, what a stop leaves on the tape, what the panel is told afterwards
@@ -13,6 +13,7 @@
 // Run with:  pio test -e native
 #include <unity.h>
 
+#include <functional>
 #include <utility>
 #include <vector>
 
@@ -84,13 +85,49 @@ static bool refused(Command command) {
   return false;
 }
 
-static bool repeatRefused(void) {
+static bool lastRunRefused(void) {
   try {
-    etkt->repeat();
+    etkt->printLastRun();
   } catch (const PrinterBusyException&) {
     return true;
   }
   return false;
+}
+
+// The label an operator stops the run at, or 0 for none.
+static int stopAtLabel;
+
+// Has the operator stop a run as its label `copy` begins, which is what they
+// do when the tape runs out: the labels before that one are printed, and
+// that one is not. Once, so the run that carries on from there is not
+// stopped at the same label.
+static void stopAsLabelBegins(int copy) {
+  stopAtLabel = copy;
+  display->onCall = [](const DisplayCall& call) {
+    if (call.kind == DisplayCall::RENDER_PROGRESS && stopAtLabel != 0 &&
+        call.copy == stopAtLabel) {
+      stopAtLabel = 0;
+      etkt->stop();
+    }
+  };
+}
+
+// The labels begun since the screen's record was last cleared, by the
+// numbers the progress screen gave them: "2 3" for the second and the third.
+static String labelsBegun(void) {
+  String labels;
+  int last = 0;
+  for (const DisplayCall& call : display->calls) {
+    if (call.kind != DisplayCall::RENDER_PROGRESS || call.copy == last) {
+      continue;
+    }
+    last = call.copy;
+    if (labels.length() > 0) {
+      labels += " ";
+    }
+    labels += String(last);
+  }
+  return labels;
 }
 
 // --- running a job -------------------------------------------------------
@@ -741,7 +778,7 @@ void test_the_last_run_can_be_printed_again(void) {
   etkt->loop();
   strokes->strokes.clear();
 
-  TEST_ASSERT_TRUE(etkt->repeat());
+  TEST_ASSERT_TRUE(etkt->printLastRun());
   const StatusUpdate status = etkt->createStatus();
   TEST_ASSERT_EQUAL_INT(Command::TAG, status.currentCommand);
   TEST_ASSERT_EQUAL_STRING("AB", status.currentLabel.c_str());
@@ -763,7 +800,7 @@ void test_the_last_run_outlives_a_reboot(void) {
 
   reboot();
 
-  TEST_ASSERT_TRUE(etkt->repeat());
+  TEST_ASSERT_TRUE(etkt->printLastRun());
   const StatusUpdate status = etkt->createStatus();
   TEST_ASSERT_EQUAL_INT(Command::TAG, status.currentCommand);
   TEST_ASSERT_EQUAL_STRING("♡ €5.00 ☆", status.currentLabel.c_str());
@@ -780,7 +817,7 @@ void test_a_machine_that_has_printed_no_run_has_none_to_repeat(void) {
   submit(Command::FEED);
   etkt->loop();
 
-  TEST_ASSERT_FALSE(etkt->repeat());
+  TEST_ASSERT_FALSE(etkt->printLastRun());
 
   TEST_ASSERT_EQUAL_INT(Command::IDLE, etkt->createStatus().currentCommand);
 }
@@ -792,31 +829,10 @@ void test_the_last_run_is_refused_while_another_job_has_the_machine(void) {
   etkt->loop();
   submit(Command::FEED);
 
-  TEST_ASSERT_TRUE(repeatRefused());
+  TEST_ASSERT_TRUE(lastRunRefused());
 
   TEST_ASSERT_EQUAL_INT(Command::FEED, etkt->createStatus().currentCommand);
   etkt->loop();
-}
-
-// A run stopped partway is still the last run, and all of it. The operator
-// who stopped it to change the roll wants the run they asked for, not what
-// happened to be left of it.
-void test_a_stopped_run_is_still_the_last_run_as_it_was_asked_for(void) {
-  display->onCall = [](const DisplayCall& call) {
-    if (call.kind == DisplayCall::RENDER_PROGRESS && call.copy == 2) {
-      etkt->stop();
-    }
-  };
-  submitTag("AB", 3);
-  etkt->loop();
-  display->onCall = nullptr;
-  TEST_ASSERT_EQUAL_INT(1, etkt->createStatus().stopped.printed);
-
-  TEST_ASSERT_TRUE(etkt->repeat());
-
-  TEST_ASSERT_EQUAL_INT(3, etkt->createStatus().copies);
-  etkt->loop();
-  TEST_ASSERT_EQUAL_INT(Command::IDLE, etkt->createStatus().stopped.command);
 }
 
 // The run printed again is the newest one, whatever was printed before it.
@@ -827,7 +843,7 @@ void test_a_new_run_takes_the_place_of_the_last_one(void) {
   etkt->loop();
   strokes->strokes.clear();
 
-  TEST_ASSERT_TRUE(etkt->repeat());
+  TEST_ASSERT_TRUE(etkt->printLastRun());
 
   const StatusUpdate status = etkt->createStatus();
   TEST_ASSERT_EQUAL_STRING("C", status.currentLabel.c_str());
@@ -838,7 +854,8 @@ void test_a_new_run_takes_the_place_of_the_last_one(void) {
 
 // What is read back from the flash is started with nobody having typed it,
 // so a stored run that is only partly a run is none at all: the machine
-// does not guess at the rest of it.
+// does not guess at the rest of it. Nor at where to start one that says it
+// got further than it can have.
 void test_a_stored_run_that_cannot_be_read_is_not_printed(void) {
   const char* const unreadable[] = {
       "",
@@ -850,12 +867,15 @@ void test_a_stored_run_that_cannot_be_read_is_not_printed(void) {
       "{\"label\":\"AB\",\"copies\":2,\"cut\":\"yes\"}",
       "{\"label\":7,\"copies\":2,\"cut\":true}",
       "{\"label\":\"AB\",\"copies\":2,\"cut\":tr",
+      "{\"label\":\"AB\",\"copies\":2,\"cut\":true,\"printed\":-1}",
+      "{\"label\":\"AB\",\"copies\":2,\"cut\":true,\"printed\":2}",
+      "{\"label\":\"AB\",\"copies\":2,\"cut\":true,\"printed\":\"1\"}",
   };
   for (const char* text : unreadable) {
     stubNvsText()["lastrun"]["run"] = text;
     reboot();
 
-    TEST_ASSERT_FALSE_MESSAGE(etkt->repeat(), text);
+    TEST_ASSERT_FALSE_MESSAGE(etkt->printLastRun(), text);
     TEST_ASSERT_EQUAL_INT_MESSAGE(Command::IDLE,
                                   etkt->createStatus().currentCommand, text);
   }
@@ -864,8 +884,226 @@ void test_a_stored_run_that_cannot_be_read_is_not_printed(void) {
   stubNvsText()["lastrun"]["run"] =
       "{\"label\":\"AB\",\"copies\":2,\"cut\":true}";
   reboot();
-  TEST_ASSERT_TRUE(etkt->repeat());
+  TEST_ASSERT_TRUE(etkt->printLastRun());
   etkt->loop();
+}
+
+// The flash wears with every write, and the button is there to print the
+// same run over and over. A run that ends owing nothing, as it began, writes
+// nothing about itself.
+void test_printing_the_same_run_again_and_again_writes_nothing(void) {
+  submitTag("AB", 2);
+  etkt->loop();
+  TEST_ASSERT_EQUAL_INT(1, stubNvsWrites()["lastrun"]);
+
+  for (int press = 0; press < 3; press++) {
+    TEST_ASSERT_TRUE(etkt->printLastRun());
+    etkt->loop();
+  }
+  submitTag("AB", 2);
+  etkt->loop();
+
+  TEST_ASSERT_EQUAL_INT(1, stubNvsWrites()["lastrun"]);
+}
+
+// --- carrying on a run that was cut short ----------------------------------
+// The roll runs out about every seventy labels, partway through any run
+// longer than that, and the machine cannot tell: it presses on at nothing
+// until somebody stops it. The button then prints what the run still owes,
+// rather than all of it again on a roll that cannot hold it.
+
+// Label 2 of 3 was being pressed when this run was stopped, so the second
+// and the third are what the button prints. They are counted as labels of
+// the run that was asked for, on the screen and in the status alike, from
+// the moment the job is taken.
+void test_a_run_cut_short_is_carried_on_from_where_it_stopped(void) {
+  stopAsLabelBegins(2);
+  submitTag("AB", 3);
+  etkt->loop();
+  TEST_ASSERT_EQUAL_INT(1, etkt->createStatus().stopped.printed);
+  const uint32_t fedBefore = etkt->createStatus().roll.feedsUsed;
+  display->clear();
+  static int firstReported;
+  firstReported = 0;
+  stubAfterDelay() = [] {
+    const StatusUpdate status = etkt->createStatus();
+    if (firstReported == 0 && status.currentCommand == Command::TAG) {
+      firstReported = status.copy;
+    }
+  };
+
+  TEST_ASSERT_TRUE(etkt->printLastRun());
+  const StatusUpdate taken = etkt->createStatus();
+  TEST_ASSERT_EQUAL_STRING("AB", taken.currentLabel.c_str());
+  TEST_ASSERT_EQUAL_INT(3, taken.copies);
+  etkt->loop();
+
+  TEST_ASSERT_EQUAL_STRING("2 3", labelsBegun().c_str());
+  TEST_ASSERT_EQUAL_INT(2, firstReported);
+  const StatusUpdate status = etkt->createStatus();
+  // Two labels of tape, at seven feeds each, and the usual finish.
+  TEST_ASSERT_EQUAL_UINT32(fedBefore + 14, status.roll.feedsUsed);
+  TEST_ASSERT_EQUAL_INT(Command::IDLE, status.stopped.command);
+  TEST_ASSERT_EQUAL_INT((int)Screen::FINISHED, (int)display->screens().back());
+}
+
+// The gentle stop ends a run early too. Asked for with the end of the roll
+// in sight, it leaves no label half pressed, and the button carries the run
+// on all the same.
+void test_a_run_ended_after_a_label_is_carried_on_too(void) {
+  submitTag("AB", 3);
+  stubAfterDelay() = [] {
+    if (etkt->createStatus().copy == 1) {
+      etkt->stopAfterLabel();
+    }
+  };
+  etkt->loop();
+  stubAfterDelay() = nullptr;
+  TEST_ASSERT_EQUAL_INT(Command::IDLE, etkt->createStatus().stopped.command);
+  display->clear();
+
+  TEST_ASSERT_TRUE(etkt->printLastRun());
+  etkt->loop();
+
+  TEST_ASSERT_EQUAL_STRING("2 3", labelsBegun().c_str());
+}
+
+// Once the labels a run owed are printed the run is done, and the button is
+// back to printing all of it again.
+void test_a_run_carried_on_to_its_end_comes_whole_the_next_time(void) {
+  stopAsLabelBegins(2);
+  submitTag("AB", 3);
+  etkt->loop();
+  TEST_ASSERT_TRUE(etkt->printLastRun());
+  etkt->loop();
+  display->clear();
+
+  TEST_ASSERT_TRUE(etkt->printLastRun());
+  etkt->loop();
+
+  TEST_ASSERT_EQUAL_STRING("1 2 3", labelsBegun().c_str());
+}
+
+// A machine is switched off to change its roll as often as not. Where the
+// run stopped is kept with the run.
+void test_where_a_run_was_cut_short_outlives_a_reboot(void) {
+  stopAsLabelBegins(3);
+  etkt->submit(tagOptions("AB", 4, false));
+  etkt->loop();
+
+  reboot();
+
+  TEST_ASSERT_TRUE(etkt->printLastRun());
+  TEST_ASSERT_EQUAL_INT(4, etkt->createStatus().copies);
+  etkt->loop();
+  TEST_ASSERT_EQUAL_STRING("3 4", labelsBegun().c_str());
+  // A and B for the third and for the fourth, and still not cut.
+  TEST_ASSERT_EQUAL_INT(4, (int)strokes->strokes.size());
+}
+
+// A long run meets the end of more than one roll. Every stop is counted from
+// where the run began, not from where the button took it up, so what the
+// panel says was printed is true, and the next press starts after it.
+void test_a_run_cut_short_twice_is_carried_on_from_the_second_stop(void) {
+  stopAsLabelBegins(2);
+  submitTag("AB", 4);
+  etkt->loop();
+  stopAsLabelBegins(3);
+  TEST_ASSERT_TRUE(etkt->printLastRun());
+  etkt->loop();
+  const StoppedCommand stopped = etkt->createStatus().stopped;
+  TEST_ASSERT_EQUAL_INT(2, stopped.printed);
+  TEST_ASSERT_EQUAL_INT(4, stopped.copies);
+  display->clear();
+
+  TEST_ASSERT_TRUE(etkt->printLastRun());
+  etkt->loop();
+
+  TEST_ASSERT_EQUAL_STRING("3 4", labelsBegun().c_str());
+}
+
+// A run stopped again before it has a label done stays where it was: the
+// labels printed before it was carried on are still printed.
+void test_a_run_stopped_again_with_no_label_done_stays_where_it_was(void) {
+  stopAsLabelBegins(2);
+  submitTag("AB", 3);
+  etkt->loop();
+  stopAsLabelBegins(2);
+  TEST_ASSERT_TRUE(etkt->printLastRun());
+  etkt->loop();
+  TEST_ASSERT_EQUAL_INT(1, etkt->createStatus().stopped.printed);
+  display->clear();
+
+  TEST_ASSERT_TRUE(etkt->printLastRun());
+  etkt->loop();
+
+  TEST_ASSERT_EQUAL_STRING("2 3", labelsBegun().c_str());
+}
+
+// A run stopped before its first label is done owes every label, and comes
+// whole.
+void test_a_run_stopped_before_a_label_is_done_comes_whole(void) {
+  submitTag("AB", 3);
+  etkt->stop();
+  etkt->loop();
+  TEST_ASSERT_EQUAL_INT(0, etkt->createStatus().stopped.printed);
+  display->clear();
+
+  TEST_ASSERT_TRUE(etkt->printLastRun());
+  etkt->loop();
+
+  TEST_ASSERT_EQUAL_STRING("1 2 3", labelsBegun().c_str());
+}
+
+// Only the button carries a run on. The same run sent from the panel after a
+// stop is a new run, all of it, and the whole of it is what the button
+// prints after that.
+void test_the_same_run_sent_from_the_panel_starts_at_its_first_label(void) {
+  stopAsLabelBegins(2);
+  submitTag("AB", 3);
+  etkt->loop();
+  display->clear();
+
+  submitTag("AB", 3);
+  etkt->loop();
+
+  TEST_ASSERT_EQUAL_STRING("1 2 3", labelsBegun().c_str());
+  display->clear();
+  TEST_ASSERT_TRUE(etkt->printLastRun());
+  etkt->loop();
+  TEST_ASSERT_EQUAL_STRING("1 2 3", labelsBegun().c_str());
+}
+
+// A run kept by the firmware before this one says nothing of how far it got,
+// and is printed whole. One that says so is carried on from there.
+void test_a_stored_run_is_carried_on_where_it_says_how_far_it_got(void) {
+  stubNvsText()["lastrun"]["run"] =
+      "{\"label\":\"AB\",\"copies\":3,\"cut\":true}";
+  reboot();
+  TEST_ASSERT_TRUE(etkt->printLastRun());
+  etkt->loop();
+  TEST_ASSERT_EQUAL_STRING("1 2 3", labelsBegun().c_str());
+
+  stubNvsText()["lastrun"]["run"] =
+      "{\"label\":\"AB\",\"copies\":3,\"cut\":true,\"printed\":1}";
+  reboot();
+  TEST_ASSERT_TRUE(etkt->printLastRun());
+  etkt->loop();
+  TEST_ASSERT_EQUAL_STRING("2 3", labelsBegun().c_str());
+}
+
+// Where a run stopped is written as it stops, and not label by label: once
+// for the stop, and once more when the labels it owed are done.
+void test_where_a_run_stopped_is_written_once_and_not_at_every_label(void) {
+  stopAsLabelBegins(4);
+  submitTag("AB", 6);
+  etkt->loop();
+  TEST_ASSERT_EQUAL_INT(2, stubNvsWrites()["lastrun"]);
+
+  TEST_ASSERT_TRUE(etkt->printLastRun());
+  etkt->loop();
+
+  TEST_ASSERT_EQUAL_INT(3, stubNvsWrites()["lastrun"]);
 }
 
 // --- changing the roll at the machine --------------------------------------
@@ -1081,15 +1319,19 @@ struct TimedRun {
   unsigned long runMs;
 };
 
-static TimedRun timeRun(const CommandOptions& options) {
+// Times the run that `start` hands the machine.
+static TimedRun timeJob(const std::function<void()>& start) {
   static TimedRun timed;
   static unsigned long startMs;
+  static int lastCopy;
   timed = TimedRun();
   startMs = millis();
+  lastCopy = 0;
   stubAfterTick() = [] {
     const StatusUpdate status = etkt->createStatus();
     const unsigned long atMs = millis() - startMs;
-    if (status.copy > (int)timed.labelStartMs.size()) {
+    if (status.copy > lastCopy) {
+      lastCopy = status.copy;
       timed.labelStartMs.push_back(atMs);
     }
     if (status.currentCommand == Command::TAG &&
@@ -1097,11 +1339,15 @@ static TimedRun timeRun(const CommandOptions& options) {
       timed.statuses.push_back({atMs, status});
     }
   };
-  etkt->submit(options);
+  start();
   etkt->loop();
   stubAfterTick() = nullptr;
   timed.runMs = millis() - startMs;
   return timed;
+}
+
+static TimedRun timeRun(const CommandOptions& options) {
+  return timeJob([&options] { etkt->submit(options); });
 }
 
 // What the panel shows before a run is sent: how long a label takes, and
@@ -1178,6 +1424,24 @@ void test_a_run_counts_down_from_the_label_time_it_measures(void) {
     TEST_ASSERT_UINT32_WITHIN(1, labelMs, status.labelMs);
     TEST_ASSERT_UINT32_WITHIN(20, timed.runMs - timedStatus.atMs,
                               status.remainingMs);
+  }
+}
+
+// A run that is carried on has only the labels it owed left to print, and
+// counts down those: the third, fourth and fifth of five here.
+void test_a_run_carried_on_reports_how_long_it_has_left(void) {
+  stopAsLabelBegins(3);
+  etkt->submit(tagOptions(" HELLO ", 5, true));
+  etkt->loop();
+  parkAtTheJ();
+
+  const TimedRun timed = timeJob([] { etkt->printLastRun(); });
+
+  TEST_ASSERT_EQUAL_INT(3, (int)timed.labelStartMs.size());
+  TEST_ASSERT_GREATER_THAN_INT(400, (int)timed.statuses.size());
+  for (const TimedStatus& timedStatus : timed.statuses) {
+    TEST_ASSERT_UINT32_WITHIN(timed.runMs / 100, timed.runMs - timedStatus.atMs,
+                              timedStatus.status.remainingMs);
   }
 }
 
@@ -1264,9 +1528,19 @@ int main(int, char**) {
   RUN_TEST(test_the_last_run_outlives_a_reboot);
   RUN_TEST(test_a_machine_that_has_printed_no_run_has_none_to_repeat);
   RUN_TEST(test_the_last_run_is_refused_while_another_job_has_the_machine);
-  RUN_TEST(test_a_stopped_run_is_still_the_last_run_as_it_was_asked_for);
   RUN_TEST(test_a_new_run_takes_the_place_of_the_last_one);
   RUN_TEST(test_a_stored_run_that_cannot_be_read_is_not_printed);
+  RUN_TEST(test_printing_the_same_run_again_and_again_writes_nothing);
+  RUN_TEST(test_a_run_cut_short_is_carried_on_from_where_it_stopped);
+  RUN_TEST(test_a_run_ended_after_a_label_is_carried_on_too);
+  RUN_TEST(test_a_run_carried_on_to_its_end_comes_whole_the_next_time);
+  RUN_TEST(test_where_a_run_was_cut_short_outlives_a_reboot);
+  RUN_TEST(test_a_run_cut_short_twice_is_carried_on_from_the_second_stop);
+  RUN_TEST(test_a_run_stopped_again_with_no_label_done_stays_where_it_was);
+  RUN_TEST(test_a_run_stopped_before_a_label_is_done_comes_whole);
+  RUN_TEST(test_the_same_run_sent_from_the_panel_starts_at_its_first_label);
+  RUN_TEST(test_a_stored_run_is_carried_on_where_it_says_how_far_it_got);
+  RUN_TEST(test_where_a_run_stopped_is_written_once_and_not_at_every_label);
   RUN_TEST(test_an_unloaded_roll_is_out_and_the_machine_asks_for_the_next);
   RUN_TEST(test_an_unload_stopped_partway_takes_the_roll_out_all_the_same);
   RUN_TEST(test_an_unload_stopped_before_the_tape_moves_leaves_the_roll_in);
@@ -1280,6 +1554,7 @@ int main(int, char**) {
   RUN_TEST(test_the_estimate_of_a_run_is_how_long_it_takes);
   RUN_TEST(test_a_run_reports_how_long_it_has_left);
   RUN_TEST(test_a_run_counts_down_from_the_label_time_it_measures);
+  RUN_TEST(test_a_run_carried_on_reports_how_long_it_has_left);
   RUN_TEST(test_a_run_stopping_after_its_label_counts_down_to_that_label);
   RUN_TEST(test_a_run_stopping_now_has_no_time_left);
   return UNITY_END();

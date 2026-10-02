@@ -197,6 +197,10 @@ struct CommandOptions {
   int force = 0;
   // How many of the label to print, one after another, 1 to MAX_COPIES.
   int copies = 1;
+  // Which label of the run to start at, counting from 1 as a status does.
+  // More than 1 for a run that is carried on from where it was cut short,
+  // which only the button on the machine asks for: see ETKT::printLastRun().
+  int firstCopy = 1;
   // Whether each label of the run is cut off the tape as it finishes. The
   // blade never goes all the way through, so the labels come off with
   // scissors either way, and a run can leave the cut out to save the time.
@@ -343,10 +347,12 @@ class ETKT {
   class RunClock {
    public:
     /**
-     * @brief A run of `copies` labels, estimated at `expected`, begins at
-     * `nowMs`, on its first label.
+     * @brief A run of `copies` labels begins at `nowMs`, on its label
+     * `first`: 1, or the label a run that was cut short is carried on from.
+     * The labels from that one on are estimated at `expected`.
      */
-    void start(const RunEstimate& expected, int copies, unsigned long nowMs);
+    void start(const RunEstimate& expected, int first, int copies,
+               unsigned long nowMs);
 
     /**
      * @brief Label `copy` of the run, counting from 1, begins at `nowMs`.
@@ -366,19 +372,22 @@ class ETKT {
     uint32_t labelMs() const;
 
     /**
-     * @brief When the run will be done, by millis(): the estimate until its
-     * first label is done, and then counted on from the label being
-     * pressed. A run that `endsWithThisLabel` is done after the label being
-     * pressed, and still has the celebration.
+     * @brief When the run will be done, by millis(): the estimate until the
+     * first label it presses is done, and then counted on from the label
+     * being pressed. A run that `endsWithThisLabel` is done after the label
+     * being pressed, and still has the celebration.
      */
     unsigned long endMs(bool endsWithThisLabel) const;
 
    private:
     RunEstimate expected;
+    // The label the run began on. See start().
+    int first = 0;
     int copies = 0;
     // See copy().
     int current = 0;
-    // When the run, its second label and the label being pressed began.
+    // When the run, the second label it pressed and the label being pressed
+    // began.
     unsigned long startMs = 0;
     unsigned long secondLabelStartMs = 0;
     unsigned long labelStartMs = 0;
@@ -542,20 +551,27 @@ class ETKT {
   void submit(const CommandOptions& options, const String& id = "");
 
   /**
-   * @brief Hands the job runner the last run of labels again: the same
-   * label, as many of it, cut or not. What the button on the machine does
-   * while nothing runs, so a run can be printed again with no phone and no
-   * network to ask it over.
+   * @brief Hands the job runner the last run of labels: the same label, cut
+   * or not, from where that run got to. What the button on the machine does
+   * while nothing runs, so a run can be printed again, and a roll changed
+   * partway through one, with no phone and no network to ask it over.
    *
-   * The last run is the last one the machine started, finished or not, and
-   * is kept through a reboot: see LastRun. Returns false, and starts
+   * A run that printed every label comes whole again. One that ended before
+   * that -- by a stop, by a stop after its label, or by a lost wheel -- is
+   * carried on at the first label it did not finish, and its labels keep the
+   * numbers they have in the run as it was asked for: 26 of 40, and on. The
+   * machine cannot tell that its tape has run out, so labels pressed at no
+   * tape before somebody stopped the run count as printed.
+   *
+   * The last run is the last one the machine started, and is kept through a
+   * reboot with how far it got: see LastRun. Returns false, and starts
    * nothing, when the machine has never started one. Throws
    * PrinterBusyException if a command is already in flight, as submit()
    * does.
    *
    * It is sent under no id, so the status then names none.
    */
-  bool repeat();
+  bool printLastRun();
 
   /**
    * @brief Draws what the machine shows while it waits for a job: the idle
@@ -655,4 +671,13 @@ class ETKT {
    * on the machine. Safe to call from any task.
    */
   bool busy();
+
+  /**
+   * @brief Whether the roll is out: unloaded, with no new one loaded since.
+   *
+   * What createStatus() reports as roll.out, for the button on the machine,
+   * which goes by it to tell a press that loads the new roll from one that
+   * prints. Safe to call from any task.
+   */
+  bool rollOut();
 };

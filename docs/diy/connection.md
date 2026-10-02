@@ -70,5 +70,8 @@ The button is for when the app cannot be reached, or when the device changes han
 Once the device is running, the same button works it without a phone.
 
 - while the device prints, a press stops it;
-- while it waits, a press prints the last run of labels again;
+- while it waits, a press prints the last run of labels again, or the rest of it when it was stopped before its last label;
 - while it waits, holding the button for a second and a half unloads the roll, and the screen then asks for a new one: put it in, and press the button to load it.
+
+So when the tape runs out in the middle of a run, the phone can stay in the pocket: press to stop the device, hold to unload, put the new roll in, press to load it, and press once more for the labels that are still to come.
+The device counts the labels it pressed and cannot see the tape, so the ones it pressed on no tape before it was stopped are not printed again.

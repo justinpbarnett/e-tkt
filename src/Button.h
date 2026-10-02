@@ -13,14 +13,15 @@
  *
  *   - While a job runs, a press stops it, as the panel's stop does. The stop
  *     is asked for as the button goes down.
- *   - While nothing runs, a press prints the last run again: see
- *     ETKT::repeat(). The run starts as the button comes up.
+ *   - While nothing runs, a press prints the last run: what is left of it
+ *     when it was cut short, and all of it again when it ran to its end. See
+ *     ETKT::printLastRun(). The run starts as the button comes up.
  *   - While nothing runs, holding the button for BUTTON_HOLD_MS unloads the
  *     roll. The machine then asks for the next roll on its screen, and a
  *     press loads it, in place of printing.
  *
  * So a roll is changed with a hold and two presses: unload, load, and the
- * run again.
+ * run carries on. A press stops the run first, if the tape ran out on it.
  *
  * Held down as the machine starts, it does none of that. It says so, and the
  * board makes the machine forget its networks: see heldAtStart().
@@ -80,6 +81,12 @@ class Button {
    * @brief The button has been down for BUTTON_HOLD_MS.
    */
   void held();
+
+  /**
+   * @brief Hands the job runner `command`, one that takes nothing but its
+   * name. Throws PrinterBusyException as ETKT::submit() does.
+   */
+  void start(Command command);
 
  public:
   /**

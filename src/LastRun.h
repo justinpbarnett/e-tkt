@@ -17,14 +17,18 @@ struct Run {
   bool cut = true;
 };
 
+inline bool operator==(const Run& a, const Run& b) {
+  return a.label == b.label && a.copies == b.copies && a.cut == b.cut;
+}
+
 /**
- * @brief Keeps the last run the machine printed, in EEPROM, so the button on
- * the machine can print it again: after a reboot, and with no phone and no
- * network to ask it over.
+ * @brief Keeps the last run the machine printed, and how far it got, in
+ * EEPROM, so the button on the machine can print it: after a reboot, and
+ * with no phone and no network to ask it over.
  *
- * The command loop keeps a run as it starts one, and the button reads it from
- * a task of its own, so every access is under one lock, which also covers
- * Preferences, as Roll's does.
+ * The command loop keeps a run as it starts one and as it ends, and the
+ * button reads it from a task of its own, so every access is under one lock,
+ * which also covers Preferences, as Roll's does.
  */
 class LastRun {
  private:
@@ -33,6 +37,9 @@ class LastRun {
   Preferences preferences;
   std::mutex lock;
   Run current;
+  // How many of its labels are printed and not to be printed again. See
+  // keep().
+  int printed = 0;
   // Whether there is one. A label of nothing is a run too, so this is kept
   // rather than read off the label.
   bool kept = false;
@@ -47,17 +54,23 @@ class LastRun {
   void initialize();
 
   /**
-   * @brief Keeps a run as the last one.
+   * @brief Keeps a run as the last one, with how many of its labels are
+   * printed.
    *
-   * Written only when it differs from the one already kept, so printing the
-   * same run again and again, which is what the button is for, writes
-   * nothing.
+   * The button prints the labels after those. So `printed` is 0 for a run
+   * that is to come whole, which is one that ran to its end as much as one
+   * that got no label done, and it is always less than the run's copies.
+   *
+   * Written only when the run or the count differs from what is already
+   * kept, so printing the same run again and again, which is what the button
+   * is for, writes nothing.
    */
-  void keep(const Run& run);
+  void keep(const Run& run, int printed);
 
   /**
-   * @brief Copies the last run into `run`. Returns false, and leaves `run`
-   * as it was, when there is none.
+   * @brief Copies the last run into `run`, and how many of its labels are
+   * printed into `printed`. Returns false, and leaves both as they were,
+   * when there is none.
    */
-  bool read(Run* run);
+  bool read(Run* run, int* printed);
 };

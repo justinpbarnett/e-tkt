@@ -201,6 +201,13 @@ stubNvsText() {
   return nvs;
 }
 
+// How many times each namespace has been written. The flash wears with
+// every write, and what a module stored does not say how often it stored it.
+inline std::map<std::string, int>& stubNvsWrites() {
+  static std::map<std::string, int> writes;
+  return writes;
+}
+
 // Every note ESP32Tone was asked for. See ESP32Tone.h beside this file.
 struct StubTone {
   int pin;
@@ -247,6 +254,7 @@ inline void stubReset() {
   stubDigitalRead() = nullptr;
   stubNvs().clear();
   stubNvsText().clear();
+  stubNvsWrites().clear();
   stubTones().clear();
   stubRestarts() = 0;
   stubHeap().freeBytes = 0;

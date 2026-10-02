@@ -276,8 +276,8 @@ constexpr char WIFI_OWN_ADDRESS[] = "192.168.4.1";
  * The tact switch on WIFI_RESET_PIN. Held through a boot it makes the
  * machine forget its networks, which was all it did. Once the machine is
  * up it now works the machine with no phone and no network: a press stops
- * a job, a press with nothing running prints the last run again, and a
- * hold unloads the roll. See Button.
+ * a job, a press with nothing running prints the last run, or what is left
+ * of one that was cut short, and a hold unloads the roll. See Button.
  */
 
 // How often the button is read.

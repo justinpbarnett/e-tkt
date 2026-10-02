@@ -2,13 +2,13 @@
 // and what is not taken for a press.
 //
 // The button works the machine with no phone and no network: a press stops a
-// job, a press with nothing running prints the last run again, and a hold
-// and a press change the roll. None of that could be checked without a
-// machine, a roll of tape and a finger. The machine here is the real one,
-// module for module, with fakes where it meets the hardware: a HostMachine.
-// The finger is the pin's reading by the clock, and the button is read as
-// the board's task reads it, every BUTTON_POLL_MS, whatever the job runner is
-// doing.
+// job, a press with nothing running prints the last run, or what a stop left
+// of it, and a hold and a press change the roll. None of that could be
+// checked without a machine, a roll of tape and a finger. The machine here
+// is the real one, module for module, with fakes where it meets the
+// hardware: a HostMachine. The finger is the pin's reading by the clock, and
+// the button is read as the board's task reads it, every BUTTON_POLL_MS,
+// whatever the job runner is doing.
 //
 // Run with:  pio test -e native
 #include <unity.h>
@@ -106,6 +106,23 @@ static void press(void) {
 static void hold(void) {
   pressIn(0, BUTTON_HOLD_MS + 1000);
   delay(BUTTON_HOLD_MS + 2 * BUTTON_DEBOUNCE_MS);
+}
+
+// The label of a run that the finger goes down at, or 0 for none.
+static int pressAtLabel;
+
+// Has the button pressed as label `copy` of the next run begins, which is
+// when an operator sees that the tape has run out. Once, so the run that is
+// carried on from there is left to print.
+static void pressAsLabelBegins(int copy) {
+  pressAtLabel = copy;
+  machine->display.onCall = [](const DisplayCall& call) {
+    if (call.kind == DisplayCall::RENDER_PROGRESS && pressAtLabel != 0 &&
+        call.copy == pressAtLabel) {
+      pressAtLabel = 0;
+      pressIn(0, 200);
+    }
+  };
 }
 
 // --- stopping a job --------------------------------------------------------
@@ -221,6 +238,43 @@ void test_a_roll_is_changed_and_the_run_printed_again_with_no_phone(void) {
   TEST_ASSERT_EQUAL_INT(Command::TAG, taken.currentCommand);
   TEST_ASSERT_EQUAL_STRING("AB", taken.currentLabel.c_str());
   TEST_ASSERT_EQUAL_INT(2, taken.copies);
+}
+
+void test_a_roll_that_runs_out_is_changed_and_the_run_carried_on(void) {
+  // The change as it comes partway through a run, which is most of them: the
+  // tape runs out, a press stops the run, and after the hold and the press
+  // that change the roll, one more press prints the labels the run still
+  // owed. Not the whole run again, on a roll that may not hold it.
+  pressAsLabelBegins(2);
+  run("AB", 3);
+  TEST_ASSERT_EQUAL_INT(1, etkt->createStatus().stopped.printed);
+  rest();
+  hold();
+  etkt->loop();
+  rest();
+  press();
+  etkt->loop();
+  rest();
+  machine->display.clear();
+
+  press();
+
+  const StatusUpdate taken = etkt->createStatus();
+  TEST_ASSERT_EQUAL_INT(Command::TAG, taken.currentCommand);
+  TEST_ASSERT_EQUAL_STRING("AB", taken.currentLabel.c_str());
+  TEST_ASSERT_EQUAL_INT(3, taken.copies);
+  etkt->loop();
+  // The second label and the third, numbered as the run that was asked for.
+  int firstLabel = 0;
+  for (const DisplayCall& call : machine->display.calls) {
+    if (call.kind == DisplayCall::RENDER_PROGRESS && firstLabel == 0) {
+      firstLabel = call.copy;
+    }
+  }
+  TEST_ASSERT_EQUAL_INT(2, firstLabel);
+  TEST_ASSERT_EQUAL_INT(
+      3, machine->display.last(DisplayCall::RENDER_PROGRESS)->copy);
+  TEST_ASSERT_EQUAL_INT(Command::IDLE, etkt->createStatus().stopped.command);
 }
 
 // --- what is not a press, and presses not meant for an idle machine --------
@@ -368,6 +422,7 @@ int main(int, char**) {
   RUN_TEST(test_holding_the_button_unloads_the_roll);
   RUN_TEST(test_a_hold_unloads_the_roll_once_however_long_it_lasts);
   RUN_TEST(test_a_roll_is_changed_and_the_run_printed_again_with_no_phone);
+  RUN_TEST(test_a_roll_that_runs_out_is_changed_and_the_run_carried_on);
   RUN_TEST(test_a_flicker_of_the_pin_is_not_a_press);
   RUN_TEST(test_a_press_just_after_a_job_ended_starts_nothing);
   RUN_TEST(test_a_button_already_down_as_the_machine_starts_starts_nothing);

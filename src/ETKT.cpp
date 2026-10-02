@@ -53,6 +53,26 @@ static String asPrinted(const String& label) {
   return printed;
 }
 
+// The run that a command to print labels asks for.
+static Run runOf(const CommandOptions& options) {
+  Run run;
+  run.label = options.label;
+  run.copies = options.copies;
+  run.cut = options.cut;
+  return run;
+}
+
+// The command that prints `run` from its label `firstCopy` on.
+static CommandOptions commandFor(const Run& run, int firstCopy) {
+  CommandOptions options;
+  options.command = Command::TAG;
+  options.label = run.label;
+  options.copies = run.copies;
+  options.cut = run.cut;
+  options.firstCopy = firstCopy;
+  return options;
+}
+
 // The one statement of what commands this device has. A row gives the
 // enumerator, the name it answers to on the wire and in /api/<name>, the
 // body field its text arrives in or NULL, the facts that hold for it, and
@@ -256,6 +276,8 @@ bool ETKT::busy() {
   return busy;
 }
 
+bool ETKT::rollOut() { return this->roll->state().out; }
+
 void ETKT::submit(const CommandOptions& options, const String& id) {
   // Copied on the way in. The webserver builds its options on the request
   // task's stack and the device needs them to outlive the request, but who
@@ -277,17 +299,13 @@ void ETKT::submit(const CommandOptions& options, const String& id) {
   this->lock.unlock();
 }
 
-bool ETKT::repeat() {
+bool ETKT::printLastRun() {
   Run last;
-  if (!this->lastRun->read(&last)) {
+  int printed = 0;
+  if (!this->lastRun->read(&last, &printed)) {
     return false;
   }
-  CommandOptions options;
-  options.command = Command::TAG;
-  options.label = last.label;
-  options.copies = last.copies;
-  options.cut = last.cut;
-  this->submit(options);
+  this->submit(commandFor(last, printed + 1));
   return true;
 }
 
@@ -596,30 +614,35 @@ void ETKT::moveCommandInternal() {
 }
 
 void ETKT::tagCommandInternal() {
-  // Kept as it begins, and as it was asked for, so a run that is stopped, or
-  // that the tape runs out on, is the one the button prints again.
-  Run asked;
-  asked.label = this->command->label;
-  asked.copies = this->command->copies;
-  asked.cut = this->command->cut;
-  this->lastRun->keep(asked);
-
+  const Run asked = runOf(*this->command);
   const String label = asPrinted(this->command->label);
   const int copies = this->command->copies;
+  // More than 1 for a run that is carried on from where it was cut short:
+  // the labels before this one are printed, and stay counted as printed.
+  const int first = this->command->firstCopy;
+  int done = first - 1;
+  // Kept as it begins, so the button has this run and no older one whatever
+  // becomes of it. How far it got is kept as it ends: see below.
+  this->lastRun->keep(asked, done);
+
   // At the calibration the run presses at, before anything moves.
   const RunEstimate expected =
       this->estimate(*this->command, this->calibration);
-  // On its first label from the start, not from its first feed. The panel
-  // polls throughout, and "label 0 of 3" while the press settles is nothing
-  // an operator can make sense of.
+  // On the first label it presses from the start, not from its first feed.
+  // The panel polls throughout, and "label 0 of 3" while the press settles
+  // is nothing an operator can make sense of.
   this->lock.lock();
-  this->runClock.start(expected, copies, millis());
+  this->runClock.start(expected, first, copies, millis());
+  this->printed = done;
   this->lock.unlock();
   // enables servo
   this->printhead->rest();
   delay(REST_SETTLE_MS);
 
-  if (copies > 1) {
+  if (first > 1) {
+    this->logger->log(String("print ") + label + " x " + copies + " from " +
+                      first);
+  } else if (copies > 1) {
     this->logger->log(String("print ") + label + " x " + copies);
   } else {
     this->logger->log(String("print ") + label);
@@ -627,7 +650,7 @@ void ETKT::tagCommandInternal() {
 
   this->ledChar->on(LIGHT_DIM);
 
-  for (int copy = 1; copy <= copies; copy++) {
+  for (int copy = first; copy <= copies; copy++) {
     this->lock.lock();
     this->runClock.labelStarted(copy, millis());
     this->progress = 0;
@@ -638,7 +661,7 @@ void ETKT::tagCommandInternal() {
     // Once a run, not once a label. The tune says printing has started, and
     // the same few seconds of it before every label of a long run would be
     // most of a minute of music for nothing.
-    if (copy == 1) {
+    if (copy == first) {
       this->sound->playTune(label);
       // Before any tape moves, so a wheel that cannot find its magnet stops
       // the run with nothing on the tape to cut off. Every character homes
@@ -654,8 +677,9 @@ void ETKT::tagCommandInternal() {
       break;
     }
     this->feedsAtLabelStart = this->feeder->feeds();
+    done = copy;
     this->lock.lock();
-    this->printed = copy;
+    this->printed = done;
     this->lock.unlock();
     if (copy == copies) {
       break;
@@ -678,6 +702,11 @@ void ETKT::tagCommandInternal() {
   }
 
   this->ledChar->off();
+  // What the button prints next: the labels this run still owes, or all of
+  // it again once it owes none. However the run ended early, which a stop
+  // after its label does too, cutting nothing short and leaving no record
+  // of itself.
+  this->lastRun->keep(asked, done < copies ? done : 0);
   if (this->stopSignal->cutShort()) {
     return;
   }
@@ -745,18 +774,19 @@ void ETKT::printLabel(const String& label, int copy, int copies) {
   this->feeder->finish();
 }
 
-void ETKT::RunClock::start(const RunEstimate& expected, int copies,
+void ETKT::RunClock::start(const RunEstimate& expected, int first, int copies,
                            unsigned long nowMs) {
   this->expected = expected;
+  this->first = first;
   this->copies = copies;
-  this->current = 1;
+  this->current = first;
   this->startMs = nowMs;
 }
 
 void ETKT::RunClock::labelStarted(int copy, unsigned long nowMs) {
   this->current = copy;
   this->labelStartMs = nowMs;
-  if (copy == 2) {
+  if (copy == this->first + 1) {
     this->secondLabelStartMs = nowMs;
   }
 }
@@ -764,18 +794,19 @@ void ETKT::RunClock::labelStarted(int copy, unsigned long nowMs) {
 int ETKT::RunClock::copy() const { return this->current; }
 
 uint32_t ETKT::RunClock::labelMs() const {
-  // The first label waits for the tune and the home, and turns the wheel
-  // from where the home left it rather than from where the last label did,
-  // so only the labels from the second on are timed.
-  if (this->current < 3) {
+  // The first label the run presses waits for the tune and the home, and
+  // turns the wheel from where the home left it rather than from where the
+  // last label did, so only the labels from its second on are timed.
+  const int timed = this->current - this->first - 1;
+  if (timed < 1) {
     return this->expected.labelMs;
   }
-  return (this->labelStartMs - this->secondLabelStartMs) / (this->current - 2);
+  return (this->labelStartMs - this->secondLabelStartMs) / timed;
 }
 
 unsigned long ETKT::RunClock::endMs(bool endsWithThisLabel) const {
   const int lastCopy = endsWithThisLabel ? this->current : this->copies;
-  if (this->current < 2) {
+  if (this->current <= this->first) {
     return this->startMs + this->expected.runMs -
            (this->copies - lastCopy) * this->expected.labelMs;
   }
@@ -804,7 +835,9 @@ RunEstimate ETKT::estimate(const CommandOptions& options,
       this->labelUs(characters, options.cut, calibration, &wheel);
   const uint64_t nextUs =
       this->labelUs(characters, options.cut, calibration, &wheel);
-  const uint64_t nextLabels = options.copies > 1 ? options.copies - 1 : 0;
+  // A run that is carried on has only the labels from its first on to press.
+  const int labels = options.copies - options.firstCopy + 1;
+  const uint64_t nextLabels = labels > 1 ? labels - 1 : 0;
   const uint64_t runUs = REST_SETTLE_MS * 1000 + this->sound->tuneUs(label) +
                          this->printhead->homeUs(calibration) + firstUs +
                          nextLabels * nextUs + CELEBRATION_MS * 1000;

@@ -48,7 +48,7 @@ description: "E-TKT"
 - QR code & URL for easily accessing the web app;
 - Real time embossing progress;
 - A password-protected network of its own, with a QR code for joining it, for when there is no other network or none worth using;
-- Button for stopping a job, printing the last run of labels again and changing the roll, with no phone at hand;
+- Button for stopping a job, changing the roll and carrying the run on, or printing the last run of labels again, with no phone at hand;
 - The same button, held while the device boots, for making it forget its networks;
 - Sound signature: each label owns a subtle melody 🐰🥚
 

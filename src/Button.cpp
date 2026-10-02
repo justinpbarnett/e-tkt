@@ -103,17 +103,15 @@ void Button::released() {
     return;
   }
   try {
-    if (this->etkt->createStatus().roll.out) {
+    if (this->etkt->rollOut()) {
       // What the notice on the screen asks for. The roll is taken to be as
       // long as the last one, since the button cannot say otherwise.
-      CommandOptions load;
-      load.command = Command::REEL;
-      this->etkt->submit(load);
+      this->start(Command::REEL);
       this->logger->log("Button pressed: loading the new roll");
-    } else if (this->etkt->repeat()) {
-      this->logger->log("Button pressed: printing the last run again");
+    } else if (this->etkt->printLastRun()) {
+      this->logger->log("Button pressed: printing the last run");
     } else {
-      this->logger->log("Button pressed, and there is no run to print again");
+      this->logger->log("Button pressed, and there is no run to print");
     }
   } catch (const PrinterBusyException&) {
     // A job from the panel got there first, between the button going down
@@ -125,11 +123,15 @@ void Button::released() {
 void Button::held() {
   this->spent = true;
   try {
-    CommandOptions unload;
-    unload.command = Command::UNLOAD;
-    this->etkt->submit(unload);
+    this->start(Command::UNLOAD);
     this->logger->log("Button held: unloading the roll");
   } catch (const PrinterBusyException&) {
     this->logger->log("Button held, and the machine was busy");
   }
+}
+
+void Button::start(Command command) {
+  CommandOptions options;
+  options.command = command;
+  this->etkt->submit(options);
 }

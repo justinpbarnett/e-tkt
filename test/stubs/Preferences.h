@@ -3,7 +3,8 @@
 // Stand-in for the ESP32 core's Preferences, which keeps small values in the
 // NVS partition of the flash. The partition here is stubNvs() in Arduino.h,
 // and stubNvsText() for the text in it: it outlives any one Settings or Roll,
-// the way flash outlives a reboot, and stubReset() wipes it.
+// the way flash outlives a reboot, and stubReset() wipes it. Every write is
+// counted in stubNvsWrites().
 //
 // Like the real one, it does nothing outside begin() and end(). A module that
 // forgets begin() reads its defaults and writes nothing, on the host as on
@@ -53,6 +54,7 @@ class Preferences {
       return 0;
     }
     stubNvs()[this->space][key] = value;
+    stubNvsWrites()[this->space]++;
     return sizeof(value);
   }
 
@@ -79,6 +81,7 @@ class Preferences {
       return 0;
     }
     stubNvsText()[this->space][key] = value;
+    stubNvsWrites()[this->space]++;
     return strlen(value);
   }
 
