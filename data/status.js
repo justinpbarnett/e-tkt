@@ -69,6 +69,13 @@ export function readCapabilities(response) {
   };
 }
 
+// What the page says until the device has said what it accepts. The page
+// asks as soon as it opens, and goes on asking, and on a slow link the answer
+// can be several tries away. Until it is in there is nothing to check a label
+// or a setting against, so whatever needs it cannot be pressed, and this is
+// the page saying why.
+export const WAITING_TO_HEAR = "Waiting to hear from the label maker…";
+
 // What the panel says of each command, keyed by the name the device answers
 // to. That name is also the path this panel posts to, api/<name>, and the
 // string /api/status reports back while the command runs.
@@ -175,10 +182,11 @@ export function printingRun(status, device) {
   return status !== null && status.busy && printsRun(status.command, device) ? status : null;
 }
 
-// What the page knows of the command running, as activity() and stopOffer()
-// take it:
+// What the page knows of the command running, as activity(), stopOffer() and
+// setupText() take it:
 //
-//   command     what is running, or about to
+//   command     what is running, or about to. Null when nothing is, which
+//               only setupText() is asked about
 //   status      the last api/status, or null before there is one
 //   stop        the stop the device has been asked for, as Stops.pending()
 //               has it, or null
@@ -262,6 +270,19 @@ export function stopOffer(running, device) {
     };
   }
   return offer;
+}
+
+// What the setup view says under its cards, or nothing. A command with no
+// stop to name it is named here, which leaves a save: the device can stop
+// everything else, and setup's own tests, the unload and the new roll say so
+// on their buttons as well. With nothing running, and until the device has
+// said what it accepts, the view says the page is waiting to hear: a new
+// roll, the tests and the steps cannot be pressed until then.
+export function setupText(running, device) {
+  if (running.command !== null) {
+    return stopOffer(running, device) === null ? busyText(running.command) : "";
+  }
+  return device === null ? WAITING_TO_HEAR : "";
 }
 
 // What a stop cut short, from the device's record of it, and why when it

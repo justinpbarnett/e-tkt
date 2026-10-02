@@ -24,7 +24,7 @@ struct Request {
   String path;
 
   // The query string's parameters, decoded: the id a command or a stop is
-  // sent under, and what a stop is to wait for.
+  // sent under, what a stop is to wait for, and the command it is for.
   std::map<String, String> query;
 
   // The Content-Type header, or empty if the request had none.
@@ -95,12 +95,17 @@ class Api {
   // request sent under none.
   void remember(const String& id, const Reply& reply);
 
+  // Refuses, from here on, the command sent under this id that has not
+  // arrived, and says whether there was one to refuse.
+  bool keepFromStarting(const String& command);
+
   // Which answers to a request sent under an id are kept: the ones that
   // took it, or every one, a refusal too.
   enum class Keep { ACCEPTED, EVERY_ANSWER };
 
   // What a request sent under an id was answered the first time, or what
-  // answerNow() says to it, kept for when it is sent again.
+  // answerNow() says to it, kept for when it is sent again. answerNow() is
+  // handed the id, which is empty for a request sent under none.
   template <typename AnswerNow>
   Reply once(const Request& request, Keep keep, AnswerNow answerNow);
 
@@ -111,7 +116,8 @@ class Api {
   // already matched. The routes that are not commands are a table in route(),
   // so each takes the request whether it reads it or not.
   Reply command(const CommandSpec* spec, const Request& request);
-  Reply submit(const CommandSpec* spec, const Request& request);
+  Reply submit(const CommandSpec* spec, const Request& request,
+               const String& id);
   Reply estimate(const CommandSpec* spec, const Request& request);
   Reply status(const Request& request);
   Reply stop(const Request& request);

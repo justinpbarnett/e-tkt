@@ -238,12 +238,13 @@ StatusUpdate ETKT::createStatus() {
     }
   }
   status.stopped = this->lastStopped;
+  status.lastCommandId = this->lastCommandId;
   this->lock.unlock();
 
   return status;
 }
 
-void ETKT::submit(const CommandOptions& options) {
+void ETKT::submit(const CommandOptions& options, const String& id) {
   // Copied on the way in. The webserver builds its options on the request
   // task's stack and the device needs them to outlive the request, but who
   // owns what should not be part of the interface: a refused command leaves
@@ -257,14 +258,25 @@ void ETKT::submit(const CommandOptions& options) {
     throw PrinterBusyException();
   }
   this->command = incoming;
+  this->lastCommandId = id;
   // A new job, so the last one's stop is old news.
   this->lastStopped = StoppedCommand();
   this->submitted.notify_one();
   this->lock.unlock();
 }
 
-StopResult ETKT::stop() {
+bool ETKT::isForLastCommand(const String& id) const {
+  return id.length() == 0 || id == this->lastCommandId;
+}
+
+StopResult ETKT::stop(const String& id) {
   this->lock.lock();
+  // Before anything else, and under the lock, so a command that arrives as
+  // its stop does is either the one the stop finds or one it leaves alone.
+  if (!this->isForLastCommand(id)) {
+    this->lock.unlock();
+    return StopResult::NOT_THE_COMMAND;
+  }
   if (this->command == NULL) {
     this->lock.unlock();
     return StopResult::IDLE;
@@ -285,8 +297,12 @@ StopResult ETKT::stop() {
   return StopResult::STOPPING;
 }
 
-StopResult ETKT::stopAfterLabel() {
+StopResult ETKT::stopAfterLabel(const String& id) {
   this->lock.lock();
+  if (!this->isForLastCommand(id)) {
+    this->lock.unlock();
+    return StopResult::NOT_THE_COMMAND;
+  }
   if (this->command == NULL) {
     this->lock.unlock();
     return StopResult::IDLE;

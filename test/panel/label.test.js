@@ -103,11 +103,20 @@ test("the line under the tape warns of a character the wheel prints as another",
 test("otherwise the line under the tape lists every character that may be typed", () => {
   // Three or more letters or digits in a row collapse to a range, and
   // nothing is left out, so the line cannot stop matching what the device
-  // accepts. Before the device has said, there is nothing to list.
+  // accepts.
   const device = labelMaker();
   assert.deepEqual(hintFor("hello", device), { text: "$ - . 0-9 @ A-Z € ☆ ♡ ♪ space", tone: null });
   assert.deepEqual(hintFor("", { ...device, printable: "ABDEFXZ" }), { text: "A B D-F X Z", tone: null });
-  assert.deepEqual(hintFor("", null), { text: "", tone: null });
+});
+
+test("until the device has said what it accepts, the line under the tape says the page is waiting to hear", () => {
+  // On a slow link that answer can be several tries away, and nothing prints
+  // until it is in. The line says why, whatever is typed meanwhile: there is
+  // nothing yet to check it against. In a tone of its own, which the page
+  // holds back for a moment, so the words do not flicker past on a quick link.
+  const waiting = { text: "Waiting to hear from the label maker…", tone: "waiting" };
+  assert.deepEqual(hintFor("", null), waiting);
+  assert.deepEqual(hintFor("a!b?", null), waiting);
 });
 
 test("a label is measured in characters as the device counts them", () => {

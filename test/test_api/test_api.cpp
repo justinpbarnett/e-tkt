@@ -96,6 +96,21 @@ static Reply postStopUnder(const char* id, const char* after) {
   return api->handle(request);
 }
 
+// A stop for one command alone, named by the id that command was sent under:
+// what the panel sends when Stop is tapped before the command was answered.
+static Reply postStopFor(const char* command, const char* id,
+                         const char* after) {
+  Request request;
+  request.method = Method::POST;
+  request.path = "/api/stop";
+  request.query["id"] = id;
+  request.query["for"] = command;
+  if (after != NULL) {
+    request.query["after"] = after;
+  }
+  return api->handle(request);
+}
+
 // What the job runner has in hand, which the Api's word alone does not prove.
 static Command running(void) {
   return machine->etkt.createStatus().currentCommand;
@@ -680,15 +695,16 @@ void test_the_status_says_how_much_memory_is_free_and_the_uptime(void) {
 }
 
 // The longest status there is: a run of the longest label of symbols, three
-// bytes each, with a stop asked for. Every field still fits, rather than the
-// last ones going missing without a word.
+// bytes each, sent under the longest id, with a stop asked for. Every field
+// still fits, rather than the last ones going missing without a word.
 void test_the_longest_status_has_every_field(void) {
   std::string label;
   for (int i = 0; i < 249; i++) {
     label += "\u2661";
   }
   const std::string body = "{\"tag\":\"" + label + "\",\"copies\":500}";
-  post("/api/tag", body.c_str());
+  const char* id = "123e4567-e89b-12d3-a456-426614174000";
+  postUnder(id, "/api/tag", body.c_str());
   machine->etkt.stopAfterLabel();
 
   const Reply reply = get("/api/status");
@@ -697,6 +713,7 @@ void test_the_longest_status_has_every_field(void) {
   const JsonObject status = json(reply);
   TEST_ASSERT_EQUAL_STRING(label.c_str(),
                            status["current_label"].as<const char*>());
+  TEST_ASSERT_EQUAL_STRING(id, status["last_command_id"].as<const char*>());
   TEST_ASSERT_EQUAL_STRING("after_label", status["stop"].as<const char*>());
   TEST_ASSERT_TRUE(status["roll"]["remaining_mm"].is<long>());
   TEST_ASSERT_TRUE(status["uptime_ms"].is<unsigned long>());
@@ -1058,8 +1075,8 @@ void test_a_stop_that_found_nothing_running_is_remembered_too(void) {
 // of them. One longer than a UUID is refused rather than kept, and nothing
 // runs.
 void test_an_id_too_long_to_keep_is_refused(void) {
-  const Reply command = postUnder("1234567890123456789012345678901234567",
-                                  "/api/cut", "{}");
+  const Reply command =
+      postUnder("1234567890123456789012345678901234567", "/api/cut", "{}");
 
   TEST_ASSERT_EQUAL_INT(400, command.code);
   TEST_ASSERT_EQUAL_STRING("An id may be at most 36 bytes", errorOf(command));
@@ -1104,12 +1121,189 @@ void test_the_newest_eight_ids_are_remembered(void) {
   TEST_ASSERT_EQUAL_INT((int)Command::CUT, (int)running());
 }
 
+// On a slow link the reply to a command can be lost while the polls after it
+// get through. The status names the id the command the device last took was
+// sent under, so the panel that sent it learns from a poll that it arrived,
+// and stops saying it has had no answer.
+void test_the_status_names_the_id_of_the_command_the_device_took(void) {
+  postUnder("press-1", "/api/cut", "{}");
+
+  const JsonObject status = json(get("/api/status"));
+
+  TEST_ASSERT_EQUAL_STRING("cut", status["command"].as<const char*>());
+  TEST_ASSERT_EQUAL_STRING("press-1",
+                           status["last_command_id"].as<const char*>());
+}
+
+// A short command can be over before a poll gets through. The status goes on
+// naming it once it has ended, until the device takes another.
+void test_the_status_names_a_command_after_it_has_ended(void) {
+  postUnder("press-1", "/api/cut", "{}");
+  machine->etkt.loop();
+
+  const JsonObject status = json(get("/api/status"));
+
+  TEST_ASSERT_FALSE(status["busy"].as<bool>());
+  TEST_ASSERT_EQUAL_STRING("press-1",
+                           status["last_command_id"].as<const char*>());
+}
+
+// A command the device refused was not taken, and neither was a stop, which
+// is no command. The status goes on naming the command that was.
+void test_the_status_names_only_a_command_the_device_took(void) {
+  postUnder("press-1", "/api/tag", "{\"tag\":\"AB\",\"copies\":3}");
+  TEST_ASSERT_EQUAL_INT(409, postUnder("press-2", "/api/feed", "{}").code);
+  TEST_ASSERT_EQUAL_INT(200, postStopUnder("stop-1", "label").code);
+
+  const JsonObject status = json(get("/api/status"));
+
+  TEST_ASSERT_EQUAL_STRING("press-1",
+                           status["last_command_id"].as<const char*>());
+}
+
+// A command sent under no id has none to be named by. The status then names
+// no command, rather than the one before it, and names none before the
+// device has taken any.
+void test_the_status_names_no_id_for_a_command_sent_under_none(void) {
+  TEST_ASSERT_FALSE(json(get("/api/status")).containsKey("last_command_id"));
+  postUnder("press-1", "/api/cut", "{}");
+  machine->etkt.loop();
+
+  post("/api/cut", "{}");
+
+  TEST_ASSERT_FALSE(json(get("/api/status")).containsKey("last_command_id"));
+}
+
 // How many ids the device keeps, which tells a panel that it keeps any: a
 // panel sends a command again on its own only to a device that says so.
 void test_the_capabilities_say_how_many_ids_are_remembered(void) {
   const JsonObject capabilities = json(get("/api/capabilities"));
 
   TEST_ASSERT_EQUAL_INT(8, capabilities["remembered_ids"].as<int>());
+}
+
+// --- a stop for one command -------------------------------------------------
+
+// On a slow link Stop can be tapped before the command it is for has been
+// answered, and the stop can then reach the device first. It names the
+// command it is for, by the id that command was sent under, and the device
+// does not start that command when it does arrive: the operator has already
+// said stop.
+void test_a_command_stopped_before_it_arrived_is_not_started(void) {
+  const Reply stop = postStopFor("press-1", "stop-1", NULL);
+
+  TEST_ASSERT_EQUAL_INT(200, stop.code);
+  TEST_ASSERT_EQUAL_STRING("not_started",
+                           json(stop)["result"].as<const char*>());
+
+  const Reply command =
+      postUnder("press-1", "/api/tag", "{\"tag\":\"AB\",\"copies\":3}");
+
+  TEST_ASSERT_EQUAL_INT(409, command.code);
+  TEST_ASSERT_EQUAL_STRING("Stopped before it started", errorOf(command));
+  TEST_ASSERT_EQUAL_STRING("not_started",
+                           json(command)["result"].as<const char*>());
+  TEST_ASSERT_EQUAL_INT((int)Command::IDLE, (int)running());
+}
+
+// The usual case: the command arrived, and only the reply to it was lost. The
+// stop that names it stops it, as any other stop would.
+void test_a_stop_for_the_command_that_is_running_stops_it(void) {
+  postUnder("press-1", "/api/tag", "{\"tag\":\"AB\",\"copies\":3}");
+
+  const Reply reply = postStopFor("press-1", "stop-1", NULL);
+
+  TEST_ASSERT_EQUAL_INT(200, reply.code);
+  TEST_ASSERT_EQUAL_STRING("stopping", json(reply)["result"].as<const char*>());
+  TEST_ASSERT_TRUE(machine->etkt.createStatus().stop == PendingStop::NOW);
+}
+
+// A run named by its stop can finish the label being pressed first, like any
+// other run.
+void test_a_stop_for_one_command_can_wait_for_the_label(void) {
+  postUnder("press-1", "/api/tag", "{\"tag\":\"AB\",\"copies\":3}");
+
+  const Reply reply = postStopFor("press-1", "stop-1", "label");
+
+  TEST_ASSERT_EQUAL_INT(200, reply.code);
+  TEST_ASSERT_EQUAL_STRING("stopping", json(reply)["result"].as<const char*>());
+  TEST_ASSERT_TRUE(machine->etkt.createStatus().stop ==
+                   PendingStop::AFTER_LABEL);
+}
+
+// A short command can be over before the stop for it arrives. That is the
+// answer any stop gets that finds nothing running, and the command is not
+// refused after the fact: sent again, it is told again that it was taken.
+void test_a_stop_for_a_command_that_has_ended_says_the_machine_is_idle(void) {
+  postUnder("press-1", "/api/cut", "{}");
+  machine->etkt.loop();
+
+  const Reply reply = postStopFor("press-1", "stop-1", NULL);
+
+  TEST_ASSERT_EQUAL_INT(200, reply.code);
+  TEST_ASSERT_EQUAL_STRING("idle", json(reply)["result"].as<const char*>());
+  TEST_ASSERT_EQUAL_INT(200, postUnder("press-1", "/api/cut", "{}").code);
+}
+
+// The command a stop names has ended, and another phone has started a run
+// since. The stop was never for that run, which goes on.
+void test_a_stop_for_one_command_leaves_the_one_after_it_running(void) {
+  postUnder("press-1", "/api/cut", "{}");
+  machine->etkt.loop();
+  postUnder("press-2", "/api/tag", "{\"tag\":\"AB\",\"copies\":3}");
+
+  const Reply reply = postStopFor("press-1", "stop-1", NULL);
+
+  TEST_ASSERT_EQUAL_INT(200, reply.code);
+  TEST_ASSERT_EQUAL_STRING("idle", json(reply)["result"].as<const char*>());
+  TEST_ASSERT_EQUAL_INT((int)Command::TAG, (int)running());
+  TEST_ASSERT_TRUE(machine->etkt.createStatus().stop == PendingStop::NONE);
+}
+
+// The machine was busy with another phone's run, and refused this command in
+// a reply that was lost. The stop for it leaves that run alone, and the
+// command does not start once the machine is free.
+void test_a_stop_for_a_command_refused_as_busy_keeps_it_from_starting(void) {
+  postUnder("press-1", "/api/tag", "{\"tag\":\"AB\",\"copies\":3}");
+  TEST_ASSERT_EQUAL_INT(409, postUnder("press-2", "/api/feed", "{}").code);
+
+  const Reply stop = postStopFor("press-2", "stop-1", NULL);
+
+  TEST_ASSERT_EQUAL_STRING("not_started",
+                           json(stop)["result"].as<const char*>());
+  TEST_ASSERT_TRUE(machine->etkt.createStatus().stop == PendingStop::NONE);
+  machine->etkt.loop();
+  const Reply again = postUnder("press-2", "/api/feed", "{}");
+  TEST_ASSERT_EQUAL_INT(409, again.code);
+  TEST_ASSERT_EQUAL_STRING("Stopped before it started", errorOf(again));
+  TEST_ASSERT_EQUAL_INT((int)Command::IDLE, (int)running());
+}
+
+// Stop tapped twice is two stops for one command, each under its own id. The
+// second is told what the first was, and the command stays refused.
+void test_a_second_stop_for_a_command_that_never_arrived_says_the_same(void) {
+  postStopFor("press-1", "stop-1", "label");
+
+  const Reply second = postStopFor("press-1", "stop-2", NULL);
+
+  TEST_ASSERT_EQUAL_INT(200, second.code);
+  TEST_ASSERT_EQUAL_STRING("not_started",
+                           json(second)["result"].as<const char*>());
+  TEST_ASSERT_EQUAL_INT(409, postUnder("press-1", "/api/cut", "{}").code);
+  TEST_ASSERT_EQUAL_INT((int)Command::IDLE, (int)running());
+}
+
+// The id a stop names its command by is no longer than any other. A longer
+// one is refused, and nothing is stopped.
+void test_a_stop_for_an_id_too_long_to_keep_is_refused(void) {
+  post("/api/tag", "{\"tag\":\"AB\",\"copies\":3}");
+
+  const Reply reply =
+      postStopFor("1234567890123456789012345678901234567", "stop-1", NULL);
+
+  TEST_ASSERT_EQUAL_INT(400, reply.code);
+  TEST_ASSERT_EQUAL_STRING("An id may be at most 36 bytes", errorOf(reply));
+  TEST_ASSERT_TRUE(machine->etkt.createStatus().stop == PendingStop::NONE);
 }
 
 // --- log --------------------------------------------------------------------
@@ -1279,7 +1473,19 @@ int main(int, char**) {
   RUN_TEST(test_an_id_too_long_to_keep_is_refused);
   RUN_TEST(test_an_id_as_long_as_a_uuid_is_kept);
   RUN_TEST(test_the_newest_eight_ids_are_remembered);
+  RUN_TEST(test_the_status_names_the_id_of_the_command_the_device_took);
+  RUN_TEST(test_the_status_names_a_command_after_it_has_ended);
+  RUN_TEST(test_the_status_names_only_a_command_the_device_took);
+  RUN_TEST(test_the_status_names_no_id_for_a_command_sent_under_none);
   RUN_TEST(test_the_capabilities_say_how_many_ids_are_remembered);
+  RUN_TEST(test_a_command_stopped_before_it_arrived_is_not_started);
+  RUN_TEST(test_a_stop_for_the_command_that_is_running_stops_it);
+  RUN_TEST(test_a_stop_for_one_command_can_wait_for_the_label);
+  RUN_TEST(test_a_stop_for_a_command_that_has_ended_says_the_machine_is_idle);
+  RUN_TEST(test_a_stop_for_one_command_leaves_the_one_after_it_running);
+  RUN_TEST(test_a_stop_for_a_command_refused_as_busy_keeps_it_from_starting);
+  RUN_TEST(test_a_second_stop_for_a_command_that_never_arrived_says_the_same);
+  RUN_TEST(test_a_stop_for_an_id_too_long_to_keep_is_refused);
   RUN_TEST(test_the_log_is_what_the_machine_logged_as_plain_text);
   RUN_TEST(test_the_log_posted_to_is_told_to_get);
   RUN_TEST(test_a_run_is_estimated_from_the_body_that_would_send_it);

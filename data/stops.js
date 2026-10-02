@@ -7,42 +7,51 @@
 // never left jammed in the tape. After the label is once the label being
 // pressed is finished, and cut if the run cuts its labels, so none is left
 // half done.
+//
+// A stop is posted from the tap, whatever the page is waiting for. One tapped
+// while its command is still on its way is for that command alone, and names
+// it by the id it was sent under: the stop can get to the device first, and
+// the command is then not to start when it arrives. What the device answers
+// such a stop is also what became of the command, which link.js is told.
 
+import { NEVER_STARTED, TAKEN, UNKNOWN } from "./link.js";
 import { stoppedText } from "./status.js";
 
 // What the page says when a stop reaches the device after the command it
 // was meant for has finished.
 const TOO_LATE_TO_STOP = "Too late to stop: the label maker had already finished.";
 
+// What the page says when a stop reaches the device before the command it
+// was meant for, which then never starts.
+const STOPPED_IN_TIME = "Stopped in time: the label maker had not started.";
+
 export class Stops {
-  // The stop this page has asked for: its kind, when it was sent, when the
-  // device took it, and whether it was sent blind, for a command the device
-  // never said it had.
+  // The stop this page has asked for: its kind, the command it is for alone,
+  // as a Sending, or null when it is for whatever is running, when it was
+  // sent, and when the device took it.
   #request = null;
   // What the page has to say about a stop when the device has no record of
-  // one to say it with: that it came too late to stop anything.
+  // it to say it with: that it came too late to stop anything, or in time to
+  // keep its command from starting.
   #note = null;
   // The device's record of the last stop, as stopKey() has it, once it has
   // been dismissed here, so the next poll does not bring it straight back.
   #dismissed = null;
 
-  // Asks for a stop, "now" or "after_label". Whatever the last stop had to
-  // say, this one is the end of it.
-  ask(kind) {
-    this.#request = { kind: kind, sentAt: null, acceptedAt: null, blind: false };
+  // Asks for a stop, "now" or "after_label", and returns it to post to the
+  // device now, which is at a time from performance.now(). Whatever the last
+  // stop had to say, this one is the end of it.
+  //
+  // command is the command still on its way, as a Sending, or null when the
+  // device has the command the stop is for. One still on its way is sent no
+  // more.
+  ask(kind, command, at) {
+    this.#request = { kind: kind, command: command, sentAt: at, acceptedAt: null };
     this.#note = null;
-  }
-
-  // The stop asked for, to post to the device at a time from
-  // performance.now(), or null when there is none that has not been posted
-  // already.
-  takeUnsent(at) {
-    const request = this.#request;
-    if (request === null || request.sentAt !== null) {
-      return null;
+    if (command !== null) {
+      command.stopSent();
     }
-    request.sentAt = at;
-    return request;
+    return this.#request;
   }
 
   // Whether the page still waits on this stop. Not once it has been
@@ -73,19 +82,24 @@ export class Stops {
       // by another stop.
       return null;
     }
+    if (request.command !== null) {
+      request.command.became(becameOf(response, reply));
+    }
     if (!response.ok) {
       const reason = reply && typeof reply.error === "string" ? reply.error : null;
       this.#request = null;
       return reason ?? "The label maker would not stop, and did not say why (HTTP " + response.status + ").";
     }
-    if (reply !== null && reply.result === "idle") {
-      // Not a failure: what it was doing finished while the tap was on its
-      // way. Of a stop sent blind there is nothing to say: its command may
-      // never have got there.
+    if (reply !== null && reply.result === "not_started") {
+      // Not a failure either: the stop got there before its command, which
+      // the device now refuses.
       this.#request = null;
-      if (!request.blind) {
-        this.#note = TOO_LATE_TO_STOP;
-      }
+      this.#note = STOPPED_IN_TIME;
+    } else if (reply !== null && reply.result === "idle") {
+      // Not a failure: what it was doing finished while the tap was on its
+      // way.
+      this.#request = null;
+      this.#note = TOO_LATE_TO_STOP;
     } else {
       request.acceptedAt = at;
     }
@@ -98,6 +112,9 @@ export class Stops {
   unreachable(request) {
     if (this.#request !== request) {
       return null;
+    }
+    if (request.command !== null) {
+      request.command.became(UNKNOWN);
     }
     this.#request = null;
     return request.kind === "now"
@@ -113,21 +130,19 @@ export class Stops {
   }
 
   // The device refused the command, which leaves nothing for a stop tapped
-  // meanwhile to stop.
-  commandRefused() {
+  // meanwhile to stop. reply is the body of the refusal as JSON, or null
+  // when it had none.
+  //
+  // Returns whether the refusal is that stop's doing: it got to the device
+  // first, and the device says so to the command. Nothing went wrong then,
+  // and the page has nothing to show but what it says of the stop.
+  commandRefused(reply) {
     this.#request = null;
-  }
-
-  // The device never answered the command, and the page has given up on it.
-  // The device may have taken it all the same, with only its answer lost, so
-  // a stop tapped meanwhile is still posted, at a time from
-  // performance.now(). Returns that stop, or null when none was tapped.
-  commandUnanswered(at) {
-    const request = this.takeUnsent(at);
-    if (request !== null) {
-      request.blind = true;
+    if (reply === null || reply.result !== "not_started") {
+      return false;
     }
-    return request;
+    this.#note = STOPPED_IN_TIME;
+    return true;
   }
 
   // A status, asked for at a time from performance.now().
@@ -135,15 +150,18 @@ export class Stops {
     // A stop the device took is over once a status asked for after that no
     // longer says one is coming. One still on its way is over once a status
     // asked for since it was sent says the device is idle: the stop got
-    // there and its answer was lost, or the command ended on its own. One to
+    // there and its answer was lost, or the command ended on its own. Not
+    // one for a command the device has yet to name, though: that command may
+    // still be on its way, and the stop has to get there before it. One to
     // stop now that left no record behind had nothing left to stop, which is
-    // worth saying unless it was sent blind.
+    // worth saying of a command the device did have.
     const request = this.#request;
     if (request !== null) {
+      const had = request.command === null || status.last_command_id === request.command.id;
       const taken = request.acceptedAt !== null && requestedAt >= request.acceptedAt;
-      const sent = request.sentAt !== null && requestedAt >= request.sentAt;
-      if ((taken && !(status.busy && status.stop)) || (sent && !status.busy)) {
-        if (request.kind === "now" && !request.blind && !status.busy && lastStop(status) === null) {
+      const sent = requestedAt >= request.sentAt;
+      if ((taken && !(status.busy && status.stop)) || (sent && had && !status.busy)) {
+        if (request.kind === "now" && had && !status.busy && lastStop(status) === null) {
           this.#note = TOO_LATE_TO_STOP;
         }
         this.#request = null;
@@ -170,19 +188,23 @@ export class Stops {
     return kinds.includes("after_label") ? "after_label" : null;
   }
 
-  // What to say once a stop has ended a command, or null: the device's
-  // record, told by what the device says of the command it stopped, or
-  // without a record a note of this page's own. The words for a record are
-  // stoppedText() in status.js, with the rest of each command's wording.
+  // What to say once a stop has ended a command, or null: a note of this
+  // page's own, or the device's record, told by what the device says of the
+  // command it stopped. The words for a record are stoppedText() in
+  // status.js, with the rest of each command's wording.
+  //
+  // The note comes first. It is of a stop that left no record, so a record
+  // the device still holds is of an older stop: it keeps one until it takes
+  // another command, and a command stopped in time is one it never took.
   notice(status, device) {
-    const stopped = lastStop(status);
-    if (stopped !== null) {
-      if (stopKey(stopped) === this.#dismissed) {
-        return null;
-      }
-      return { text: stoppedText(stopped, device), unfinished: stopped.unfinished === true };
+    if (this.#note !== null) {
+      return { text: this.#note, unfinished: false };
     }
-    return this.#note === null ? null : { text: this.#note, unfinished: false };
+    const stopped = lastStop(status);
+    if (stopped === null || stopKey(stopped) === this.#dismissed) {
+      return null;
+    }
+    return { text: stoppedText(stopped, device), unfinished: stopped.unfinished === true };
   }
 
   // Takes down the notice() the page shows for this status.
@@ -193,6 +215,34 @@ export class Stops {
     }
     this.#note = null;
   }
+}
+
+// Where a stop is posted, under an id of its own: with what it is to wait
+// for, and the command it is for when it is for one alone.
+export function stopPath(request, id) {
+  const query = new URLSearchParams({ id: id });
+  if (request.kind === "after_label") {
+    query.set("after", "label");
+  }
+  if (request.command !== null) {
+    query.set("for", request.command.id);
+  }
+  return "api/stop?" + query;
+}
+
+// What the device's answer to a stop says became of the command the stop was
+// for. response is the fetch Response, and reply its body as JSON, or null
+// when it had none.
+function becameOf(response, reply) {
+  if (response.ok) {
+    // Running, or over, unless it says the command had not started. So is an
+    // answer whose body was lost taken, until a status says otherwise.
+    return reply !== null && reply.result === "not_started" ? NEVER_STARTED : TAKEN;
+  }
+  // The device refuses a stop of what it is running, when that cannot be
+  // stopped the way it was asked. Any other refusal is not its word on the
+  // command.
+  return response.status === 409 ? TAKEN : UNKNOWN;
 }
 
 // The device's record of what the last stop cut short, or null. It keeps

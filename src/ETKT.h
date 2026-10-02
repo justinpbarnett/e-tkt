@@ -280,6 +280,12 @@ struct StatusUpdate {
   // running, and kept until the next command is accepted, so a panel that
   // was not watching when a job was stopped can still say it was.
   StoppedCommand stopped;
+  // The id the command the device last took was sent under, whether it is
+  // running or has ended, until the next one is taken. Empty when that
+  // command was sent under none, and before any has been taken. On a slow
+  // link the reply to a command can be lost while the polls after it get
+  // through, and this is how whoever sent it learns that it arrived.
+  String lastCommandId = "";
   RollState roll;
 };
 
@@ -297,6 +303,10 @@ enum class StopResult {
   // says whether it can be stopped at all, and whether it prints a run of
   // labels, which is the only thing with a label to stop after.
   UNSTOPPABLE,
+  // The stop was for one command, named by the id it was sent under, and
+  // that is not the command the device last took: it has not arrived, or it
+  // ended and another has been taken since. Nothing was stopped.
+  NOT_THE_COMMAND,
 };
 
 /**
@@ -392,6 +402,7 @@ class ETKT {
   RunClock runClock;           // the running run's; see RunClock
   StoppedCommand lastStopped;  // see StatusUpdate::stopped
   uint32_t lastStopId;         // see StoppedCommand::id
+  String lastCommandId;        // see StatusUpdate::lastCommandId
   std::mutex lock;
 
   // What loop() waits on for a command, under the lock above. submit()
@@ -426,6 +437,13 @@ class ETKT {
    * trialling a calibration of its own presses at these.
    */
   Calibration savedCalibration() const;
+
+  /**
+   * @brief Whether a stop that names its command by `id` is for the command
+   * the device last took. A stop that names none is for whichever that is.
+   * Call it with the lock held.
+   */
+  bool isForLastCommand(const String& id) const;
 
   /**
    * @brief Charges the roll for every feed since the last time this ran.
@@ -508,10 +526,13 @@ class ETKT {
    * Throws PrinterBusyException if a command is already in flight, and
    * takes nothing in that case.
    *
+   * `id` is what the command was sent under, which the status then names it
+   * by: see StatusUpdate::lastCommandId. Empty for one sent under none.
+   *
    * The device takes a copy, so the caller keeps what it passed in either
    * way.
    */
-  void submit(const CommandOptions& options);
+  void submit(const CommandOptions& options, const String& id = "");
 
   /**
    * @brief Stops what the machine is doing, now.
@@ -526,10 +547,16 @@ class ETKT {
    * saving. Saving moves nothing and ends in a reboot, so there is nothing to
    * stop.
    *
+   * `id` names the one command the stop is for, by the id that command was
+   * sent under, and whatever else is running is left to run: see
+   * StopResult::NOT_THE_COMMAND. A stop sent before its command was answered
+   * names it, because that stop can reach the device first, or after the
+   * command has ended and another has begun. Empty stops whatever is running.
+   *
    * Safe to call from the webserver's task while the command loop runs: it
    * only raises the StopSignal, which the loop obeys.
    */
-  StopResult stop();
+  StopResult stop(const String& id = "");
 
   /**
    * @brief Asks a run of labels to stop once the label being pressed is
@@ -538,11 +565,12 @@ class ETKT {
    * For a run that is going fine and is longer than it needs to be: no tape
    * is spent on a label nobody finishes, and the last label comes out whole,
    * topped up and, if the run cuts, cut off. Only a command whose row says it
-   * prints a run of labels has a label to stop after. Safe to call from the
+   * prints a run of labels has a label to stop after. `id` names the one
+   * command the stop is for, as it does for stop(). Safe to call from the
    * webserver's task while the command loop prints -- the loop reads the
    * request between labels.
    */
-  StopResult stopAfterLabel();
+  StopResult stopAfterLabel(const String& id = "");
 
   /**
    * @brief How long the run `options` asks for takes, from the job being

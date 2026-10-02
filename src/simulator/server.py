@@ -16,12 +16,14 @@ builds the firmware. From the repo root:
 
 then open http://localhost/. The panel's URLs are relative, so any port
 serves it. macOS lets anyone listen on 80; on Linux, --port 8080 does
-without sudo. --speed 10 runs the machine ten times as fast.
+without sudo. --speed 10 runs the machine ten times as fast. --lose 30 is a
+weak network, which leaves 30 in a hundred requests to the api unanswered.
 """
 
 import asyncio
 import json
 import os
+import random
 import shutil
 import subprocess
 import sys
@@ -52,6 +54,10 @@ REPLY_LIMIT_BYTES = 1024 * 1024
 # How long the program may take to exit once its stdin closes. It exits at
 # once when idle, and mid-job at the next wait.
 EXIT_SECONDS = 5
+
+# How often a request the link has lost is looked at again, to see whether
+# whoever sent it has given up on it.
+LOST_CHECK_SECONDS = 0.1
 
 
 class NoPlatformIO(Exception):
@@ -118,6 +124,22 @@ def read_reply(line):
     return json.loads(line.decode("utf-8", "surrogateescape"), strict=False)
 
 
+def weak_link(share, chance=random.random):
+    """What a network that loses `share` of what is sent over it does to
+    each request, as Server takes it. Half of what it loses never reaches
+    the machine. The other half the machine answers, and the answer never
+    gets back, which is the half that used to run a command twice.
+
+    `chance` draws a number from 0 up to 1 for each request.
+    """
+    def loses():
+        drawn = chance()
+        if drawn < share / 2:
+            return "request"
+        return "reply" if drawn < share else None
+    return loses
+
+
 async def read_body(request):
     """The request's body, up to BODY_KEPT_BYTES of it."""
     kept = bytearray()
@@ -142,16 +164,24 @@ async def ask_again(request, response):
 class Server:
     """The firmware, and the webserver in front of it."""
 
-    def __init__(self, program, speed=1, serial=None):
+    def __init__(self, program, speed=1, serial=None, loses=None):
         """`program` is what build() returned. `speed` is how many times as
         fast as the machine it runs. `serial` is where what the machine
         sends down its serial port goes: None for this process's stderr, or
         anything asyncio.create_subprocess_exec takes, such as
-        asyncio.subprocess.DEVNULL.
+        asyncio.subprocess.DEVNULL. `loses` says what the network loses of
+        each request under /api/, as weak_link() does: "request" for one
+        that never reaches the machine, "reply" for one whose answer never
+        gets back, and None for one that gets through. None for a network
+        that loses nothing.
         """
         self.program = program
         self.speed = speed
         self.serial = serial
+        self.loses = loses
+        # Set once close() is called, which lets go of the requests the
+        # network has lost.
+        self.closing = False
         self.process = None
         self.runner = None
         # Held from a request going out to its reply coming back, so each
@@ -210,6 +240,7 @@ class Server:
 
     async def close(self):
         """Stops listening, and stops the firmware."""
+        self.closing = True
         if self.runner is not None:
             await self.runner.cleanup()
             self.runner = None
@@ -228,6 +259,9 @@ class Server:
     async def relay(self, request):
         """Hands one request under /api/ to the firmware, as ApiHandler in
         Network.cpp hands one to the Api, and sends back its reply."""
+        lost = self.loses() if self.loses is not None else None
+        if lost == "request":
+            return await self.unanswered(request)
         asked = {
             "method": request.method,
             "path": request.path,
@@ -238,6 +272,8 @@ class Server:
                 "utf-8", "surrogateescape"),
         }
         reply = await self.ask(asked)
+        if lost == "reply":
+            return await self.unanswered(request)
         if reply is None:
             return web.json_response({"error": self.gone()}, status=502)
         headers = {"Content-Type": reply["contentType"]}
@@ -246,6 +282,18 @@ class Server:
         return web.Response(
             status=reply["code"], headers=headers,
             body=reply["body"].encode("utf-8", "surrogateescape"))
+
+    async def unanswered(self, request):
+        """Leaves a request without an answer for as long as whoever sent
+        it waits for one, as a network that lost it would."""
+        while not self.closing:
+            transport = request.transport
+            if transport is None or transport.is_closing():
+                break
+            await asyncio.sleep(LOST_CHECK_SECONDS)
+        # For aiohttp, which wants one from every handler. Nobody is left to
+        # send it to.
+        return web.Response(status=504)
 
     async def ask(self, asked):
         """Sends the firmware one request, and returns its reply, or None

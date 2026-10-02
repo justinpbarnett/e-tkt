@@ -225,13 +225,15 @@ static bool readCommandRequest(const CommandSpec* spec, const Request& request,
   return true;
 }
 
-// Reads the id a request was sent under, which is empty for one sent under
-// none: an older panel, or anything else that is not going to send it again.
-// Returns false with the reply that refuses it written when the id is too
-// long to keep.
-static bool readId(const Request& request, String* id, Reply* refused) {
+// Reads an id out of the query string: "id", which a request was sent under,
+// or "for", which names the command a stop is for. Empty for a request that
+// has none: an older panel, or anything else that is not going to send it
+// again. Returns false with the reply that refuses it written when the id is
+// too long to keep.
+static bool readId(const Request& request, const char* name, String* id,
+                   Reply* refused) {
   const std::map<String, String>::const_iterator sent =
-      request.query.find("id");
+      request.query.find(name);
   *id = sent != request.query.end() ? sent->second : String();
   if (id->length() > MAX_ID_BYTES) {
     *refused = errorReply(
@@ -339,7 +341,7 @@ template <typename AnswerNow>
 Reply Api::once(const Request& request, Keep keep, AnswerNow answerNow) {
   String id;
   Reply reply;
-  if (!readId(request, &id, &reply)) {
+  if (!readId(request, "id", &id, &reply)) {
     return reply;
   }
   // Held from the look to the note, so a request that arrives twice at once
@@ -348,7 +350,7 @@ Reply Api::once(const Request& request, Keep keep, AnswerNow answerNow) {
   if (this->recall(id, &reply)) {
     return reply;
   }
-  reply = answerNow();
+  reply = answerNow(id);
   if (keep == Keep::EVERY_ANSWER || reply.code == 200) {
     this->remember(id, reply);
   }
@@ -358,17 +360,23 @@ Reply Api::once(const Request& request, Keep keep, AnswerNow answerNow) {
 // Every command endpoint. Only a command the job runner took is kept under
 // its id. One that was refused ran nothing, so sent again it is judged
 // again: the machine may be free by then, and running it is what the press
-// was for.
+// was for. Unless a stop for it got here before it did: see
+// keepFromStarting().
 Reply Api::command(const CommandSpec* spec, const Request& request) {
-  return this->once(request, Keep::ACCEPTED,
-                    [&] { return this->submit(spec, request); });
+  return this->once(request, Keep::ACCEPTED, [&](const String& id) {
+    return this->submit(spec, request, id);
+  });
 }
 
 // Hands a command to the job runner. There used to be nine of these, alike
 // down to the catch block, and the differences that mattered -- which fields
 // the body must carry -- were buried in the sameness. The table in ETKT.cpp
 // holds those differences now and this reads them.
-Reply Api::submit(const CommandSpec* spec, const Request& request) {
+//
+// The job runner is handed the id the command was sent under, and the status
+// names the command by it from then on.
+Reply Api::submit(const CommandSpec* spec, const Request& request,
+                  const String& id) {
   CommandOptions options;
   Reply refused;
   if (!readCommandRequest(spec, request, &options, &refused)) {
@@ -376,7 +384,7 @@ Reply Api::submit(const CommandSpec* spec, const Request& request) {
   }
 
   try {
-    this->etkt->submit(options);
+    this->etkt->submit(options, id);
   } catch (const PrinterBusyException& e) {
     // 409, not 400. The request was fine; the machine was not. A caller
     // that gets a 400 has something to fix in what it sent, and retrying
@@ -456,6 +464,14 @@ Reply Api::status(const Request& /*request*/) {
     stopped["unfinished"] = status.stopped.unfinished;
   }
 
+  // The id the command the device last took was sent under, running or
+  // ended. The reply that said so can be lost on a slow link while this gets
+  // through, and a panel that sees its own id here knows its command
+  // arrived. Left out when that command was sent under none.
+  if (status.lastCommandId.length() > 0) {
+    doc["last_command_id"] = status.lastCommandId;
+  }
+
   // What is estimated to be left on the roll, busy or not, so the panel can
   // say how many labels fit before anything has been printed. The panel
   // works that out; see labelsThatFit() in Tape.h.
@@ -475,12 +491,35 @@ Reply Api::status(const Request& /*request*/) {
 // too. A stop is for the command that was running when it was pressed, so
 // sent again it must not reach a command that began after.
 Reply Api::stop(const Request& request) {
-  return this->once(request, Keep::EVERY_ANSWER,
-                    [&] { return this->stopRunning(request); });
+  return this->once(request, Keep::EVERY_ANSWER, [&](const String& /*id*/) {
+    return this->stopRunning(request);
+  });
+}
+
+// Keeps the command sent under this id from starting when it arrives. From
+// here on it is refused under its id, in words that say a stop got here
+// first. Returns false, and refuses nothing, for a command the device took,
+// which the answer kept under its id says: that one has run.
+//
+// Called with answersLock held, as everything once() answers is.
+bool Api::keepFromStarting(const String& command) {
+  Reply answered;
+  if (this->recall(command, &answered)) {
+    return answered.code != 200;
+  }
+  DynamicJsonDocument doc(SHORT_REPLY_JSON_BYTES);
+  doc["error"] = "Stopped before it started";
+  // What the panel that sent the command tells its own stop by, from a
+  // machine that was busy with something else.
+  doc["result"] = "not_started";
+  this->remember(command, jsonReply(409, doc));
+  return true;
 }
 
 // Asks the job runner to stop. What to stop after is in the query string
-// rather than a body, so a stop is one bare POST.
+// rather than a body, so a stop is one bare POST. So is the command the stop
+// is for, when it names one: a stop sent before its command was answered
+// does, by the id that command was sent under.
 Reply Api::stopRunning(const Request& request) {
   const std::map<String, String>::const_iterator after =
       request.query.find("after");
@@ -491,8 +530,14 @@ Reply Api::stopRunning(const Request& request) {
                       "being pressed is finished, or leave it out to stop "
                       "now");
   }
+  String command;
+  Reply refused;
+  if (!readId(request, "for", &command, &refused)) {
+    return refused;
+  }
   DynamicJsonDocument doc(SHORT_REPLY_JSON_BYTES);
-  switch (afterLabel ? this->etkt->stopAfterLabel() : this->etkt->stop()) {
+  switch (afterLabel ? this->etkt->stopAfterLabel(command)
+                     : this->etkt->stop(command)) {
     case StopResult::STOPPING:
       doc["result"] = "stopping";
       return jsonReply(200, doc);
@@ -500,6 +545,12 @@ Reply Api::stopRunning(const Request& request) {
       // Not an error. The job most likely finished while the tap was on its
       // way, and the panel is about to see that on its next poll anyway.
       doc["result"] = "idle";
+      return jsonReply(200, doc);
+    case StopResult::NOT_THE_COMMAND:
+      // Whatever is running is somebody else's, and runs on. The command
+      // this stop is for has ended, or has not arrived, and then it is not
+      // to start when it does: the operator has already said stop.
+      doc["result"] = this->keepFromStarting(command) ? "not_started" : "idle";
       return jsonReply(200, doc);
     case StopResult::UNSTOPPABLE:
       break;

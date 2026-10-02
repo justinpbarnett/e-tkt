@@ -38,19 +38,19 @@ import {
   typedLengthLimit,
   unprintableCharacters,
 } from "./label.js";
-import { deliver, newCommandId } from "./link.js";
+import { Link, NEVER_STARTED, Sending, TAKEN, UNKNOWN, deliver, lastHeardText, newCommandId } from "./link.js";
 import { plural, quantity, settledCopies, steppedCopies } from "./quantity.js";
 import {
   activity,
-  busyText,
   CapabilitiesMismatch,
   commandListDisagreement,
   printingRun,
   printPercentage,
   readCapabilities,
+  setupText,
   stopOffer,
 } from "./status.js";
-import { Stops } from "./stops.js";
+import { Stops, stopPath } from "./stops.js";
 import {
   formatLength,
   labelLengthMm,
@@ -68,10 +68,6 @@ import { Estimates, timeText } from "./timing.js";
 // back, and rarely enough not to keep a phone's radio awake for nothing.
 const POLL_MS = 1000;
 const HIDDEN_POLL_MS = 5000;
-
-// Polls in a row that can fail before the page says the device is gone. One
-// is a dropped packet on a busy access point; two is worth saying out loud.
-const OFFLINE_AFTER_MISSES = 2;
 
 // How long a stop button, or what takes its place once the stop is done,
 // ignores taps after it comes up. The stop comes up where the finger that
@@ -120,13 +116,17 @@ let device = null;
 const state = {
   // The last /api/status, or null until the first one lands.
   status: null,
-  // Polls that have failed in a row.
-  missedPolls: 0,
+  // Whether the device is answering the page, and when it last did.
+  link: new Link(),
   // The command whose POST is on its way.
   posting: null,
   // Set while that command has had no answer, and the page is sending it
   // again.
   unanswered: false,
+  // The command this page last sent, as a Sending: the id it went under, and
+  // what became of it when a status, or a stop sent after it, says so before
+  // its own answer does.
+  sent: null,
   // A command the device has accepted that no poll has reported on yet.
   // Without it a quick command could come and go between two polls and the
   // page never show it running. With it the page is busy from the moment
@@ -158,6 +158,7 @@ const el = {
   themeButton: $("theme-button"),
   viewName: $("view-name"),
   offline: $("offline"),
+  lastHeard: $("last-heard"),
   printView: $("print-view"),
   setupView: $("setup-view"),
   form: $("label-form"),
@@ -460,7 +461,7 @@ function toggleTheme() {
 // constants, so there is no local fallback to fall back to.
 async function retrieveCapabilities() {
   try {
-    const response = await fetchWithTimeout("api/capabilities", { timeout: 5000 });
+    const response = await fetchFromDevice("api/capabilities", { timeout: 5000 });
     if (response.status === 404) {
       throw new CapabilitiesMismatch("api/capabilities is not there");
     }
@@ -761,62 +762,61 @@ async function askEstimate() {
 // it did not, the page says why.
 //
 // A command that has had no answer is sent again, as deliver() in link.js
-// has it, unless sendAgain is false.
+// has it, unless sendAgain is false. Sent again or not, a status that names
+// the command is the device saying it took it, and the page waits for no
+// other answer. Nor is it sent again once a stop has been sent after it: the
+// stop then says what became of it.
 async function send(name, data = {}, { sendAgain = true } = {}) {
   state.problem = null;
   state.stops.commandStarting();
   state.revealStop = false;
   state.posting = name;
-  render();
-  let accepted = false;
-  let stop = null;
   // One id for every try, so a device that took the command, and whose
   // answer was lost, says so to the next try and does not run it twice.
-  const path = "api/" + name + "?id=" + newCommandId();
-  const post = () => postJson(path, data);
+  const sending = new Sending();
+  state.sent = sending;
+  render();
+  let accepted = false;
+  const path = "api/" + name + "?id=" + sending.id;
   try {
-    const response = sendAgain
-      ? await sendUntilAnswered(
-          post,
-          // A stop tapped while the command is still on its way is the end of
-          // trying to send it.
-          () => state.stops.pending(null) === null,
-          () => {
-            state.unanswered = true;
-            render();
-          },
-        )
-      : await post();
-    if (response.ok) {
+    const answer = await sendUntilAnswered({
+      attempt: () => postJson(path, data),
+      wanted: () => sendAgain,
+      unanswered: () => {
+        state.unanswered = true;
+        render();
+      },
+      command: sending,
+    });
+    if (answer === NEVER_STARTED || answer === UNKNOWN) {
+      // A stop was sent after the command, and what the page says of that
+      // stop is all there is to say.
+    } else if (answer === TAKEN || answer.ok) {
       accepted = true;
-      state.pending = { name: name, acceptedAt: performance.now() };
+      // Unless a status has named the command: that status is on the page
+      // already, with what has become of the command since.
+      if (!sending.named()) {
+        state.pending = { name: name, acceptedAt: performance.now() };
+      }
     } else {
-      const reply = await readJson(response);
-      const reason = reply && typeof reply.error === "string" ? reply.error : null;
-      console.error("Unable to " + name);
-      console.error(reason ?? response.status);
-      state.stops.commandRefused();
-      showProblem(reason ?? "The label maker refused that, and did not say why (HTTP " + response.status + ").");
+      const reply = await readJson(answer);
+      // Refused because a stop sent after it got there first, the command
+      // was stopped, and the page says that instead.
+      if (!state.stops.commandRefused(reply)) {
+        const reason = reply && typeof reply.error === "string" ? reply.error : null;
+        console.error("Unable to " + name);
+        console.error(reason ?? answer.status);
+        showProblem(reason ?? "The label maker refused that, and did not say why (HTTP " + answer.status + ").");
+      }
     }
   } catch (error) {
     console.error("Unable to " + name);
     console.error(error);
     showProblem("Couldn’t reach the label maker. Check that it’s switched on, then try again.", "command");
-    // The device may have taken the command all the same, with only its
-    // answer lost. A stop tapped meanwhile is still sent.
-    stop = state.stops.commandUnanswered(performance.now());
   } finally {
     state.posting = null;
     state.unanswered = false;
     render();
-  }
-  if (accepted) {
-    // A stop tapped while the command was on its way, sent now that the
-    // device has something to stop.
-    stop = state.stops.takeUnsent(performance.now());
-  }
-  if (stop !== null) {
-    postStop(stop);
   }
   if (accepted) {
     // Now rather than on the next tick, so what the device is doing shows as
@@ -826,13 +826,11 @@ async function send(name, data = {}, { sendAgain = true } = {}) {
   return accepted;
 }
 
-// Sends something until the device answers it, as deliver() in link.js has
-// it, on this page's clock.
-function sendUntilAnswered(attempt, wanted, unanswered) {
+// Sends something until the device answers it, or something else says what
+// became of it, as deliver() in link.js has it, on this page's clock.
+function sendUntilAnswered(delivery) {
   return deliver({
-    attempt: attempt,
-    wanted: wanted,
-    unanswered: unanswered,
+    ...delivery,
     now: () => performance.now(),
     pause: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   });
@@ -852,7 +850,7 @@ function formRun() {
 // idle and in touch, and the form has a run the device would take. null
 // otherwise. The print button and the estimate under it both go by this.
 function printableRun() {
-  if (runningCommand() !== null || state.missedPolls >= OFFLINE_AFTER_MISSES) {
+  if (runningCommand() !== null || state.link.lost()) {
     return null;
   }
   return formRun();
@@ -881,36 +879,35 @@ function requestStop(kind, row) {
     return;
   }
   state.problem = null;
-  state.stops.ask(kind);
+  // A command still on its way is the one the stop is for, and the page
+  // sends it no more: the stop goes now, and says what became of it.
+  const request = state.stops.ask(kind, state.posting === null ? null : state.sent, performance.now());
+  state.unanswered = false;
   state.revealStop = true;
   render();
-  // Still on its way, the command has nothing to stop yet. send() passes
-  // this on once the device has it.
-  if (state.posting === null) {
-    postStop(state.stops.takeUnsent(performance.now()));
-  }
+  postStop(request);
 }
 
 async function postStop(request) {
   // One id for every try. The device keeps what it answered under it, so a
   // stop that got through, and whose answer was lost, cannot land a second
   // time on whatever the machine does next.
-  const path = "api/stop?" + (request.kind === "now" ? "" : "after=label&") + "id=" + newCommandId();
+  const path = stopPath(request, newCommandId());
   try {
     // A stop is no use late, so the device is given less time than usual
     // to answer one before the page says it has not got through. The page
     // goes on trying after that, for as long as the stop is still wanted.
-    const response = await sendUntilAnswered(
-      () => fetchWithTimeout(path, { method: "POST", timeout: 5000 }),
-      () => state.stops.wanted(request),
-      () => {
+    const response = await sendUntilAnswered({
+      attempt: () => fetchFromDevice(path, { method: "POST", timeout: 5000 }),
+      wanted: () => state.stops.wanted(request),
+      unanswered: () => {
         const problem = state.stops.unanswered(request);
         if (problem !== null) {
           showProblem(problem, "stop");
           render();
         }
       },
-    );
+    });
     takeDownProblem("stop");
     const problem = state.stops.answered(request, response, await readJson(response), performance.now());
     if (problem !== null) {
@@ -919,11 +916,13 @@ async function postStop(request) {
       showProblem(problem);
     }
   } catch (error) {
-    console.error("Unable to stop");
-    console.error(error);
     takeDownProblem("stop");
     const problem = state.stops.unreachable(request);
+    // Not of a stop the page no longer waits on: that one did its work, or
+    // had none left to do, and nothing went wrong.
     if (problem !== null) {
+      console.error("Unable to stop");
+      console.error(error);
       showProblem(problem);
     }
   }
@@ -1199,11 +1198,10 @@ async function poll() {
       throw new Error("api/status answered " + response.status);
     }
     applyStatus(await response.json(), requestedAt);
-    state.missedPolls = 0;
+    state.link.heard(performance.now());
   } catch (error) {
-    state.missedPolls += 1;
     // Once, when the page starts saying so, rather than every second after.
-    if (state.missedPolls === OFFLINE_AFTER_MISSES) {
+    if (state.link.missed()) {
       console.error("Lost touch with the label maker");
       console.error(error);
     }
@@ -1227,9 +1225,11 @@ function applyStatus(status, requestedAt) {
   if (state.stops.pending(null) === null) {
     takeDownProblem("stop");
   }
-  // A command the page gave up on, and said it could not get through, did
-  // get through if the device is now running something.
-  if (status.busy) {
+  // The device names the command it last took by the id it came under. When
+  // that is the one this page last sent, the command arrived, whatever became
+  // of its answer: the page stops waiting for one, and no longer says it
+  // could not get the command through.
+  if (state.sent !== null && state.sent.statusArrived(status)) {
     takeDownProblem("command");
   }
   state.calibration.statusArrived(status, state.view === "setup");
@@ -1256,7 +1256,7 @@ function runningCommand() {
 function render() {
   const command = runningCommand();
   const busy = command !== null;
-  const offline = state.missedPolls >= OFFLINE_AFTER_MISSES;
+  const offline = state.link.lost();
   // What the page knows of the command running, as activity() and
   // stopOffer() in status.js take it, and the stops on offer while it runs.
   const running = {
@@ -1272,7 +1272,7 @@ function render() {
   // and then there is no telling where it was.
   const focused = document.activeElement;
 
-  el.offline.hidden = !offline || state.restarting;
+  renderOffline(offline);
   el.printView.hidden = state.view !== "print";
   el.setupView.hidden = state.view !== "setup";
   setText(el.viewName, state.view === "setup" ? "Setup" : "Label maker");
@@ -1288,6 +1288,20 @@ function render() {
     revealStopOutcome();
   }
   markStuck();
+}
+
+// Brings the time since the device was last heard up to date, every second
+// that the page says it has lost touch.
+let lastHeardTimer = null;
+
+function renderOffline(offline) {
+  clearTimeout(lastHeardTimer);
+  const shown = offline && !state.restarting;
+  el.offline.hidden = !shown;
+  if (shown) {
+    setText(el.lastHeard, lastHeardText(state.link.sinceHeard(performance.now())));
+    lastHeardTimer = setTimeout(() => renderOffline(state.link.lost()), 1000);
+  }
 }
 
 function renderPrintView(running, offer, focused) {
@@ -1464,10 +1478,9 @@ function renderSetupView(running, offer, focused) {
   if (focused === el.setupStopButton && (el.setupRunActions.hidden || el.setupStopButton.disabled)) {
     el.setupView.focus({ preventScroll: true });
   }
-  // Named by a line of its own when it has no stop to name it, which leaves
-  // a save: the device can stop everything else, and setup's own tests, the
-  // unload and the new roll say so on their buttons as well.
-  setText(el.setupStatus, busy && offer === null ? busyText(command) : "");
+  // A line of its own, for a command that has no stop to name it, and for
+  // the wait until the device has said what it accepts.
+  setText(el.setupStatus, setupText(running, device));
 }
 
 // A setup button says what its command is doing while it runs. The page
@@ -1562,6 +1575,16 @@ async function fetchWithTimeout(resource, options = {}) {
   }
 }
 
+// Sends the device anything but a poll, as fetchWithTimeout() does, and tells
+// the link what came back: the answer to a command is the device heard from
+// as much as a status is. A poll says so for itself, once it has read a
+// status out of its answer.
+async function fetchFromDevice(resource, options = {}) {
+  const response = await fetchWithTimeout(resource, options);
+  state.link.answered(response, performance.now());
+  return response;
+}
+
 // Helper method to post a json request, supports timeouts.
 async function postJson(url, data, options = {}) {
   options.headers = {
@@ -1570,7 +1593,7 @@ async function postJson(url, data, options = {}) {
   };
   options.body = JSON.stringify(data);
   options.method = "POST";
-  return await fetchWithTimeout(url, options);
+  return await fetchFromDevice(url, options);
 }
 
 // The body of a reply as JSON, or null when it is not any: a 404 from older

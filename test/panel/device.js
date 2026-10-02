@@ -17,8 +17,8 @@ export function capabilitiesReply() {
 }
 
 // What the page knows of the command running, as script.js hands it to
-// activity() and stopOffer() in status.js and to timeLeftText() in
-// timing.js: a cut the device has reported, but for what overrides says.
+// activity(), stopOffer() and setupText() in status.js and to timeLeftText()
+// in timing.js: a cut the device has reported, but for what overrides says.
 export function running(overrides) {
   return {
     command: "cut",

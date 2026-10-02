@@ -4,6 +4,8 @@
 // readCapabilities() in status.js returns them, or null while
 // api/capabilities has not answered yet.
 
+import { WAITING_TO_HEAR } from "./status.js";
+
 // The spaces a side for each margin the page offers, by the value of its
 // button in data/index.html.
 const MARGINS = { tight: 0, loose: 1 };
@@ -93,10 +95,13 @@ export function isValidLabelText(text, device) {
 // The line under the tape. Normally it lists what may be typed. While the
 // label holds a character the wheel does not carry it names it, and while it
 // holds one the wheel prints as something else it says what that will come
-// out as, which is the only warning before the tape is spent.
+// out as, which is the only warning before the tape is spent. Until the
+// device has said what it accepts there is nothing to list, or to check the
+// label against, and the line says the page is waiting to hear: in a tone of
+// its own, which style.css holds back for a moment.
 export function hintFor(text, device) {
   if (device === null) {
-    return { text: "", tone: null };
+    return { text: WAITING_TO_HEAR, tone: "waiting" };
   }
   const unprintable = unprintableCharacters(text, device);
   if (unprintable.length > 0) {

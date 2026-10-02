@@ -136,7 +136,7 @@ function labelDuration(ms) {
 
 // A length of time to the second under ten minutes, where a minute either
 // way is a good part of it, and to the minute past that.
-function duration(ms) {
+export function duration(ms) {
   const seconds = Math.round(ms / 1000);
   if (seconds < 60) {
     return seconds + " s";

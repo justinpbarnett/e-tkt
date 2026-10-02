@@ -798,12 +798,22 @@ body[data-printing="true"] .tape-tip.visible {
   margin-top: 10px;
 }
 
+/* A line is kept for it from the first paint, so the keys under it stay put
+   when what the device accepts comes in. */
 .hint {
   min-width: 0;
+  min-height: 1lh;
   color: var(--text-2);
   font: 400 13px/1.4 var(--font-ui);
   letter-spacing: 0;
   overflow-wrap: anywhere;
+}
+
+/* Waiting to hear what the device accepts. Held back for a moment, in every
+   theme and with or without motion: on a quick link the answer is in before
+   anyone could read this, and the words would only flicker past. */
+.hint[data-tone="waiting"] {
+  animation: fade-in var(--slow) var(--ease) 600ms backwards;
 }
 
 .hint[data-tone="warning"] {
@@ -1482,7 +1492,7 @@ input.stepper-value,
   }
 
   .dialog[open]::backdrop {
-    animation: backdrop-in var(--slow) var(--ease);
+    animation: fade-in var(--slow) var(--ease);
   }
 }
 
@@ -1493,7 +1503,7 @@ input.stepper-value,
   }
 }
 
-@keyframes backdrop-in {
+@keyframes fade-in {
   from {
     opacity: 0;
   }

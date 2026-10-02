@@ -8,6 +8,7 @@ import {
   printPercentage,
   printingRun,
   readCapabilities,
+  setupText,
   stopOffer,
 } from "../../data/status.js";
 import { capabilitiesReply, labelMaker, running } from "./device.js";
@@ -227,6 +228,27 @@ test("a save is offered no stop", () => {
   // and one cut off partway would leave half a calibration behind.
   const saving = running({ command: "save", status: { busy: true, command: "save" } });
   assert.equal(stopOffer(saving, labelMaker()), null);
+});
+
+test("the setup view names a command that has no stop to name it", () => {
+  // Which leaves a save, started here or from another phone. Anything the
+  // device can stop gets the stop instead, and the stop says what it stops.
+  const device = labelMaker();
+  const saving = running({ command: "save", status: { busy: true, command: "save" } });
+  assert.equal(setupText(saving, device), "Saving…");
+  assert.equal(setupText(running(), device), "");
+  assert.equal(setupText(running({ command: null, status: { busy: false } }), device), "");
+});
+
+test("until the device has said what it accepts, the setup view says the page is waiting to hear", () => {
+  // A new roll, the tests and the steps all need that answer, and cannot be
+  // pressed until it is in. On a slow link that can take a while, and the
+  // page says why rather than leave the buttons dead. A command running
+  // meanwhile still has the line, or the stop, to itself.
+  const idle = running({ command: null, status: null });
+  assert.equal(setupText(idle, null), "Waiting to hear from the label maker…");
+  assert.equal(setupText(idle, labelMaker()), "");
+  assert.equal(setupText(running({ command: "unload", status: null }), null), "");
 });
 
 test("anything the device can stop is offered the red stop, however quick it is", () => {

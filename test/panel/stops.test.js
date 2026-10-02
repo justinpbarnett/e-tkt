@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import { NEVER_STARTED, Sending, TAKEN, UNKNOWN } from "../../data/link.js";
 import { readCapabilities } from "../../data/status.js";
-import { Stops } from "../../data/stops.js";
+import { Stops, stopPath } from "../../data/stops.js";
 import { capabilitiesReply, labelMaker } from "./device.js";
 
 // What the label maker says of its commands, which is what a stop's notice
@@ -15,13 +16,22 @@ const ACCEPTED = { ok: true, status: 200 };
 // When the stops here are posted, on the clock of performance.now(): before
 // every answer and every status the tests go on to give them.
 const SENT = 400;
+// The id a stop here is posted under.
+const STOP_ID = "5d7e21b6843f9a0c";
+
+const NOT_SAID = Symbol("not said");
+
+// What has been said of a command on its way, as its Sending has it, or
+// NOT_SAID while nothing has.
+function saidOf(command) {
+  return Promise.race([command.outcome, new Promise((resolve) => setImmediate(() => resolve(NOT_SAID)))]);
+}
 
 // A page that has asked for a stop now, which the device answered after the
 // command it was meant for had finished.
 function tooLate() {
   const stops = new Stops();
-  stops.ask("now");
-  stops.answered(stops.takeUnsent(SENT), ACCEPTED, { result: "idle" }, 1000);
+  stops.answered(stops.ask("now", null, SENT), ACCEPTED, { result: "idle" }, 1000);
   return stops;
 }
 
@@ -42,7 +52,7 @@ test("a stop asked for here is pending from the tap", () => {
   // The device says a stop is coming too, but not until the next poll, and
   // the stop button says it is stopping from the moment it is tapped.
   const stops = new Stops();
-  stops.ask("after_label");
+  stops.ask("after_label", null, SENT);
   assert.equal(stops.pending(null), "after_label");
 });
 
@@ -60,23 +70,22 @@ test("a stop now outranks one after the label, whoever asked for it", () => {
   // Stopping now is also the end of the label, and the stop button is the
   // one to say so.
   const afterHere = new Stops();
-  afterHere.ask("after_label");
+  afterHere.ask("after_label", null, SENT);
   assert.equal(afterHere.pending({ busy: true, command: "tag", stop: "now" }), "now");
   const nowHere = new Stops();
-  nowHere.ask("now");
+  nowHere.ask("now", null, SENT);
   assert.equal(nowHere.pending({ busy: true, command: "tag", stop: "after_label" }), "now");
 });
 
-test("a stop is handed over to post once", () => {
-  // A stop tapped while its command is still on its way waits for the
-  // device to have the command, and is posted then instead. Either way it
-  // is posted once, and stays pending until the device has dealt with it.
+test("a stop is posted from the tap, under an id of its own", () => {
+  // Nothing holds it back, whatever else the page is waiting for: a stop is
+  // no use late. What it is to wait for goes in the query, beside the id
+  // that keeps one sent twice from landing twice.
   const stops = new Stops();
-  assert.equal(stops.takeUnsent(SENT), null);
-  stops.ask("now");
-  assert.equal(stops.takeUnsent(SENT).kind, "now");
-  assert.equal(stops.takeUnsent(SENT), null);
+  assert.equal(stopPath(stops.ask("now", null, SENT), STOP_ID), "api/stop?id=5d7e21b6843f9a0c");
   assert.equal(stops.pending(null), "now");
+  assert.equal(stopPath(stops.ask("after_label", null, SENT), STOP_ID), "api/stop?id=5d7e21b6843f9a0c&after=label");
+  assert.equal(stops.pending(null), "after_label");
 });
 
 test("a stop the device took is over once a status asked for after that no longer says one is coming", () => {
@@ -84,8 +93,7 @@ test("a stop the device took is over once a status asked for after that no longe
   // command is running with no stop coming, and says nothing about the
   // stop. While the device runs on with a stop coming, it has not stopped.
   const stops = new Stops();
-  stops.ask("after_label");
-  const request = stops.takeUnsent(SENT);
+  const request = stops.ask("after_label", null, SENT);
   stops.statusArrived({ busy: true, command: "tag" }, 500);
   assert.equal(stops.pending(null), "after_label");
   assert.equal(stops.answered(request, ACCEPTED, { result: "stopping" }, 1000), null);
@@ -102,8 +110,7 @@ test("a stop the device took is over once a status asked for after that no longe
     { busy: true, command: "feed" },
   ]) {
     const taken = new Stops();
-    taken.ask("after_label");
-    taken.answered(taken.takeUnsent(SENT), ACCEPTED, { result: "stopping" }, 1000);
+    taken.answered(taken.ask("after_label", null, SENT), ACCEPTED, { result: "stopping" }, 1000);
     taken.statusArrived(over, 1000);
     assert.equal(taken.pending(null), null);
   }
@@ -113,8 +120,7 @@ test("a stop answered with no body is taken", () => {
   // The device sends its status line before the body, so a reply cut off on
   // the way back still came from a device that had the stop.
   const stops = new Stops();
-  stops.ask("now");
-  assert.equal(stops.answered(stops.takeUnsent(SENT), ACCEPTED, null, 1000), null);
+  assert.equal(stops.answered(stops.ask("now", null, SENT), ACCEPTED, null, 1000), null);
   assert.equal(stops.pending(null), "now");
   stops.statusArrived({ busy: true, command: "tag", stop: "now" }, 1000);
   assert.equal(stops.pending(null), "now");
@@ -124,8 +130,7 @@ test("a stop that reaches the device after its command finished says it came too
   // Not a failure: what it was doing finished while the tap was on its
   // way, and there is nothing to stop.
   const stops = new Stops();
-  stops.ask("after_label");
-  const request = stops.takeUnsent(SENT);
+  const request = stops.ask("after_label", null, SENT);
   assert.equal(stops.answered(request, ACCEPTED, { result: "idle" }, 1000), null);
   assert.equal(stops.pending(null), null);
   assert.deepEqual(stops.notice(IDLE), {
@@ -137,27 +142,23 @@ test("a stop that reaches the device after its command finished says it came too
 test("a stop the device refuses is not pending, and says why", () => {
   // In the device's own words when it gives any.
   const stops = new Stops();
-  stops.ask("after_label");
   const reason = { error: "Only a run of labels can stop after a label" };
   assert.equal(
-    stops.answered(stops.takeUnsent(SENT), { ok: false, status: 409 }, reason, 1000),
+    stops.answered(stops.ask("after_label", null, SENT), { ok: false, status: 409 }, reason, 1000),
     "Only a run of labels can stop after a label",
   );
   assert.equal(stops.pending(null), null);
   const silent = "The label maker would not stop, and did not say why (HTTP 503).";
-  stops.ask("now");
-  assert.equal(stops.answered(stops.takeUnsent(SENT), { ok: false, status: 503 }, null, 2000), silent);
-  stops.ask("now");
-  assert.equal(stops.answered(stops.takeUnsent(SENT), { ok: false, status: 503 }, { error: 503 }, 3000), silent);
+  assert.equal(stops.answered(stops.ask("now", null, SENT), { ok: false, status: 503 }, null, 2000), silent);
+  assert.equal(stops.answered(stops.ask("now", null, SENT), { ok: false, status: 503 }, { error: 503 }, 3000), silent);
 });
 
 test("the answer to a stop asked for again since changes nothing", () => {
   // The page goes by the stop asked for last, whatever the device made of
   // the one before.
   const stops = new Stops();
-  stops.ask("after_label");
-  const first = stops.takeUnsent(SENT);
-  stops.ask("now");
+  const first = stops.ask("after_label", null, SENT);
+  stops.ask("now", null, SENT);
   assert.equal(stops.answered(first, { ok: false, status: 409 }, null, 1000), null);
   assert.equal(stops.answered(first, ACCEPTED, { result: "idle" }, 1000), null);
   assert.equal(stops.unreachable(first), null);
@@ -169,15 +170,13 @@ test("a stop that cannot reach the device is not pending, and says what to do in
   // A stop now is for when something has gone wrong, and the power switch
   // still stops the machine. A run left to finish goes on printing.
   const stops = new Stops();
-  stops.ask("now");
   assert.equal(
-    stops.unreachable(stops.takeUnsent(SENT)),
+    stops.unreachable(stops.ask("now", null, SENT)),
     "Couldn’t reach the label maker to stop it. If it has to stop now, switch it off.",
   );
   assert.equal(stops.pending(null), null);
-  stops.ask("after_label");
   assert.equal(
-    stops.unreachable(stops.takeUnsent(SENT)),
+    stops.unreachable(stops.ask("after_label", null, SENT)),
     "Couldn’t reach the label maker to stop it. The rest of the labels will still print.",
   );
   assert.equal(stops.pending(null), null);
@@ -188,17 +187,15 @@ test("a stop that has had no answer yet says what to do meanwhile, and stays pen
   // something has gone wrong, so the power switch is named at the first try
   // to come to nothing, not kept for when the page gives up.
   const stops = new Stops();
-  stops.ask("now");
-  const request = stops.takeUnsent(SENT);
+  const request = stops.ask("now", null, SENT);
   assert.equal(
     stops.unanswered(request),
     "No answer from the label maker yet. Still trying to stop it. If it has to stop now, switch it off.",
   );
   assert.equal(stops.pending(null), "now");
   assert.equal(stops.wanted(request), true);
-  stops.ask("after_label");
   assert.equal(
-    stops.unanswered(stops.takeUnsent(SENT)),
+    stops.unanswered(stops.ask("after_label", null, SENT)),
     "No answer from the label maker yet. Still trying to stop it after this label.",
   );
   assert.equal(stops.pending(null), "after_label");
@@ -209,8 +206,7 @@ test("a stop still on its way is over once the device is idle", () => {
   // on its own, nothing is left to stop. Another try could only reach
   // whatever the machine does next.
   const stops = new Stops();
-  stops.ask("now");
-  const request = stops.takeUnsent(SENT);
+  const request = stops.ask("now", null, SENT);
   // A status asked for before the stop was sent can be from before the
   // device had the command, and says nothing about the stop.
   stops.statusArrived(IDLE, SENT - 1);
@@ -225,8 +221,7 @@ test("a stop still on its way is over once the device is idle", () => {
   assert.equal(stops.notice(IDLE).text, "Too late to stop: the label maker had already finished.");
   // One that did stop something left a record, and the record says so.
   const lost = new Stops();
-  lost.ask("now");
-  const lostRequest = lost.takeUnsent(SENT);
+  const lostRequest = lost.ask("now", null, SENT);
   const record = stoppedBy({ command: "testalign" });
   lost.statusArrived(record, SENT);
   assert.equal(lost.wanted(lostRequest), false);
@@ -237,10 +232,8 @@ test("a stop overtaken by a command, or by another stop, is no longer wanted", (
   // The page stops trying to get it through: it was for a command that is
   // over, and must not reach the one that came after.
   const stops = new Stops();
-  stops.ask("after_label");
-  const first = stops.takeUnsent(SENT);
-  stops.ask("now");
-  const second = stops.takeUnsent(SENT);
+  const first = stops.ask("after_label", null, SENT);
+  const second = stops.ask("now", null, SENT);
   assert.equal(stops.wanted(first), false);
   assert.equal(stops.unanswered(first), null);
   assert.equal(stops.wanted(second), true);
@@ -253,23 +246,20 @@ test("a stop now that the device took, and that left no record, came too late", 
   // nothing short. A stop after the label never leaves a record: it ends
   // the run the usual way.
   const stops = new Stops();
-  stops.ask("now");
-  stops.answered(stops.takeUnsent(SENT), ACCEPTED, { result: "stopping" }, 1000);
+  stops.answered(stops.ask("now", null, SENT), ACCEPTED, { result: "stopping" }, 1000);
   stops.statusArrived(IDLE, 1000);
   assert.deepEqual(stops.notice(IDLE), {
     text: "Too late to stop: the label maker had already finished.",
     unfinished: false,
   });
   const gentle = new Stops();
-  gentle.ask("after_label");
-  gentle.answered(gentle.takeUnsent(SENT), ACCEPTED, { result: "stopping" }, 1000);
+  gentle.answered(gentle.ask("after_label", null, SENT), ACCEPTED, { result: "stopping" }, 1000);
   gentle.statusArrived(IDLE, 1000);
   assert.equal(gentle.notice(IDLE), null);
   // One that did leave a record stopped something, and the record says so.
   // It is gone after a restart, and the stop was still not too late.
   const recorded = new Stops();
-  recorded.ask("now");
-  recorded.answered(recorded.takeUnsent(SENT), ACCEPTED, { result: "stopping" }, 1000);
+  recorded.answered(recorded.ask("now", null, SENT), ACCEPTED, { result: "stopping" }, 1000);
   recorded.statusArrived(stoppedBy({ command: "testalign" }), 1000);
   recorded.statusArrived(IDLE, 2000);
   assert.equal(recorded.notice(IDLE), null);
@@ -428,7 +418,7 @@ test("a stop asked for again is the end of what the last one had to say", () => 
   // Until the next status comes in, the page still shows the run the stop
   // came too late for, stops and all.
   const stops = tooLate();
-  stops.ask("now");
+  stops.ask("now", null, SENT);
   assert.equal(stops.notice(IDLE), null);
 });
 
@@ -439,67 +429,160 @@ test("a command sent from here is the end of what the last stop had to say", () 
   noted.commandStarting();
   assert.equal(noted.notice(IDLE), null);
   const stops = new Stops();
-  stops.ask("after_label");
-  const request = stops.takeUnsent(SENT);
+  const request = stops.ask("after_label", null, SENT);
   stops.commandStarting();
   assert.equal(stops.pending(null), null);
   assert.equal(stops.unreachable(request), null);
 });
 
-test("a stop tapped while a command was on its way goes with the command, if the device refuses it", () => {
-  // The command left nothing running for the stop to stop.
+test("a stop tapped while its command is still on its way names that command, and holds it", () => {
+  // The device may not have the command yet, and the stop can get there
+  // first. Named by the id it was sent under, the command is then kept from
+  // starting when it does arrive. The page sends it no more: the operator has
+  // said stop, and another try could only start what they stopped.
   const stops = new Stops();
+  const command = new Sending();
   stops.commandStarting();
-  stops.ask("now");
-  stops.commandRefused();
+  const request = stops.ask("after_label", command, SENT);
+  assert.equal(stopPath(request, STOP_ID), "api/stop?id=5d7e21b6843f9a0c&after=label&for=" + command.id);
+  assert.equal(command.held(), true);
+  assert.equal(stops.pending(null), "after_label");
+  // A stop asked for again names it too, and nothing has been said of the
+  // command yet.
+  const again = stops.ask("now", command, SENT);
+  assert.equal(stopPath(again, STOP_ID), "api/stop?id=5d7e21b6843f9a0c&for=" + command.id);
+});
+
+test("a stop that got there before its command says it was in time", async () => {
+  // The device had not started the command, and refuses it when it comes.
+  // That is the stop having worked, and the page says so.
+  const stops = new Stops();
+  const command = new Sending();
+  const request = stops.ask("now", command, SENT);
+  assert.equal(await saidOf(command), NOT_SAID);
+  assert.equal(stops.answered(request, ACCEPTED, { result: "not_started" }, 1000), null);
+  assert.equal(await saidOf(command), NEVER_STARTED);
   assert.equal(stops.pending(null), null);
-  assert.equal(stops.takeUnsent(SENT), null);
+  assert.deepEqual(stops.notice(IDLE), {
+    text: "Stopped in time: the label maker had not started.",
+    unfinished: false,
+  });
 });
 
-test("a stop tapped while a command was on its way is still sent, if the command never gets an answer", () => {
-  // The device may have taken the command all the same, with only its answer
-  // lost, and be running it. Someone tapped stop, and the page does not drop
-  // that because it does not know.
+test("a stop that finds its command running, or over, says the device took it", async () => {
+  // Either way the command got there, which is all its own answer would have
+  // said. What became of the stop is told as for any other.
+  const running = new Stops();
+  const command = new Sending();
+  running.answered(running.ask("now", command, SENT), ACCEPTED, { result: "stopping" }, 1000);
+  assert.equal(await saidOf(command), TAKEN);
+  assert.equal(running.pending(null), "now");
+  const over = new Stops();
+  const ended = new Sending();
+  over.answered(over.ask("now", ended, SENT), ACCEPTED, { result: "idle" }, 1000);
+  assert.equal(await saidOf(ended), TAKEN);
+  assert.equal(over.notice(IDLE).text, "Too late to stop: the label maker had already finished.");
+  // The device refuses a stop only of what it is running.
+  const refused = new Stops();
+  const cutting = new Sending();
+  const reason = { error: "Only a run of labels can stop after a label" };
+  assert.equal(
+    refused.answered(refused.ask("after_label", cutting, SENT), { ok: false, status: 409 }, reason, 1000),
+    "Only a run of labels can stop after a label",
+  );
+  assert.equal(await saidOf(cutting), TAKEN);
+});
+
+test("a stop that could not be got through leaves what became of its command unknown", async () => {
+  // The try of the command that went out may have got there, or not. The
+  // page has said it could not stop the machine, and has no more to say.
   const stops = new Stops();
-  stops.commandStarting();
-  stops.ask("now");
-  const request = stops.commandUnanswered(SENT);
-  assert.equal(request.kind, "now");
-  assert.equal(stops.pending(null), "now");
+  const command = new Sending();
+  assert.equal(
+    stops.unreachable(stops.ask("now", command, SENT)),
+    "Couldn’t reach the label maker to stop it. If it has to stop now, switch it off.",
+  );
+  assert.equal(await saidOf(command), UNKNOWN);
+  // Nor does a refusal that is not the device's word on what it is running
+  // say anything of the command.
+  const garbled = new Stops();
+  const unheard = new Sending();
+  garbled.answered(garbled.ask("now", unheard, SENT), { ok: false, status: 503 }, null, 1000);
+  assert.equal(await saidOf(unheard), UNKNOWN);
+});
+
+test("a stop for a command still on its way is not over because the device is idle", () => {
+  // The command may be yet to arrive, and the stop has still to get there
+  // before it does. Once a status names the command the device has had it,
+  // and idle then means it is over.
+  const stops = new Stops();
+  const command = new Sending();
+  const request = stops.ask("now", command, SENT);
+  stops.statusArrived(IDLE, SENT);
   assert.equal(stops.wanted(request), true);
-  // Handed over to post once, like any other.
-  assert.equal(stops.takeUnsent(SENT), null);
-  // With no stop tapped there is none to send.
-  const untapped = new Stops();
-  untapped.commandStarting();
-  assert.equal(untapped.commandUnanswered(SENT), null);
+  stops.statusArrived({ ...IDLE, last_command_id: "9a0c5d7e21b6843f" }, SENT);
+  assert.equal(stops.wanted(request), true);
+  assert.equal(stops.pending(null), "now");
+  stops.statusArrived({ ...IDLE, last_command_id: command.id }, SENT);
+  assert.equal(stops.wanted(request), false);
+  assert.equal(stops.pending(null), null);
+  assert.equal(stops.notice(IDLE).text, "Too late to stop: the label maker had already finished.");
 });
 
-test("a stop for a command that never got an answer says nothing when it finds nothing to stop", () => {
-  // The page cannot tell a command that never got there from one that came
-  // and went. It has said it could not reach the device, and does not go on
-  // to say the device had finished.
+test("a stop answered with no body says nothing of a command the device never names", async () => {
+  // The device has the stop, and what it found was in the part that was
+  // lost. The page takes it that the command is running until a status says:
+  // it shows the stop on its way and offers nothing else meanwhile. Idle, and
+  // naming some other command or none, the device never had this one or has
+  // had another since, and the page cannot say which.
   const stops = new Stops();
-  stops.commandStarting();
-  stops.ask("now");
-  const request = stops.commandUnanswered(SENT);
-  assert.equal(stops.answered(request, ACCEPTED, { result: "idle" }, 1000), null);
+  const command = new Sending();
+  assert.equal(stops.answered(stops.ask("now", command, SENT), ACCEPTED, null, 1000), null);
+  assert.equal(await saidOf(command), TAKEN);
+  assert.equal(stops.pending(null), "now");
+  stops.statusArrived(IDLE, 1000);
   assert.equal(stops.pending(null), null);
   assert.equal(stops.notice(IDLE), null);
-  // Nor when a status says so before the stop is answered.
-  const polled = new Stops();
-  polled.commandStarting();
-  polled.ask("now");
-  const polledRequest = polled.commandUnanswered(SENT);
-  polled.statusArrived(IDLE, SENT);
-  assert.equal(polled.wanted(polledRequest), false);
-  assert.equal(polled.notice(IDLE), null);
-  // One that did stop something left a record, and the record says so.
-  const stopped = new Stops();
-  stopped.commandStarting();
-  stopped.ask("now");
-  stopped.answered(stopped.commandUnanswered(SENT), ACCEPTED, { result: "stopping" }, 1000);
-  const record = stoppedBy({ command: "testalign" });
-  stopped.statusArrived(record, 2000);
-  assert.equal(stopped.notice(record, device).text, "Stopped the alignment test.");
+});
+
+test("a command refused because its stop got there first is the stop having worked", () => {
+  // The answer to the command can come back before the answer to the stop,
+  // and says the same: stopped before it started. Nothing went wrong, and the
+  // page says what it says of the stop.
+  const stops = new Stops();
+  const request = stops.ask("now", new Sending(), SENT);
+  assert.equal(stops.commandRefused({ error: "Stopped before it started", result: "not_started" }), true);
+  assert.equal(stops.wanted(request), false);
+  assert.equal(stops.pending(null), null);
+  assert.equal(stops.notice(IDLE).text, "Stopped in time: the label maker had not started.");
+});
+
+test("a stop tapped while a command was on its way goes with the command, if the device refuses it", () => {
+  // The command left nothing running for the stop to stop. Why the device
+  // refused it is for the page to show.
+  const stops = new Stops();
+  stops.commandStarting();
+  const request = stops.ask("now", new Sending(), SENT);
+  assert.equal(stops.commandRefused({ error: "The printer is already busy executing a command." }), false);
+  assert.equal(stops.wanted(request), false);
+  assert.equal(stops.pending(null), null);
+  assert.equal(stops.notice(IDLE), null);
+  // A refusal that says nothing is not the stop's doing either.
+  assert.equal(new Stops().commandRefused(null), false);
+});
+
+test("a stop that was in time says so over the record of an older stop", () => {
+  // The device keeps its record of the last stop until it takes another
+  // command, and it never took this one. What the record says is old news,
+  // and one dismissal takes both down.
+  const stops = new Stops();
+  const record = stoppedBy({ command: "tag", printed: 2, copies: 5 });
+  stops.statusArrived(record, 100);
+  assert.equal(stops.notice(record, device).text, "Stopped after 2 of 5 labels.");
+  stops.commandStarting();
+  stops.answered(stops.ask("now", new Sending(), SENT), ACCEPTED, { result: "not_started" }, 1000);
+  stops.statusArrived(record, 1000);
+  assert.equal(stops.notice(record, device).text, "Stopped in time: the label maker had not started.");
+  stops.dismiss(record);
+  assert.equal(stops.notice(record, device), null);
 });

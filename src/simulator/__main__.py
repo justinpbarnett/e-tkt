@@ -1,6 +1,6 @@
 """Builds the firmware for this computer and serves the panel in front of it.
 
-    python3 -m src.simulator [--port PORT] [--speed N]
+    python3 -m src.simulator [--port PORT] [--speed N] [--lose PERCENT]
 
 from the repository root. See server.py.
 """
@@ -11,7 +11,7 @@ import math
 import os
 import sys
 
-from . import BuildFailed, DeviceError, NoPlatformIO, Server, build
+from . import BuildFailed, DeviceError, NoPlatformIO, Server, build, weak_link
 
 # Where the device serves the panel, so the address is the same one.
 DEFAULT_PORT = 80
@@ -28,6 +28,17 @@ def speed(text):
     return value
 
 
+def percent(text):
+    """A --lose: a number from 0 to 100."""
+    try:
+        value = float(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError("%r is not a number" % text)
+    if not 0 <= value <= 100:
+        raise argparse.ArgumentTypeError("%r is not from 0 to 100" % text)
+    return value
+
+
 def arguments():
     parser = argparse.ArgumentParser(
         prog="python3 -m src.simulator",
@@ -41,6 +52,11 @@ def arguments():
     parser.add_argument(
         "--speed", type=speed, default=1.0,
         help="how many times faster than the machine to run (default 1)")
+    parser.add_argument(
+        "--lose", type=percent, default=0.0, metavar="PERCENT",
+        help="how many in a hundred requests to the api get no answer, as "
+             "on a weak network: half never reach the machine, and half are "
+             "answered where the answer never gets back (default 0)")
     return parser.parse_args()
 
 
@@ -52,7 +68,8 @@ async def serve(options):
     except (NoPlatformIO, BuildFailed) as problem:
         print(problem, file=sys.stderr)
         return 1
-    device = Server(program, options.speed)
+    device = Server(program, options.speed,
+                    loses=weak_link(options.lose / 100))
     try:
         try:
             commands = await device.start()

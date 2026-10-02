@@ -24,6 +24,7 @@ import sys
 import unittest
 
 try:
+    from aiohttp import ClientTimeout
     from aiohttp.test_utils import TestClient, TestServer
 except ImportError:
     raise unittest.SkipTest("the simulator's server needs aiohttp")
@@ -66,7 +67,8 @@ class RelayTestCase(unittest.IsolatedAsyncioTestCase):
         # What the machine prints down its serial port would bury the
         # results.
         self.device = server.Server(PROGRAM, self.speed,
-                                    serial=asyncio.subprocess.DEVNULL)
+                                    serial=asyncio.subprocess.DEVNULL,
+                                    loses=self.loses)
         await self.device.start()
         self.client = TestClient(TestServer(self.device.application()))
         await self.client.start_server()
@@ -74,6 +76,11 @@ class RelayTestCase(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):
         await self.client.close()
         await self.device.close()
+
+    def loses(self):
+        """What the link loses of each request, as Server takes it: nothing,
+        unless a case says otherwise."""
+        return None
 
     async def status(self):
         response = await self.client.get("/api/status")
@@ -190,6 +197,25 @@ class Stops(RelayTestCase):
         response = await self.client.post("/api/stop?after=cut&after=label")
         self.assertEqual(200, response.status)
         self.assertEqual({"result": "idle"}, await response.json())
+
+    async def test_a_stop_can_name_a_command_that_has_not_arrived(self):
+        # On a weak link a stop can overtake the command it was sent after.
+        # It names that command by its id, in the query beside its own, and
+        # the command is refused when it does arrive. If the name did not
+        # reach the Api, this would be a stop of an idle machine, and the
+        # run would start.
+        response = await self.client.post(
+            "/api/stop?id=5d7e21b6843f9a0c&for=3f9a0c5d7e21b684")
+        self.assertEqual(200, response.status)
+        self.assertEqual({"result": "not_started"}, await response.json())
+        response = await self.client.post(
+            "/api/tag?id=3f9a0c5d7e21b684",
+            json={"tag": " HELLO ", "copies": 500})
+        self.assertEqual(409, response.status)
+        self.assertEqual(
+            {"error": "Stopped before it started", "result": "not_started"},
+            await response.json())
+        self.assertFalse((await self.status())["busy"])
 
 
 class Methods(RelayTestCase):
@@ -391,6 +417,87 @@ class Loss(RelayTestCase):
                 self.assertEqual(502, response.status)
                 self.assertEqual({"error": gone}, await response.json())
         self.assertEqual(gone + "\n", said.getvalue())
+
+
+class WeakLink(RelayTestCase):
+    # How long a test waits for an answer the link has lost before it gives
+    # up, as the panel does. Long enough for the firmware to have answered.
+    PATIENCE_SECONDS = 0.5
+
+    def setUp(self):
+        # What becomes of each request to come, in order. Past the last of
+        # them nothing is lost.
+        self.fates = []
+
+    def loses(self):
+        return self.fates.pop(0) if self.fates else None
+
+    async def print_unanswered(self, lost):
+        """Asks for a long run of labels over a link that loses `lost`, and
+        gives up waiting for an answer, as the panel does."""
+        self.fates = [lost]
+        with self.assertRaises(asyncio.TimeoutError):
+            await self.client.post(
+                "/api/tag?id=3f9a0c5d7e21b684",
+                json={"tag": " HELLO ", "copies": 500},
+                timeout=ClientTimeout(total=self.PATIENCE_SECONDS))
+
+    async def test_a_request_lost_on_its_way_never_reaches_the_firmware(self):
+        # Half of what a weak network loses. The panel hears nothing, and
+        # the machine was never asked.
+        await self.print_unanswered("request")
+        status = await self.status()
+        self.assertFalse(status["busy"])
+        self.assertNotIn("last_command_id", status)
+
+    async def test_a_reply_lost_on_its_way_back_leaves_the_machine_running(
+            self):
+        # The other half, and the one that used to print a run twice: the
+        # machine has the command, and the panel has heard nothing. Sent
+        # again under its id, it is answered as it was and not refused as a
+        # second command would be.
+        await self.print_unanswered("reply")
+        self.assertTrue((await self.status())["busy"])
+        response = await self.client.post(
+            "/api/tag?id=3f9a0c5d7e21b684",
+            json={"tag": " HELLO ", "copies": 500})
+        self.assertEqual(200, response.status)
+        self.assertEqual({"result": "success"}, await response.json())
+
+    async def test_a_command_whose_reply_was_lost_is_named_in_the_status(
+            self):
+        # The polls after a lost reply can get through, and they name the
+        # command the machine took by the id it was sent under. So the panel
+        # learns that its command arrived without waiting to be answered.
+        await self.print_unanswered("reply")
+        self.assertEqual("3f9a0c5d7e21b684",
+                         (await self.status())["last_command_id"])
+
+    async def test_a_lost_request_does_not_hold_up_the_next(self):
+        # The panel polls while a command of its own goes unanswered, and
+        # sends the command again. Neither waits for the lost one to be
+        # given up on.
+        self.fates = ["request"]
+        lost = asyncio.ensure_future(self.client.get(
+            "/api/status", timeout=ClientTimeout(total=JOB_SECONDS)))
+        await asyncio.sleep(0.05)
+        self.assertFalse((await self.status())["busy"])
+        self.assertFalse(lost.done())
+        lost.cancel()
+
+
+class Losing(unittest.TestCase):
+    def test_a_weak_link_loses_its_share_half_each_way(self):
+        # --lose 40 loses 40 in a hundred: 20 on the way to the machine and
+        # 20 on the way back.
+        drawn = iter([0.0, 0.19, 0.2, 0.39, 0.4, 0.99])
+        loses = server.weak_link(0.4, lambda: next(drawn))
+        self.assertEqual(["request", "request", "reply", "reply", None, None],
+                         [loses() for _ in range(6)])
+
+    def test_a_link_that_loses_nothing_loses_nothing(self):
+        loses = server.weak_link(0, lambda: 0.0)
+        self.assertIsNone(loses())
 
 
 class Starting(unittest.IsolatedAsyncioTestCase):

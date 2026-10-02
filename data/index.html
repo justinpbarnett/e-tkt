@@ -87,8 +87,14 @@
         </button>
       </header>
 
-      <!-- Shown once the device has missed two polls in a row. -->
-      <p class="alert" id="offline" role="alert" hidden>Can’t reach the label maker. Trying again…</p>
+      <!-- Shown once the device has missed more than two polls in a row.
+           Only the first sentence is announced: how long ago the device was
+           last heard changes every second. -->
+      <p class="alert" id="offline" hidden>
+        <span role="alert">Can’t reach the label maker.</span>
+        <span id="last-heard"></span>
+        Trying again…
+      </p>
 
       <main>
         <!------------------->
@@ -132,7 +138,8 @@
 
             <div class="tape-meta">
               <!-- Filled in from api/capabilities. The device owns the list
-                   of what a label may say; this is only where it lands. -->
+                   of what a label may say; this is only where it lands, and
+                   until it has, where the page says it is waiting to hear. -->
               <p class="hint" id="label-hint"></p>
               <p class="length" id="label-length"></p>
             </div>
@@ -390,7 +397,10 @@
           <!-- What the machine is doing, when it is something none of the
                buttons above started and nothing here can stop: a save from
                another phone, say. Anything that can be stopped, from here
-               or from anywhere else, gets the stop instead. -->
+               or from anywhere else, gets the stop instead. Also where the
+               page says it is waiting to hear what the device accepts, which
+               the new roll, the tests and the steps above cannot do
+               without. -->
           <p class="note setup-status" id="setup-status" role="status"></p>
           <div class="run-actions" id="setup-run-actions" hidden>
             <button type="button" class="btn btn-stop btn-block" id="setup-stop-button">
