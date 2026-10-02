@@ -4,7 +4,8 @@
 // NVS partition of the flash. The partition here is stubNvs() in Arduino.h,
 // and stubNvsText() for the text in it: it outlives any one Settings or Roll,
 // the way flash outlives a reboot, and stubReset() wipes it. Every write is
-// counted in stubNvsWrites().
+// counted in stubNvsWrites(), and every text asked for that was not there is
+// named in stubNvsMissedTexts().
 //
 // Like the real one, it does nothing outside begin() and end(). A module that
 // forgets begin() reads its defaults and writes nothing, on the host as on
@@ -93,6 +94,10 @@ class Preferences {
         stubNvsText()[this->space];
     const std::map<std::string, std::string>::const_iterator found =
         texts.find(key);
-    return found == texts.end() ? defaultValue : String(found->second);
+    if (found == texts.end()) {
+      stubNvsMissedTexts().push_back(this->space + "/" + key);
+      return defaultValue;
+    }
+    return String(found->second);
   }
 };

@@ -208,6 +208,15 @@ inline std::map<std::string, int>& stubNvsWrites() {
   return writes;
 }
 
+// Every text that was asked for and was not there, as "namespace/key". The
+// board's Preferences prints an error line for each one, and none for a
+// number that is not there. So a module that reads a text it has not kept
+// puts a line that looks like a fault into the log of a healthy start.
+inline std::vector<std::string>& stubNvsMissedTexts() {
+  static std::vector<std::string> missed;
+  return missed;
+}
+
 // Every note ESP32Tone was asked for. See ESP32Tone.h beside this file.
 struct StubTone {
   int pin;
@@ -255,6 +264,7 @@ inline void stubReset() {
   stubNvs().clear();
   stubNvsText().clear();
   stubNvsWrites().clear();
+  stubNvsMissedTexts().clear();
   stubTones().clear();
   stubRestarts() = 0;
   stubHeap().freeBytes = 0;

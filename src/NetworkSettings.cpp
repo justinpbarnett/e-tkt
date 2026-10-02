@@ -184,7 +184,11 @@ void NetworkSettings::initialize(const String& machineId) {
                       ? NetworkMode::OWN
                       : NetworkMode::JOIN;
   this->offersRouter = this->preferences.getBool(ROUTER_KEY, true);
-  this->ownNetworkPassword = this->preferences.getString(PASSWORD_KEY, "");
+  // Asked for as well. The board prints an error for a text that is not
+  // there, and a machine that never ran its own network has kept none.
+  this->ownNetworkPassword = this->preferences.isKey(PASSWORD_KEY)
+                                 ? this->preferences.getString(PASSWORD_KEY, "")
+                                 : String("");
   this->importDone = this->preferences.getBool(IMPORTED_KEY, false);
   this->preferences.end();
 

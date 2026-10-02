@@ -78,6 +78,16 @@ static bool takes(const char* ssid, const char* password) {
   return settings->remember(ssid, password) == RememberRefusal::NONE;
 }
 
+// The texts that were asked of the flash and were not in it, separated by
+// commas.
+static std::string missedTexts(void) {
+  std::string names;
+  for (const std::string& one : stubNvsMissedTexts()) {
+    names += (names.empty() ? "" : ",") + one;
+  }
+  return names;
+}
+
 // Whether the log has this line, whole.
 static bool logged(const char* line) {
   for (const std::string& one : stubSerialLines()) {
@@ -95,6 +105,19 @@ void test_a_machine_that_was_never_set_up_joins_a_network_and_remembers_none(
   TEST_ASSERT_TRUE(NetworkMode::JOIN == settings->mode());
   TEST_ASSERT_EQUAL_STRING("", remembered().c_str());
   TEST_ASSERT_TRUE(settings->routerOffered());
+}
+
+void test_a_start_asks_the_flash_for_no_text_it_never_kept(void) {
+  // The board prints an error line for each text asked for and not there. A
+  // machine that never ran its own network has kept no password for one, and
+  // a start that asks for it all the same puts a line that reads as a fault
+  // into the log of every healthy start.
+  TEST_ASSERT_EQUAL_STRING("", missedTexts().c_str());
+
+  takes("Basement", "correct horse");
+  restart();
+
+  TEST_ASSERT_EQUAL_STRING("", missedTexts().c_str());
 }
 
 // --- the networks it remembers ---------------------------------------------
@@ -440,6 +463,7 @@ int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(
       test_a_machine_that_was_never_set_up_joins_a_network_and_remembers_none);
+  RUN_TEST(test_a_start_asks_the_flash_for_no_text_it_never_kept);
   RUN_TEST(test_a_network_is_remembered_with_its_password_across_a_restart);
   RUN_TEST(test_the_network_remembered_last_is_the_first_to_be_tried);
   RUN_TEST(test_a_network_remembered_again_is_kept_once_with_its_new_password);

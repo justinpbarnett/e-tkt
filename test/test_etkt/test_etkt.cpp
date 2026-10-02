@@ -130,6 +130,20 @@ static String labelsBegun(void) {
   return labels;
 }
 
+// --- starting --------------------------------------------------------------
+
+void test_a_start_asks_the_flash_for_no_text_it_never_kept(void) {
+  // The board prints an error line for each text asked for and not there, so
+  // one module that reads without asking first puts a line that reads as a
+  // fault into the log of every healthy start. No module does, on a machine
+  // that was never set up or on one switched on again.
+  reboot();
+
+  for (const std::string& missed : stubNvsMissedTexts()) {
+    TEST_FAIL_MESSAGE(missed.c_str());
+  }
+}
+
 // --- running a job -------------------------------------------------------
 
 void test_a_submitted_feed_runs_and_the_machine_goes_idle(void) {
@@ -1495,6 +1509,7 @@ void test_a_run_stopping_now_has_no_time_left(void) {
 
 int main(int, char**) {
   UNITY_BEGIN();
+  RUN_TEST(test_a_start_asks_the_flash_for_no_text_it_never_kept);
   RUN_TEST(test_a_submitted_feed_runs_and_the_machine_goes_idle);
   RUN_TEST(test_the_machine_is_busy_from_taking_a_job_until_the_job_ends);
   RUN_TEST(test_a_finished_run_shows_finished_and_records_no_stop);
