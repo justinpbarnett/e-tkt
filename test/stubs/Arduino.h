@@ -243,10 +243,11 @@ inline int& stubRestarts() {
 struct StubHeap {
   size_t freeBytes;
   size_t largestFreeBlockBytes;
+  size_t minimumFreeBytes;
 };
 
 inline StubHeap& stubHeap() {
-  static StubHeap heap = {0, 0};
+  static StubHeap heap = {0, 0, 0};
   return heap;
 }
 
@@ -269,6 +270,7 @@ inline void stubReset() {
   stubRestarts() = 0;
   stubHeap().freeBytes = 0;
   stubHeap().largestFreeBlockBytes = 0;
+  stubHeap().minimumFreeBytes = 0;
 }
 
 inline void pinMode(uint8_t, uint8_t) {}

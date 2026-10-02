@@ -724,6 +724,21 @@ void test_the_status_says_how_much_memory_is_free_and_the_uptime(void) {
   TEST_ASSERT_EQUAL_UINT32(90210, status["uptime_ms"].as<uint32_t>());
 }
 
+// The least memory the device has had free since it started. A connection is
+// made of this memory, and a page that is loading takes it for a moment no
+// poll falls in. So what is free now says the machine is well when it was
+// one connection from having none, and this is the number that says how near
+// it came.
+void test_the_status_says_the_least_memory_that_has_been_free(void) {
+  stubHeap().freeBytes = 123456;
+  stubHeap().minimumFreeBytes = 2160;
+
+  const JsonObject status = json(get("/api/status"));
+
+  TEST_ASSERT_EQUAL_UINT32(2160,
+                           status["mem_heap_min_free_bytes"].as<uint32_t>());
+}
+
 // The longest status there is: a run of the longest label of symbols, three
 // bytes each, sent under the longest id, with a stop asked for. Every field
 // still fits, rather than the last ones going missing without a word.
@@ -2234,6 +2249,7 @@ int main(int, char**) {
   RUN_TEST(test_a_lost_wheel_is_reported_as_the_cause);
   RUN_TEST(test_the_status_says_what_is_left_on_the_roll);
   RUN_TEST(test_the_status_says_how_much_memory_is_free_and_the_uptime);
+  RUN_TEST(test_the_status_says_the_least_memory_that_has_been_free);
   RUN_TEST(test_the_longest_status_has_every_field);
   RUN_TEST(test_a_reply_too_large_for_its_room_is_a_failure_not_a_short_reply);
   RUN_TEST(test_a_failure_is_logged_as_well_as_answered);

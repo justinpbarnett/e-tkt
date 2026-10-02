@@ -66,10 +66,11 @@
 #include "HostMachine.h"
 #include "LinkSupervisor.h"
 
-// What the heap reports free. The panel does not read either number. They
-// are what a machine reports between jobs, so the status looks like one.
+// What the heap reports free. The panel does not read any of these numbers.
+// They are what a machine reports between jobs, so the status looks like one.
 static const size_t HEAP_FREE_BYTES = 200000;
 static const size_t HEAP_LARGEST_FREE_BLOCK_BYTES = 110000;
+static const size_t HEAP_MINIMUM_FREE_BYTES = 150000;
 
 // --- The air ---
 
@@ -486,6 +487,7 @@ class Simulator {
     stubReset();
     stubHeap().freeBytes = HEAP_FREE_BYTES;
     stubHeap().largestFreeBlockBytes = HEAP_LARGEST_FREE_BLOCK_BYTES;
+    stubHeap().minimumFreeBytes = HEAP_MINIMUM_FREE_BYTES;
     stubRandom() = [this](long low, long high) {
       if (high <= low) {
         return low;

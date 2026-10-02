@@ -56,6 +56,7 @@
 #include "Sound.h"
 #include "StopSignal.h"
 #include "Utility.h"
+#include "esp_heap_caps.h"
 
 // ---------------------------------------------------------------------------
 // The composition root.
@@ -158,6 +159,15 @@ void setup() {
   // motors'. A press logs, and the log lines allocate, so the stack is a
   // step past the 4 KB a task that only reads a pin would get by on.
   xTaskCreatePinnedToCore(buttonTask, "button", 6144, NULL, 1, NULL, 0);
+
+  // What is left once everything above is built. A connection is made of
+  // this memory, so it is how many of them the machine has room for. These
+  // are the numbers the status gives; ESP.getFreeHeap() counts memory that
+  // nothing can be given as well, and reads as more than there is.
+  logger->log(String("memory free: ") +
+              heap_caps_get_free_size(MALLOC_CAP_8BIT) +
+              " bytes, largest block " +
+              heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
 }
 
 void loop() { etkt->loop(); }

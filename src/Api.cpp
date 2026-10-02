@@ -524,6 +524,10 @@ Reply Api::status(const Request& /*request*/) {
   doc["mem_heap_free_bytes"] = heap_caps_get_free_size(MALLOC_CAP_8BIT);
   doc["mem_largest_free_block_bytes"] =
       heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+  // The least that has been free since the start. The chip keeps it for each
+  // part of the heap and this adds them up, so the whole never had less.
+  doc["mem_heap_min_free_bytes"] =
+      heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT);
   doc["uptime_ms"] = millis();
   return jsonReply(200, doc);
 }
