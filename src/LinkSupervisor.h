@@ -86,10 +86,11 @@ struct NearbyNetworks {
  *
  * When WIFI_OWN_AFTER_MS has gone by with no network joined, the machine's
  * own network opens beside the tries, and the tries are spaced out, more so
- * with a phone on it: every try takes the radio away from that phone. With
- * no network remembered, and in own mode, the machine's own network is all
- * there is: the station is off, and the network sits on the quietest
- * channel.
+ * with a phone on it: every try takes the radio away from that phone. A
+ * change made on the panel brings them close together again for a while,
+ * because somebody is waiting to see whether it worked. With no network
+ * remembered, and in own mode, the machine's own network is all there is:
+ * the station is off, and the network sits on the quietest channel.
  *
  * Nothing waits for a network. step() looks at where things stand and does
  * the next thing, every WIFI_STEP_MS, from a task of its own on the board.
@@ -152,6 +153,11 @@ class LinkSupervisor {
   uint32_t outageBeganMs = 0;
   uint32_t tries = 0;
   uint32_t lastReportMs = 0;
+  // The tries were started over at startedOverMs, for a change made on the
+  // panel. For WIFI_OWN_AFTER_MS from there they are WIFI_RETRY_MS apart
+  // whoever is on its own network.
+  bool startedOver = false;
+  uint32_t startedOverMs = 0;
   String failedNetwork = "";
   JoinFailure failure = JoinFailure::NONE;
   uint8_t failureReason = 0;
@@ -193,7 +199,7 @@ class LinkSupervisor {
   void beginOutage(uint32_t nowMs);
   void startOver(uint32_t nowMs);
   void moveOn();
-  uint32_t retryWait(uint32_t nowMs) const;
+  uint32_t retryWait() const;
   void startTry(uint32_t nowMs);
 
   void keepFallback(uint32_t nowMs);

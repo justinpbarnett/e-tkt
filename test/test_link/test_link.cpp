@@ -658,6 +658,33 @@ void test_its_own_network_closes_a_minute_after_the_last_phone_has_left(void) {
   expectScreen("Church", "192.168.1.50", "http://192.168.1.50");
 }
 
+void test_a_lost_network_is_not_tried_every_few_seconds_under_a_phone(void) {
+  // The tries are close together after a change made on the panel, because
+  // somebody is waiting to see whether it worked. Nobody is waiting after a
+  // network was lost, and a phone on the machine's own network would lose
+  // the radio every few seconds for it.
+  settings->remember("Church", CHURCH_KEY);
+  start();
+  run(WIFI_OWN_AFTER_MS);
+  radio->phones = 1;
+  radio->add("Church", CHURCH_KEY);
+  run(WIFI_RETRY_WHILE_CLIENT_MS + 10000);
+  TEST_ASSERT_TRUE(StationLink::JOINED == supervisor->status().station);
+  TEST_ASSERT_TRUE(supervisor->status().ownOpen);
+  const size_t joined = radio->joins.size();
+
+  // The venue's network goes, and stays away.
+  radio->lose(200);
+  radio->air.clear();
+  run(WIFI_OWN_AFTER_MS);
+  TEST_ASSERT_EQUAL_INT((int)joined, (int)radio->joins.size());
+
+  run(2 * (2500 + WIFI_RETRY_WHILE_CLIENT_MS));
+  TEST_ASSERT_EQUAL_INT((int)joined + 2, (int)radio->joins.size());
+  TEST_ASSERT_EQUAL_UINT32(2500 + WIFI_RETRY_WHILE_CLIENT_MS,
+                           gapBefore(joined + 1));
+}
+
 void test_the_screen_shows_how_to_join_its_own_network(void) {
   start();
   run(WIFI_STEP_MS);
@@ -911,6 +938,32 @@ void test_forgetting_the_network_it_is_on_leaves_it(void) {
   TEST_ASSERT_TRUE(StationLink::OFF == status.station);
   TEST_ASSERT_TRUE(status.ownOpen);
   TEST_ASSERT_FALSE(radio->surveyedDuringATry);
+}
+
+void test_forgetting_the_network_it_is_on_tries_the_next_within_seconds(void) {
+  // Whoever forgot it is on the machine's own network, waiting to see where
+  // the machine goes next, and a lost network is five minutes from its next
+  // try with a phone on that one.
+  settings->remember("Basement", BASEMENT_KEY);
+  settings->remember("Church", CHURCH_KEY);
+  radio->add("Church", CHURCH_KEY);
+  settings->setMode(NetworkMode::OWN);
+  start();
+  run(1000);
+  radio->phones = 1;
+  settings->setMode(NetworkMode::JOIN);
+  run(WIFI_SETTLE_MS + 15000);
+  TEST_ASSERT_TRUE(StationLink::JOINED == supervisor->status().station);
+  TEST_ASSERT_EQUAL_STRING("Church", supervisor->status().network.c_str());
+  TEST_ASSERT_TRUE(supervisor->status().ownOpen);
+
+  radio->add("Basement", BASEMENT_KEY);
+  settings->forget("Church");
+  run(WIFI_SETTLE_MS + WIFI_RETRY_MS + 5000);
+
+  const LinkStatus status = supervisor->status();
+  TEST_ASSERT_TRUE(StationLink::JOINED == status.station);
+  TEST_ASSERT_EQUAL_STRING("Basement", status.network.c_str());
 }
 
 void test_forgetting_another_network_does_not_disturb_the_one_it_is_on(void) {
@@ -1259,6 +1312,7 @@ int main(int, char**) {
   RUN_TEST(test_tries_are_spaced_out_while_its_own_network_is_open);
   RUN_TEST(test_its_own_network_stays_open_for_as_long_as_no_network_is_joined);
   RUN_TEST(test_its_own_network_closes_a_minute_after_the_last_phone_has_left);
+  RUN_TEST(test_a_lost_network_is_not_tried_every_few_seconds_under_a_phone);
   RUN_TEST(test_the_screen_shows_how_to_join_its_own_network);
   RUN_TEST(test_the_screen_shows_the_address_to_a_phone_that_has_just_joined);
   RUN_TEST(test_in_own_mode_it_runs_its_own_network_and_joins_none);
@@ -1272,6 +1326,7 @@ int main(int, char**) {
   RUN_TEST(test_a_network_typed_in_is_tried_within_seconds);
   RUN_TEST(test_a_network_typed_in_again_is_tried_again_at_once);
   RUN_TEST(test_forgetting_the_network_it_is_on_leaves_it);
+  RUN_TEST(test_forgetting_the_network_it_is_on_tries_the_next_within_seconds);
   RUN_TEST(test_forgetting_another_network_does_not_disturb_the_one_it_is_on);
   RUN_TEST(test_a_change_to_the_router_option_opens_its_own_network_again);
   RUN_TEST(test_it_says_which_networks_are_in_reach_when_the_panel_asks);

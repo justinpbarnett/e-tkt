@@ -269,6 +269,7 @@ void LinkSupervisor::switchMode(NetworkMode mode, uint32_t nowMs) {
     this->awaitingRetry = false;
     this->waitingForAddress = false;
     this->addressGivenUp = false;
+    this->startedOver = false;
     this->clearFailure();
     return;
   }
@@ -308,6 +309,9 @@ void LinkSupervisor::keepJoining(uint32_t nowMs) {
     // Whatever ended, the radio gets WIFI_RETRY_MS to be done with it.
     this->awaitingRetry = true;
     this->retryFromMs = nowMs;
+  }
+  if (this->startedOver && nowMs - this->startedOverMs >= WIFI_OWN_AFTER_MS) {
+    this->startedOver = false;
   }
 
   const bool online = state.associated && state.addressed;
@@ -399,8 +403,7 @@ void LinkSupervisor::keepJoining(uint32_t nowMs) {
     return;
   }
   this->keepFallback(nowMs);
-  if (this->awaitingRetry &&
-      nowMs - this->retryFromMs < this->retryWait(nowMs)) {
+  if (this->awaitingRetry && nowMs - this->retryFromMs < this->retryWait()) {
     this->noteOffline(nowMs);
     return;
   }
@@ -430,6 +433,8 @@ void LinkSupervisor::noteJoined(const String& address, uint32_t nowMs) {
   this->awaitingRetry = false;
   this->waitingForAddress = false;
   this->addressGivenUp = false;
+  // Whoever made the change has seen it work.
+  this->startedOver = false;
   this->wasOnline = true;
   // Its own network, if it is open, closes WIFI_OWN_LINGER_MS from here.
   this->lingerFromMs = nowMs;
@@ -437,25 +442,31 @@ void LinkSupervisor::noteJoined(const String& address, uint32_t nowMs) {
 }
 
 void LinkSupervisor::noteLost(const String& why, uint32_t nowMs) {
-  if (this->leftOnPurpose) {
-    this->logger->log(String("left ") + this->joinedSsid);
-  } else {
-    this->logger->log(String("lost ") + this->joinedSsid + " (" + why +
-                      "), joining it again");
-  }
-  this->leftOnPurpose = false;
+  const String network = this->joinedSsid;
   this->wasOnline = false;
+  this->joinedSsid = "";
+  this->joinedAddress = "";
+  if (this->leftOnPurpose) {
+    // Forgotten on the panel, and what is left is tried as after any change
+    // made there.
+    this->leftOnPurpose = false;
+    this->logger->log(String("left ") + network);
+    this->startOver(nowMs);
+    return;
+  }
+  this->logger->log(String("lost ") + network + " (" + why +
+                    "), joining it again");
   this->tryOpen = false;
-  // The network it was on is the first it tries.
+  // The network it was on is the first it tries. The tries are as far apart
+  // as its own network asks for, if that is open: nobody is waiting for this
+  // one.
   this->nextNetwork = 0;
   for (size_t i = 0; i < this->networks.size(); i++) {
-    if (this->networks[i].ssid == this->joinedSsid) {
+    if (this->networks[i].ssid == network) {
       this->nextNetwork = i;
     }
   }
   this->triesHere = 0;
-  this->joinedSsid = "";
-  this->joinedAddress = "";
   this->beginOutage(nowMs);
 }
 
@@ -499,13 +510,16 @@ void LinkSupervisor::beginOutage(uint32_t nowMs) {
 
 void LinkSupervisor::startOver(uint32_t nowMs) {
   // From the first network, with the tries close together again, as after a
-  // start. A wait for the radio to finish a try that has just ended is left
-  // as it is.
+  // start: somebody has made a change on the panel, and is waiting to see
+  // whether it worked. A wait for the radio to finish a try that has just
+  // ended is left as it is.
   this->tryOpen = false;
   this->nextNetwork = 0;
   this->triesHere = 0;
   this->waitingForAddress = false;
   this->addressGivenUp = false;
+  this->startedOver = true;
+  this->startedOverMs = nowMs;
   this->clearFailure();
   this->beginOutage(nowMs);
 }
@@ -515,8 +529,8 @@ void LinkSupervisor::moveOn() {
   this->triesHere = 0;
 }
 
-uint32_t LinkSupervisor::retryWait(uint32_t nowMs) const {
-  if (!this->ownOpen || nowMs - this->outageBeganMs < WIFI_OWN_AFTER_MS) {
+uint32_t LinkSupervisor::retryWait() const {
+  if (!this->ownOpen || this->startedOver) {
     return WIFI_RETRY_MS;
   }
   // Every try takes the radio away from whoever is on its own network.

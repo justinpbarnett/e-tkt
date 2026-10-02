@@ -233,9 +233,10 @@ constexpr uint32_t WIFI_DHCP_MS = 120000;
 
 // How long to try the remembered networks on their own before the
 // machine's own network opens beside them. With none remembered, it opens
-// at once. For this long after the networks are changed on the panel, the
-// tries are WIFI_RETRY_MS apart again whoever is on the machine's own
-// network: that is somebody waiting to see whether the change worked.
+// at once. For this long after the networks or the mode are changed on the
+// panel, the tries are WIFI_RETRY_MS apart again whoever is on the
+// machine's own network: that is somebody waiting to see whether the change
+// worked. A network that was lost gets no such hurry.
 constexpr uint32_t WIFI_OWN_AFTER_MS = 60000;
 
 // How often, while still offline, to say that the join is still going.

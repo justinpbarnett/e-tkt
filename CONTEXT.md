@@ -295,6 +295,7 @@ A network that is there and turns the machine away gets `WIFI_TRIES_PER_NETWORK`
 Every try is started from here, because the core's own reconnect gives up on most of the reasons a weak signal produces.
 After `WIFI_OWN_AFTER_MS` with no network joined, the machine's own network opens beside the tries, so there is a way in whatever the Wi-Fi is doing.
 The tries are then spaced out, and more so with a phone on the own network, because every try takes the radio away from that phone.
+A change made on the panel brings them close together again for `WIFI_OWN_AFTER_MS`, because somebody is waiting to see whether it worked, and a network that was lost does not.
 Once a network is joined and nobody is on the own network, it closes again, `WIFI_OWN_LINGER_MS` later.
 Before there was a link the machine did nothing until it had joined a network, and opened a setup portal when it could not.
 `LinkSupervisor`, whose `step()` runs every `WIFI_STEP_MS`, and whose timings are in `Configuration.h`.
