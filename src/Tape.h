@@ -24,6 +24,13 @@ constexpr int LEAD_FEEDS = 1;
 // out as far, so its end comes back out of the cog.
 constexpr int REEL_FEEDS = 16;
 
+// Feeds at the end of a roll that leave the cog and cannot be fed. The tape
+// is there, and it is waste. Measured on a 3 m roll of " FORGIVEN " with a
+// space on each side, after a load had threaded it: at 3.7 mm a feed that
+// roll counted 72 labels, and 71 printed. The 72nd had the length and ran
+// off the cog. That label is 11 feeds.
+constexpr int TAPE_TAIL_FEEDS = 11;
+
 /**
  * @brief The blank feeds added after a short label's last character.
  *
@@ -69,12 +76,19 @@ inline long long tapeUsedMm(long long feeds) {
 
 /**
  * @brief What is left on a roll that started at rollLengthMm after the given
- * feeds, in millimetres. Never negative: past the end of the roll the
- * estimate says empty, rather than owing tape.
+ * feeds, in millimetres, holding back the tail that leaves the cog. Never
+ * negative: past the end of the roll the estimate says empty, rather than
+ * owing tape.
  */
 inline long long remainingMm(long long rollLengthMm, long long feeds) {
-  const long long left = rollLengthMm - tapeUsedMm(feeds);
-  return left < 0 ? 0 : left;
+  if (rollLengthMm <= 0) {
+    return 0;
+  }
+  // One product, so the tail and the feeds already taken share one rounding
+  // down to a millimetre. The tail is waste whether or not it has been fed.
+  const long long taken = (feeds > 0 ? feeds : 0) + (long long)TAPE_TAIL_FEEDS;
+  const long long leftUm = rollLengthMm * 1000 - taken * FEED_LENGTH_UM;
+  return leftUm > 0 ? leftUm / 1000 : 0;
 }
 
 /**
@@ -82,7 +96,9 @@ inline long long remainingMm(long long rollLengthMm, long long feeds) {
  *
  * This is what the panel means by printing to the end of the roll, worked
  * out there from the roll /api/status reports. Rounded down: a label that
- * would run off the end of the tape is not one that fits.
+ * would run off the end of the tape is not one that fits. The tail that
+ * leaves the cog is already out of that remainder, so it is not held back
+ * again here.
  */
 inline long long labelsThatFit(long long leftMm, int labelLength) {
   const long long perLabelUm =

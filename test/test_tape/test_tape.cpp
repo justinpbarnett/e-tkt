@@ -118,17 +118,35 @@ void test_a_long_count_does_not_overflow(void) {
                           tapeUsedMm(2000000LL));
 }
 
-void test_what_is_left_is_the_roll_less_what_was_fed(void) {
-  TEST_ASSERT_EQUAL_INT64(3000, remainingMm(3000, 0));
-  TEST_ASSERT_EQUAL_INT64(3000 - 8 * FEED_LENGTH_UM / 1000,
-                          remainingMm(3000, 8));
+void test_what_is_left_holds_back_the_tail_that_leaves_the_cog(void) {
+  // The tail is waste, so it is out of the remainder before a feed is taken.
+  const long long untouched =
+      (3000LL * 1000 - (long long)TAPE_TAIL_FEEDS * FEED_LENGTH_UM) / 1000;
+  TEST_ASSERT_EQUAL_INT64(untouched, remainingMm(3000, 0));
+  TEST_ASSERT_TRUE(untouched < 3000);
+
+  const long long afterEight =
+      (3000LL * 1000 - (8 + (long long)TAPE_TAIL_FEEDS) * FEED_LENGTH_UM) /
+      1000;
+  TEST_ASSERT_EQUAL_INT64(afterEight, remainingMm(3000, 8));
+}
+
+void test_a_loaded_roll_of_forgiven_fits_71(void) {
+  // " FORGIVEN " with a space on each side is 10 characters. Threaded in
+  // by a load, 3.7 mm a feed counted 72 of them on a 3 m roll, and 71
+  // printed. The 72nd ran off the cog.
+  const long long left = remainingMm(DEFAULT_ROLL_LENGTH_MM, REEL_FEEDS);
+  TEST_ASSERT_EQUAL_INT64(71, labelsThatFit(left, 10));
 }
 
 void test_an_overrun_roll_reads_empty_not_negative(void) {
-  // The first feed count that reaches the roll. One short of it still has
-  // some tape left; past it the estimate stays empty rather than owing tape.
+  // The first feed count that uses up what the tail leaves of the roll.
+  // One short of it still has some tape left; past it the estimate stays
+  // empty rather than owing tape.
+  const long long usableUm =
+      3000LL * 1000 - (long long)TAPE_TAIL_FEEDS * FEED_LENGTH_UM;
   const long long feedsInARoll =
-      (3000LL * 1000 + FEED_LENGTH_UM - 1) / FEED_LENGTH_UM;
+      (usableUm + FEED_LENGTH_UM - 1) / FEED_LENGTH_UM;
   TEST_ASSERT_TRUE(remainingMm(3000, feedsInARoll - 1) > 0);
   TEST_ASSERT_EQUAL_INT64(0, remainingMm(3000, feedsInARoll));
   TEST_ASSERT_EQUAL_INT64(0, remainingMm(3000, feedsInARoll + 40));
@@ -175,7 +193,8 @@ int main(int, char**) {
   RUN_TEST(test_each_feed_uses_the_configured_length);
   RUN_TEST(test_negative_feeds_use_nothing);
   RUN_TEST(test_a_long_count_does_not_overflow);
-  RUN_TEST(test_what_is_left_is_the_roll_less_what_was_fed);
+  RUN_TEST(test_what_is_left_holds_back_the_tail_that_leaves_the_cog);
+  RUN_TEST(test_a_loaded_roll_of_forgiven_fits_71);
   RUN_TEST(test_an_overrun_roll_reads_empty_not_negative);
   RUN_TEST(test_the_copy_limit_never_cuts_a_roll_short);
   RUN_TEST(test_roll_lengths_are_bounded);

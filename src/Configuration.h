@@ -149,7 +149,8 @@ constexpr int MAX_LABEL_CHARACTERS = 249;
 // turn of the feed motor (see Feeder::feed). Measured on a 3 m roll of
 // " FORGIVEN " with a space on each side, which is 11 feeds a label: at
 // 4.0 mm a feed that roll was counted five labels short of what it held.
-// 3.7 mm a feed is that roll, 73 labels.
+// 3.7 mm a feed is that roll's length. The label that then ran off the cog
+// is TAPE_TAIL_FEEDS, held back from what is left, not a longer feed.
 //
 // Micrometres so a measured correction can be finer than a whole millimetre.
 // A 3 m roll is about 810 feeds at this length, so a tenth of a millimetre

@@ -150,13 +150,14 @@ class Status(RelayTestCase):
     async def test_an_idle_device_reports_the_firmwares_status(self):
         # The status the job runner reports on a machine that has just
         # booted: nothing running, and a roll no one has declared, which the
-        # device takes to be the default length and full.
+        # device takes to be the default length and full, less the tail that
+        # leaves the cog: 11 feeds of 3.7 mm.
         response = await self.client.get("/api/status")
         self.assertEqual(200, response.status)
         body = await response.json()
         self.assertFalse(body["busy"])
         self.assertEqual("idle", body["command"])
-        self.assertEqual({"length_mm": 3000, "remaining_mm": 3000},
+        self.assertEqual({"length_mm": 3000, "remaining_mm": 2959},
                          body["roll"])
 
 
@@ -279,10 +280,11 @@ class Jobs(RelayTestCase):
     async def test_a_run_of_labels_is_pressed_off_the_roll(self):
         # Three labels of " HELLO " take 8 feeds of 3.7 mm each, 88.8 mm in
         # all, off a roll that starts at 3000 mm. The device counts it off
-        # as it feeds, in whole millimetres.
+        # as it feeds, in whole millimetres, with the 11 feeds of the tail
+        # that leaves the cog.
         await self.press(" HELLO ", copies=3)
         status = await self.until_idle()
-        self.assertEqual({"length_mm": 3000, "remaining_mm": 2912},
+        self.assertEqual({"length_mm": 3000, "remaining_mm": 2870},
                          status["roll"])
 
     async def test_a_label_takes_the_time_it_takes_on_the_machine(self):
