@@ -1903,7 +1903,7 @@ void test_one_network_more_than_it_remembers_is_refused_as_a_conflict(void) {
 
   TEST_ASSERT_EQUAL_INT(409, reply.code);
   TEST_ASSERT_EQUAL_STRING(
-      "The machine remembers at most 4 networks, so forget one first",
+      "The device remembers at most 4 networks, so forget one first",
       errorOf(reply));
 
   const Reply putRight = post("/api/network/remember",

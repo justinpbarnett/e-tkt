@@ -881,7 +881,7 @@ Reply Api::rememberNetwork(const Request& request) {
     case Remembered::FULL:
       // 409, not 400: the request was fine, and it is the machine that has
       // no room. Forgetting a network is what makes the same body pass.
-      return errorReply(409, String("The machine remembers at most ") +
+      return errorReply(409, String("The device remembers at most ") +
                                  (int)NetworkSettings::MAX_REMEMBERED +
                                  " networks, so forget one first");
   }
