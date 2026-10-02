@@ -212,13 +212,12 @@ bool LinkSupervisor::followSettings(uint32_t nowMs) {
     // The reply to the request that made the change has to leave first, over
     // a link the change may take away. Another change restarts the wait.
     this->seenRevision = revision;
-    this->changePending = true;
-    this->changeSeenMs = nowMs;
+    this->changePending.set(nowMs);
   }
-  if (!this->changePending || nowMs - this->changeSeenMs < WIFI_SETTLE_MS) {
+  if (!this->changePending.forAtLeast(nowMs, WIFI_SETTLE_MS)) {
     return false;
   }
-  this->changePending = false;
+  this->changePending.clear();
 
   const bool offered = this->settings->routerOffered();
   const bool routerChanged = offered != this->routerOffered;
@@ -258,18 +257,17 @@ void LinkSupervisor::switchMode(NetworkMode mode, uint32_t nowMs) {
                         " for its own network");
     }
     // The station is stopped once its own network is open: see openOwn().
-    if (this->wasOnline || this->tryOpen || this->radio->station().associated) {
+    if (this->wasOnline || this->tryOpen.isSet() ||
+        this->radio->station().associated) {
       this->radio->leave();
     }
     this->wasOnline = false;
     this->joinedSsid = "";
     this->joinedAddress = "";
     this->leftOnPurpose = false;
-    this->tryOpen = false;
-    this->awaitingRetry = false;
-    this->waitingForAddress = false;
-    this->addressGivenUp = false;
-    this->startedOver = false;
+    this->endTry();
+    this->awaitingRetry.clear();
+    this->startedOver.clear();
     this->clearFailure();
     return;
   }
@@ -293,7 +291,7 @@ void LinkSupervisor::followNetworks(uint32_t nowMs) {
     // A machine got ready for another place stays on the network it is on.
     return;
   }
-  if (this->tryOpen || this->radio->station().associated) {
+  if (this->tryOpen.isSet() || this->radio->station().associated) {
     this->radio->leave();
   }
   this->startOver(nowMs);
@@ -307,11 +305,10 @@ void LinkSupervisor::keepJoining(uint32_t nowMs) {
   this->seenDrops = state.drops;
   if (dropped) {
     // Whatever ended, the radio gets WIFI_RETRY_MS to be done with it.
-    this->awaitingRetry = true;
-    this->retryFromMs = nowMs;
+    this->awaitingRetry.set(nowMs);
   }
-  if (this->startedOver && nowMs - this->startedOverMs >= WIFI_OWN_AFTER_MS) {
-    this->startedOver = false;
+  if (this->startedOver.forAtLeast(nowMs, WIFI_OWN_AFTER_MS)) {
+    this->startedOver.clear();
   }
 
   const bool online = state.associated && state.addressed;
@@ -344,13 +341,12 @@ void LinkSupervisor::keepJoining(uint32_t nowMs) {
     // worked. Starting another join here would throw that away. A join
     // that never gets an address is dropped once, and the disconnect event
     // is what opens the next try.
-    if (!this->waitingForAddress) {
-      this->waitingForAddress = true;
-      this->addressWaitFromMs = nowMs;
+    if (!this->waitingForAddress.isSet()) {
+      this->waitingForAddress.set(nowMs);
       this->addressGivenUp = false;
       this->logger->log("associated, waiting for an address");
     } else if (!this->addressGivenUp &&
-               nowMs - this->addressWaitFromMs >= WIFI_DHCP_MS) {
+               this->waitingForAddress.forAtLeast(nowMs, WIFI_DHCP_MS)) {
       this->addressGivenUp = true;
       this->logger->warn(String("no address after ") +
                          String(WIFI_DHCP_MS / 1000) + " s, joining again");
@@ -362,11 +358,11 @@ void LinkSupervisor::keepJoining(uint32_t nowMs) {
     return;
   }
   const bool gaveUp = this->addressGivenUp;
-  this->waitingForAddress = false;
+  this->waitingForAddress.clear();
   this->addressGivenUp = false;
 
-  if (this->tryOpen && dropped) {
-    this->tryOpen = false;
+  if (this->tryOpen.isSet() && dropped) {
+    this->tryOpen.clear();
     if (gaveUp) {
       // Left for want of an address, which is already noted as why.
       this->moveOn();
@@ -381,13 +377,12 @@ void LinkSupervisor::keepJoining(uint32_t nowMs) {
       }
     }
   }
-  if (this->tryOpen) {
-    if (nowMs - this->tryStartedMs >= WIFI_TRY_MS) {
+  if (this->tryOpen.isSet()) {
+    if (this->tryOpen.forAtLeast(nowMs, WIFI_TRY_MS)) {
       // No disconnect arrived. The stack is stuck in this try.
       this->radio->leave();
-      this->tryOpen = false;
-      this->awaitingRetry = true;
-      this->retryFromMs = nowMs;
+      this->tryOpen.clear();
+      this->awaitingRetry.set(nowMs);
       this->noteFailure(JoinFailure::OTHER, 0);
       this->moveOn();
     }
@@ -403,7 +398,7 @@ void LinkSupervisor::keepJoining(uint32_t nowMs) {
     return;
   }
   this->keepFallback(nowMs);
-  if (this->awaitingRetry && nowMs - this->retryFromMs < this->retryWait()) {
+  if (this->awaitingRetry.forLessThan(nowMs, this->retryWait())) {
     this->noteOffline(nowMs);
     return;
   }
@@ -429,12 +424,10 @@ void LinkSupervisor::noteJoined(const String& address, uint32_t nowMs) {
   this->nextNetwork = 0;
   this->triesHere = 0;
   this->tries = 0;
-  this->tryOpen = false;
-  this->awaitingRetry = false;
-  this->waitingForAddress = false;
-  this->addressGivenUp = false;
+  this->endTry();
+  this->awaitingRetry.clear();
   // Whoever made the change has seen it work.
-  this->startedOver = false;
+  this->startedOver.clear();
   this->wasOnline = true;
   // Its own network, if it is open, closes WIFI_OWN_LINGER_MS from here.
   this->lingerFromMs = nowMs;
@@ -456,7 +449,7 @@ void LinkSupervisor::noteLost(const String& why, uint32_t nowMs) {
   }
   this->logger->log(String("lost ") + network + " (" + why +
                     "), joining it again");
-  this->tryOpen = false;
+  this->endTry();
   // The network it was on is the first it tries. The tries are as far apart
   // as its own network asks for, if that is open: nobody is waiting for this
   // one.
@@ -513,13 +506,10 @@ void LinkSupervisor::startOver(uint32_t nowMs) {
   // start: somebody has made a change on the panel, and is waiting to see
   // whether it worked. A wait for the radio to finish a try that has just
   // ended is left as it is.
-  this->tryOpen = false;
+  this->endTry();
   this->nextNetwork = 0;
   this->triesHere = 0;
-  this->waitingForAddress = false;
-  this->addressGivenUp = false;
-  this->startedOver = true;
-  this->startedOverMs = nowMs;
+  this->startedOver.set(nowMs);
   this->clearFailure();
   this->beginOutage(nowMs);
 }
@@ -530,7 +520,7 @@ void LinkSupervisor::moveOn() {
 }
 
 uint32_t LinkSupervisor::retryWait() const {
-  if (!this->ownOpen || this->startedOver) {
+  if (!this->ownOpen || this->startedOver.isSet()) {
     return WIFI_RETRY_MS;
   }
   // Every try takes the radio away from whoever is on its own network.
@@ -544,13 +534,19 @@ void LinkSupervisor::startTry(uint32_t nowMs) {
   this->tryingSsid = network.ssid;
   this->tries++;
   this->triesHere++;
-  this->tryOpen = true;
-  this->awaitingRetry = false;
-  this->tryStartedMs = nowMs;
+  this->tryOpen.set(nowMs);
+  this->awaitingRetry.clear();
   // The station is on from here, and its own network goes where the station
   // goes, from channel to channel.
   this->ownAlone = false;
   this->radio->join(network.ssid, network.password);
+}
+
+void LinkSupervisor::endTry() {
+  // No try is under way, and none is waiting for an address.
+  this->tryOpen.clear();
+  this->waitingForAddress.clear();
+  this->addressGivenUp = false;
 }
 
 // --- its own network ---
@@ -585,7 +581,7 @@ void LinkSupervisor::keepOwn(uint32_t nowMs) {
 }
 
 void LinkSupervisor::openOwn(uint32_t nowMs, bool alone) {
-  if (this->ownRefused && nowMs - this->ownRefusedMs < WIFI_OWN_RETRY_MS) {
+  if (this->ownRefused.forLessThan(nowMs, WIFI_OWN_RETRY_MS)) {
     return;
   }
   int channel = preferredChannel(this->ownName);
@@ -609,22 +605,21 @@ void LinkSupervisor::openOwn(uint32_t nowMs, bool alone) {
   if (!opened) {
     // It stays shut. A network with no password on it is not a way in worth
     // having.
-    if (!this->ownRefused) {
+    if (!this->ownRefused.isSet()) {
       this->logger->warn(String("its own network ") + this->ownName +
                          " did not open under its password, trying again");
     }
-    this->ownRefused = true;
-    this->ownRefusedMs = doneMs;
+    this->ownRefused.set(doneMs);
     return;
   }
   if (alone) {
     this->radio->stopStation();
   }
-  this->ownRefused = false;
+  this->ownRefused.clear();
   this->ownOpen = true;
   this->ownAlone = alone;
   this->clients = 0;
-  this->addressShown = false;
+  this->addressShown.clear();
   this->lingerFromMs = doneMs;
   // Beside a station it is on the station's channel, whichever that is.
   this->logger->log(
@@ -637,7 +632,7 @@ void LinkSupervisor::closeOwn() {
   this->ownOpen = false;
   this->ownAlone = false;
   this->clients = 0;
-  this->addressShown = false;
+  this->addressShown.clear();
   this->logger->log(String("its own network ") + this->ownName + " is closed");
 }
 
@@ -651,18 +646,16 @@ void LinkSupervisor::countClients(uint32_t nowMs) {
   }
   if (now > this->clients) {
     // A phone has just joined, and what it needs next is the address.
-    this->addressShown = true;
-    this->addressShownMs = nowMs;
+    this->addressShown.set(nowMs);
   }
   this->clients = now;
   if (now > 0) {
     this->lingerFromMs = nowMs;
   } else {
-    this->addressShown = false;
+    this->addressShown.clear();
   }
-  if (this->addressShown &&
-      nowMs - this->addressShownMs >= WIFI_ADDRESS_SHOWN_MS) {
-    this->addressShown = false;
+  if (this->addressShown.forAtLeast(nowMs, WIFI_ADDRESS_SHOWN_MS)) {
+    this->addressShown.clear();
   }
 }
 
@@ -675,8 +668,8 @@ bool LinkSupervisor::listenIfAsked(uint32_t nowMs) {
   // The radio cannot listen and try a network at once, and a machine that is
   // waiting for its address has to be there to be given it. Whatever has
   // just ended gets its WIFI_RETRY_MS first, as it does before a try.
-  if (!asked || this->tryOpen || this->waitingForAddress ||
-      (this->awaitingRetry && nowMs - this->retryFromMs < WIFI_RETRY_MS)) {
+  if (!asked || this->tryOpen.isSet() || this->waitingForAddress.isSet() ||
+      this->awaitingRetry.forLessThan(nowMs, WIFI_RETRY_MS)) {
     return false;
   }
 
@@ -720,7 +713,7 @@ void LinkSupervisor::publish() {
   } else if (this->mode == NetworkMode::JOIN && !this->networks.empty()) {
     status.station = StationLink::JOINING;
     status.network =
-        this->tryOpen || this->waitingForAddress
+        this->tryOpen.isSet() || this->waitingForAddress.isSet()
             ? this->tryingSsid
             : this->networks[this->nextNetwork % this->networks.size()].ssid;
   }
@@ -741,7 +734,7 @@ void LinkSupervisor::publish() {
     info.name = status.network;
     info.detail = status.address;
     info.qr = String("http://") + status.address;
-  } else if (this->ownOpen && this->addressShown) {
+  } else if (this->ownOpen && this->addressShown.isSet()) {
     info.name = this->ownName;
     info.detail = WIFI_OWN_ADDRESS;
     info.qr = String("http://") + WIFI_OWN_ADDRESS;

@@ -9,6 +9,7 @@
 #include "Logger.h"
 #include "NetworkSettings.h"
 #include "Radio.h"
+#include "TimedFlag.h"
 
 /**
  * @brief Where the machine has got to with the networks it remembers.
@@ -119,8 +120,7 @@ class LinkSupervisor {
   // --- the settings, as last followed ---
   uint32_t seenRevision = 0;
   // A change waits WIFI_SETTLE_MS before it is followed.
-  bool changePending = false;
-  uint32_t changeSeenMs = 0;
+  TimedFlag changePending;
   NetworkMode mode = NetworkMode::JOIN;
   bool routerOffered = true;
   // In the order they are tried.
@@ -133,31 +133,28 @@ class LinkSupervisor {
   String joinedAddress = "";
   // Set by the step that leaves a network because it was forgotten.
   bool leftOnPurpose = false;
-  // A try is under way, since tryStartedMs, at tryingSsid.
-  bool tryOpen = false;
-  uint32_t tryStartedMs = 0;
+  // A try is under way, at tryingSsid.
+  TimedFlag tryOpen;
   String tryingSsid = "";
-  // The next try waits, counted from retryFromMs.
-  bool awaitingRetry = false;
-  uint32_t retryFromMs = 0;
+  // The next try waits for the radio, or for whoever is on its own network.
+  TimedFlag awaitingRetry;
   // Which of the remembered networks the next try is at, and how many tries
   // in a row it has had.
   size_t nextNetwork = 0;
   uint32_t triesHere = 0;
-  // On a network and waiting for an address, since addressWaitFromMs.
-  bool waitingForAddress = false;
-  uint32_t addressWaitFromMs = 0;
+  // On a network and waiting for an address. Given up on, the machine has
+  // left that network and the radio has not said so yet.
+  TimedFlag waitingForAddress;
   bool addressGivenUp = false;
   // Since when the machine has been without a network, the tries in that
   // time, and when the log last said so.
   uint32_t outageBeganMs = 0;
   uint32_t tries = 0;
   uint32_t lastReportMs = 0;
-  // The tries were started over at startedOverMs, for a change made on the
-  // panel. For WIFI_OWN_AFTER_MS from there they are WIFI_RETRY_MS apart
-  // whoever is on its own network.
-  bool startedOver = false;
-  uint32_t startedOverMs = 0;
+  // The tries were started over, for a change made on the panel. For
+  // WIFI_OWN_AFTER_MS from there they are WIFI_RETRY_MS apart whoever is on
+  // its own network.
+  TimedFlag startedOver;
   String failedNetwork = "";
   JoinFailure failure = JoinFailure::NONE;
   uint8_t failureReason = 0;
@@ -170,16 +167,14 @@ class LinkSupervisor {
   bool ownAlone = false;
   // 0 until one has been chosen.
   int ownChannel = 0;
-  // The radio did not open it, at ownRefusedMs.
-  bool ownRefused = false;
-  uint32_t ownRefusedMs = 0;
+  // The radio did not open it.
+  TimedFlag ownRefused;
   int clients = 0;
   // It closes WIFI_OWN_LINGER_MS after this, once the machine is on a
   // network and nobody is on its own.
   uint32_t lingerFromMs = 0;
   // A phone has just joined it, and the screen shows the phone the address.
-  bool addressShown = false;
-  uint32_t addressShownMs = 0;
+  TimedFlag addressShown;
 
   // --- the screen ---
   bool shown = false;
@@ -201,6 +196,7 @@ class LinkSupervisor {
   void moveOn();
   uint32_t retryWait() const;
   void startTry(uint32_t nowMs);
+  void endTry();
 
   void keepFallback(uint32_t nowMs);
   void keepOwn(uint32_t nowMs);
