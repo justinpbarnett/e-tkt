@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  NETWORK_POLL_MS,
+  NetworkCard,
   NetworkSearch,
   SLOW_LISTEN_MS,
   addingIntro,
@@ -16,9 +18,13 @@ import {
   rememberedRows,
   rememberedSummary,
   routerChange,
-  unansweredChange,
 } from "../../data/network.js";
 import { nearbyReply, networkReply } from "./device.js";
+
+// What fetch says of an answer the device was happy to give, and of one from
+// a device that has no such thing to ask.
+const ANSWERED = { ok: true, status: 200 };
+const NOT_FOUND = { ok: false, status: 404 };
 
 // The machine's own network, open, with this many phones on it.
 function ownOpen(clients = 0) {
@@ -57,6 +63,13 @@ function onItsOwn(changes = {}) {
 // A failed try at the workshop's network, as the device tells one.
 function failed(cause, reason = {}) {
   return joining({ failure: { network: "Workshop", cause: cause, ...reason } });
+}
+
+// A card that has heard, at time 0, of a machine on the workshop's network.
+function shown() {
+  const card = new NetworkCard();
+  card.answered(card.asked(0), ANSWERED, networkReply());
+  return card;
 }
 
 // A search that has heard what is in the simulator's air.
@@ -508,6 +521,210 @@ test("changing what its own network offers asks first only while that network is
   });
 });
 
+test("the card has what the device last said of how it is reached", () => {
+  // Nothing until it has said it, and the page draws no card until then.
+  const card = new NetworkCard();
+  assert.equal(card.network, null);
+  assert.equal(card.absent, false);
+  const reply = networkReply();
+  card.answered(card.asked(0), ANSWERED, reply);
+  assert.equal(card.network, reply);
+  card.answered(card.asked(NETWORK_POLL_MS), ANSWERED, joining());
+  assert.deepEqual(card.network, joining());
+  assert.equal(card.absent, false);
+});
+
+test("a device that has nothing to say of its network is not asked again", () => {
+  // A firmware from before the card has no api/network, and one from after
+  // this page may say what the page cannot read. Neither gets a card, and
+  // neither is asked for one every few seconds for as long as Setup is open.
+  const older = new NetworkCard();
+  older.answered(older.asked(0), NOT_FOUND, null);
+  assert.equal(older.network, null);
+  assert.equal(older.absent, true);
+  const newer = shown();
+  newer.answered(newer.asked(NETWORK_POLL_MS), ANSWERED, networkReply({ mode: "mesh" }));
+  assert.equal(newer.network, null);
+  assert.equal(newer.absent, true);
+});
+
+test("a device that could not answer leaves the card as it was", () => {
+  // A device too busy to answer says nothing of how it is reached. The card
+  // keeps what it had, and the device is asked again.
+  const card = shown();
+  card.answered(card.asked(NETWORK_POLL_MS), { ok: false, status: 503 }, null);
+  assert.deepEqual(card.network, networkReply());
+  assert.equal(card.absent, false);
+});
+
+test("the device is not asked how it is reached again until the last asking is some time back", () => {
+  // The page comes round every second while the Add dialog waits for a
+  // listen, and at once when Setup opens or a listen is asked for. The device
+  // has a handful of sockets, and the status poll goes on beside this.
+  const card = new NetworkCard();
+  assert.equal(card.due(0), true);
+  card.asked(1000);
+  assert.equal(card.due(1000 + NETWORK_POLL_MS - 1), false);
+  assert.equal(card.due(1000 + NETWORK_POLL_MS), true);
+});
+
+test("an answer asked for before a change is not taken for what came of it", () => {
+  // It may have left the device before the change got there, and it says
+  // the device is where it was. The card would go back on a change it had
+  // shown as made.
+  const during = shown();
+  const before = during.asked(NETWORK_POLL_MS);
+  during.changeSent("mode");
+  during.answered(before, ANSWERED, joining());
+  assert.deepEqual(during.network, networkReply());
+
+  const after = shown();
+  const early = after.asked(NETWORK_POLL_MS);
+  after.changeSent("mode");
+  assert.equal(after.changeAnswered(ANSWERED, onItsOwn(), 4000), null);
+  after.answered(early, ANSWERED, networkReply());
+  assert.deepEqual(after.network, onItsOwn());
+  // Not for a device with nothing to say, either: the change's answer said
+  // otherwise.
+  after.answered(early, NOT_FOUND, null);
+  assert.equal(after.absent, false);
+});
+
+test("an answer asked for while a change is on its way is not taken once the change is over", () => {
+  // The change may have been made before or after the device gave it, and
+  // only the change's own answer is sure to be from after.
+  const card = shown();
+  card.changeSent("mode");
+  const asking = card.asked(NETWORK_POLL_MS);
+  assert.equal(card.changeAnswered(ANSWERED, onItsOwn(), 4000), null);
+  card.answered(asking, ANSWERED, networkReply());
+  assert.deepEqual(card.network, onItsOwn());
+});
+
+test("an answer that comes while a change is still on its way is taken", () => {
+  // The change has had no answer by then, and may be a while getting one
+  // over a link that is losing them. The device is where this answer says
+  // it is, whether it has made the change yet or not.
+  const card = shown();
+  card.changeSent("remembered");
+  card.answered(card.asked(NETWORK_POLL_MS), ANSWERED, joining());
+  assert.deepEqual(card.network, joining());
+});
+
+test("the answer to a change says how the device is reached after it", () => {
+  // The device answers a change with what api/network says once it is made,
+  // so the card shows it without asking, and waits its full time before it
+  // asks again.
+  const card = shown();
+  card.changeSent("mode");
+  assert.equal(card.changeAnswered(ANSWERED, onItsOwn(), 5000), null);
+  assert.deepEqual(card.network, onItsOwn());
+  assert.equal(card.due(5000 + NETWORK_POLL_MS - 1), false);
+  assert.equal(card.due(5000 + NETWORK_POLL_MS), true);
+});
+
+test("a change the device refuses says why, and leaves the card as it was", () => {
+  // In the device's own words when it gives any.
+  const card = shown();
+  const reason = { error: "The device remembers at most 4 networks, so forget one first" };
+  card.changeSent("add");
+  assert.equal(
+    card.changeAnswered({ ok: false, status: 409 }, reason, 1000),
+    "The device remembers at most 4 networks, so forget one first",
+  );
+  assert.deepEqual(card.network, networkReply());
+  const silent = "The label maker refused that, and did not say why (HTTP 500).";
+  card.changeSent("add");
+  assert.equal(card.changeAnswered({ ok: false, status: 500 }, null, 2000), silent);
+  card.changeSent("add");
+  assert.equal(card.changeAnswered({ ok: false, status: 500 }, { error: 500 }, 3000), silent);
+  // A refusal is no news of the network, and the device is asked when it
+  // was going to be.
+  assert.equal(card.due(NETWORK_POLL_MS), true);
+});
+
+test("a change answered in a way the page cannot read is taken as made", () => {
+  // The device said yes. How it is reached now is what the next asking is
+  // for, which is not put off.
+  const card = shown();
+  card.changeSent("own");
+  assert.equal(card.changeAnswered(ANSWERED, null, 1000), null);
+  assert.deepEqual(card.network, networkReply());
+  assert.equal(card.absent, false);
+  assert.equal(card.due(NETWORK_POLL_MS), true);
+});
+
+test("a change that was never answered may have been made all the same", () => {
+  // The page sent it again and again, and what was lost may have been the
+  // answers alone. So it does not say the change was not made, and says
+  // where to look: the label maker's screen names the network it is on, or
+  // has what a phone needs to join its own.
+  const card = shown();
+  card.changeSent("mode");
+  assert.equal(
+    card.changeLost(),
+    "Couldn’t reach the label maker, so the change may or may not have been made. " +
+      "Its screen shows how it is reached now.",
+  );
+  assert.deepEqual(card.network, networkReply());
+  // A network sent again goes under a new id, which the device takes as
+  // somebody asking for another try at it.
+  card.changeSent("add");
+  assert.equal(
+    card.changeLost(),
+    "Couldn’t reach the label maker, so the network may or may not have been added. Adding it again does no harm.",
+  );
+});
+
+test("the card is busy with a change from when it is sent until it is over", () => {
+  // Its controls are held for that long: what a second change would do
+  // depends on what came of the first.
+  const card = shown();
+  assert.equal(card.busy, false);
+  card.changeSent("mode");
+  assert.equal(card.busy, true);
+  card.changeUnanswered();
+  assert.equal(card.busy, true);
+  card.changeAnswered(ANSWERED, onItsOwn(), 9000);
+  assert.equal(card.busy, false);
+  card.changeSent("own");
+  card.changeAnswered({ ok: false, status: 400 }, null, 9500);
+  assert.equal(card.busy, false);
+  card.changeSent("remembered");
+  card.changeLost();
+  assert.equal(card.busy, false);
+});
+
+test("a change that has had no answer yet says so where it was made", () => {
+  // Beside the control it was made with, which is held meanwhile. Not
+  // during the first try: most changes are answered at once.
+  const card = shown();
+  assert.equal(card.unansweredAt(false), null);
+  card.changeSent("mode");
+  assert.equal(card.unansweredAt(false), null);
+  card.changeUnanswered();
+  assert.equal(card.unansweredAt(false), "mode");
+  card.changeAnswered(ANSWERED, onItsOwn(), 9000);
+  assert.equal(card.unansweredAt(false), null);
+  // Nor for the change after one that was given up.
+  card.changeSent("own");
+  card.changeUnanswered();
+  card.changeLost();
+  card.changeSent("remembered");
+  assert.equal(card.unansweredAt(false), null);
+});
+
+test("a network on its way from a dialog closed since says so under the list", () => {
+  // The dialog's own note went with it. The network is to join the ones the
+  // label maker remembers, and the note under that list is the one that
+  // shows.
+  const card = shown();
+  card.changeSent("add");
+  card.changeUnanswered();
+  assert.equal(card.unansweredAt(true), "add");
+  assert.equal(card.unansweredAt(false), "remembered");
+});
+
 test("a search waits until the device has listened after it was asked", () => {
   // The list the device has from an earlier listen is not what this one
   // heard. Its count of listens tells the two apart.
@@ -576,24 +793,6 @@ test("a listen asked for again is the end of the one before it", () => {
   search.lost(first);
   assert.equal(search.text(700), "Listening for networks…");
   assert.equal(search.wanted(second), true);
-});
-
-test("a change that was never answered may have been made all the same", () => {
-  // The page sent it again and again, and what was lost may have been the
-  // answers alone. So it does not say the change was not made, and says
-  // where to look: the label maker's screen names the network it is on, or
-  // has what a phone needs to join its own.
-  assert.equal(
-    unansweredChange(false),
-    "Couldn’t reach the label maker, so the change may or may not have been made. " +
-      "Its screen shows how it is reached now.",
-  );
-  // A network sent again goes under a new id, which the device takes as
-  // somebody asking for another try at it.
-  assert.equal(
-    unansweredChange(true),
-    "Couldn’t reach the label maker, so the network may or may not have been added. Adding it again does no harm.",
-  );
 });
 
 test("what the device heard before shows while it listens again", () => {

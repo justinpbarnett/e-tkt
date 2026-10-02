@@ -1,8 +1,9 @@
 // The Network card in Setup: how the label maker is reached, the networks it
 // remembers and its own network, as api/network says them, with the words
-// for each change before it is made and for a network before it is added.
-// The page draws what this says and sends what it holds. Nothing in here
-// touches the page; node tests it in test/panel/network.test.js.
+// for each change before it is made and for a network before it is added,
+// and which of the label maker's answers the card goes by. The page draws
+// what this says and sends what it holds. Nothing in here touches the page;
+// node tests it in test/panel/network.test.js.
 //
 // A network's name comes off the air, from whoever named that network. It
 // leaves here only as text, for the page to set as text.
@@ -13,6 +14,11 @@
 
 import { NO_ANSWER_YET } from "./status.js";
 import { withUnit } from "./tape.js";
+
+// How often api/network is asked while Setup is open, and how often
+// api/network/nearby while the Add dialog waits for a listen to end.
+export const NETWORK_POLL_MS = 3000;
+export const NEARBY_POLL_MS = 1000;
 
 // How long a listen may take before the dialog says why it might: a listen
 // itself takes a few seconds, and one asked for while the label maker is
@@ -348,11 +354,139 @@ export function routerChange(network) {
 // was sent again and again. It may have been made all the same, and the
 // answers lost. adding is set for a network to add, which the Add dialog
 // still holds.
-export function unansweredChange(adding) {
+function unansweredChange(adding) {
   return adding
     ? "Couldn’t reach the label maker, so the network may or may not have been added. Adding it again does no harm."
     : "Couldn’t reach the label maker, so the change may or may not have been made. " +
         "Its screen shows how it is reached now.";
+}
+
+// What the Network card goes by: how the label maker is reached, as
+// api/network last said it, and the change to that which is on its way. The
+// page asks and sends, and tells this what came back.
+export class NetworkCard {
+  // What api/network last said, or null until it has, and for a label maker
+  // that has no such thing to say.
+  #network = null;
+  // Set by a label maker that has no api/network to ask, or one whose answer
+  // this page cannot read. Neither is asked again.
+  #absent = false;
+  // When api/network was last asked, or a change last answered with what it
+  // says, at a time in milliseconds.
+  #askedAt = -Infinity;
+  // Counts the changes as each is sent and as each is over, so that an
+  // answer to api/network asked for before either is not taken for what
+  // came of the change.
+  #changes = 0;
+  // Where on the page the change now on its way was made, as one of the
+  // data-unanswered notes in index.html names it, or null while none is.
+  #changing = null;
+  // Whether a try at sending that change has had no answer, and the page is
+  // sending it again.
+  #unanswered = false;
+
+  // How the label maker is reached, for the page to draw, or null when there
+  // is no card to draw.
+  get network() {
+    return this.#network;
+  }
+
+  // Whether the label maker has nothing to say of its network, and is not
+  // asked again.
+  get absent() {
+    return this.#absent;
+  }
+
+  // Whether a change is on its way. The page sends no other until it is
+  // over: what a second one would do depends on what came of the first.
+  get busy() {
+    return this.#changing !== null;
+  }
+
+  // Whether api/network is to be asked, at a time in milliseconds: no sooner
+  // than NETWORK_POLL_MS after the last asking, however often the page comes
+  // round.
+  due(now) {
+    return now - this.#askedAt >= NETWORK_POLL_MS;
+  }
+
+  // The page is asking api/network. Returns the asking, for the page to hand
+  // back with its answer.
+  asked(now) {
+    this.#askedAt = now;
+    return { changes: this.#changes };
+  }
+
+  // The label maker answered that asking: what fetch says of the answer, and
+  // the reply in it, or null for an answer that is not ok. An asking that
+  // had no answer, or one cut short, is not told of here, and the card stays
+  // as it was.
+  answered(asking, response, reply) {
+    // What a change made since came to is newer than this.
+    if (asking.changes !== this.#changes) {
+      return;
+    }
+    // A label maker with no api/network says 404. Any other answer that is
+    // not ok says nothing of its network.
+    if (!response.ok && response.status !== 404) {
+      return;
+    }
+    this.#network = response.ok ? readNetwork(reply) : null;
+    this.#absent = this.#network === null;
+  }
+
+  // The page is sending a change made at this place on the page.
+  changeSent(where) {
+    this.#changing = where;
+    this.#unanswered = false;
+    this.#changes += 1;
+  }
+
+  // A try at sending the change had no answer, and the page is sending it
+  // again.
+  changeUnanswered() {
+    this.#unanswered = true;
+  }
+
+  // The label maker answered the change, at a time in milliseconds. Returns
+  // what went wrong, in words for the page, or null. Its reply to a change it
+  // made is what api/network says after it, and counts as an asking.
+  changeAnswered(response, reply, now) {
+    this.#changeOver();
+    if (!response.ok) {
+      const reason = reply !== null && typeof reply.error === "string" ? reply.error : null;
+      return reason ?? "The label maker refused that, and did not say why (HTTP " + response.status + ").";
+    }
+    const network = readNetwork(reply);
+    if (network !== null) {
+      this.#network = network;
+      this.#askedAt = now;
+    }
+    return null;
+  }
+
+  // The change did not get through, and the page has given up sending it.
+  // Returns the words for that.
+  changeLost() {
+    const adding = this.#changing === "add";
+    this.#changeOver();
+    return unansweredChange(adding);
+  }
+
+  #changeOver() {
+    this.#changing = null;
+    this.#changes += 1;
+  }
+
+  // Where on the page to say that the change has had no answer yet, for as
+  // long as the page is sending it again, or null. A network added from a
+  // dialog that has been closed since says so under the list it is to join.
+  unansweredAt(addDialogOpen) {
+    if (!this.#unanswered) {
+      return null;
+    }
+    return this.#changing === "add" && !addDialogOpen ? "remembered" : this.#changing;
+  }
 }
 
 // The search the Add dialog runs for the networks in reach of the label
