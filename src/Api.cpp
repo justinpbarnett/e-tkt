@@ -546,9 +546,9 @@ Reply Api::stop(const Request& request) {
 // which the answer kept under its id says: that one has run.
 //
 // Called with answersLock held, as everything once() answers is.
-bool Api::keepFromStarting(const String& command) {
+bool Api::keepFromStarting(const String& commandId) {
   Reply answered;
-  if (this->recall(command, &answered)) {
+  if (this->recall(commandId, &answered)) {
     return answered.code != 200;
   }
   DynamicJsonDocument doc(SHORT_REPLY_JSON_BYTES);
@@ -556,7 +556,7 @@ bool Api::keepFromStarting(const String& command) {
   // What the panel that sent the command tells its own stop by, from a
   // machine that was busy with something else.
   doc["result"] = "not_started";
-  this->remember(command, jsonReply(409, doc));
+  this->remember(commandId, jsonReply(409, doc));
   return true;
 }
 
@@ -574,14 +574,14 @@ Reply Api::stopRunning(const Request& request) {
                       "being pressed is finished, or leave it out to stop "
                       "now");
   }
-  String command;
+  String commandId;
   Reply refused;
-  if (!readId(request, "for", &command, &refused)) {
+  if (!readId(request, "for", &commandId, &refused)) {
     return refused;
   }
   DynamicJsonDocument doc(SHORT_REPLY_JSON_BYTES);
-  switch (afterLabel ? this->etkt->stopAfterLabel(command)
-                     : this->etkt->stop(command)) {
+  switch (afterLabel ? this->etkt->stopAfterLabel(commandId)
+                     : this->etkt->stop(commandId)) {
     case StopResult::STOPPING:
       doc["result"] = "stopping";
       return jsonReply(200, doc);
@@ -594,7 +594,8 @@ Reply Api::stopRunning(const Request& request) {
       // Whatever is running is somebody else's, and runs on. The command
       // this stop is for has ended, or has not arrived, and then it is not
       // to start when it does: the operator has already said stop.
-      doc["result"] = this->keepFromStarting(command) ? "not_started" : "idle";
+      doc["result"] =
+          this->keepFromStarting(commandId) ? "not_started" : "idle";
       return jsonReply(200, doc);
     case StopResult::UNSTOPPABLE:
       break;

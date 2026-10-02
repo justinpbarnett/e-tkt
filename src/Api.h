@@ -104,7 +104,7 @@ class Api {
 
   // Refuses, from here on, the command sent under this id that has not
   // arrived, and says whether there was one to refuse.
-  bool keepFromStarting(const String& command);
+  bool keepFromStarting(const String& commandId);
 
   // Which answers to a request sent under an id are kept: the ones that
   // took it, or every one, a refusal too.
