@@ -1309,6 +1309,75 @@ void test_a_network_forgotten_on_purpose_does_not_come_back(void) {
   TEST_ASSERT_EQUAL_INT(0, (int)radio->joins.size());
 }
 
+// --- the button held through the start -------------------------------------
+
+// The supervisor as the board builds it, with the button held from the
+// splash on: forgetNetworks() comes before the first step.
+static void holdTheButtonThroughTheStart(void) {
+  supervisor = new LinkSupervisor(logger, radio, settings, display);
+  supervisor->forgetNetworks();
+}
+
+void test_the_button_held_through_the_start_forgets_every_network(void) {
+  settings->remember("Church", CHURCH_KEY);
+  settings->remember("Basement", BASEMENT_KEY);
+  radio->add("Church", CHURCH_KEY);
+  radio->add("Basement", BASEMENT_KEY);
+
+  holdTheButtonThroughTheStart();
+
+  // It says so on its screen, and restarts.
+  const DisplayCall* call = display->last(DisplayCall::RENDER);
+  TEST_ASSERT_NOT_NULL(call);
+  TEST_ASSERT_TRUE(Screen::WIFI_RESET == call->screen);
+  TEST_ASSERT_EQUAL_INT(1, stubRestarts());
+
+  // And starts again with no network to join, and its own network open.
+  powerCycle();
+  radio->add("Church", CHURCH_KEY);
+  radio->add("Basement", BASEMENT_KEY);
+  start();
+  run(4000);
+  TEST_ASSERT_EQUAL_INT(0, (int)settings->networks().size());
+  TEST_ASSERT_EQUAL_INT(0, (int)radio->joins.size());
+  TEST_ASSERT_TRUE(radio->accessPointOpen);
+}
+
+void test_the_button_held_through_the_start_wipes_the_radios_own_storage(void) {
+  // The firmware before this one kept its network there, and this one leaves
+  // it there. It goes as well: a network forgotten with the button is not to
+  // come back with that firmware put back on.
+  radio->inheritedSsid = "Church";
+  radio->inheritedPassword = CHURCH_KEY;
+
+  holdTheButtonThroughTheStart();
+
+  String ssid = "";
+  String password = "";
+  TEST_ASSERT_FALSE(radio->inherited(&ssid, &password));
+}
+
+void test_a_network_the_radio_could_not_wipe_still_does_not_come_back(void) {
+  // What the machine remembers says the radio's network was taken over
+  // already, so it is not looked for again.
+  radio->wipeFails = true;
+  radio->inheritedSsid = "Church";
+  radio->inheritedPassword = CHURCH_KEY;
+
+  holdTheButtonThroughTheStart();
+  TEST_ASSERT_TRUE(logged("Could not wipe the radio's own storage"));
+  TEST_ASSERT_EQUAL_INT(1, stubRestarts());
+
+  powerCycle();
+  radio->inheritedSsid = "Church";
+  radio->inheritedPassword = CHURCH_KEY;
+  radio->add("Church", CHURCH_KEY);
+  start();
+  run(4000);
+  TEST_ASSERT_EQUAL_INT(0, (int)settings->networks().size());
+  TEST_ASSERT_EQUAL_INT(0, (int)radio->joins.size());
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_it_joins_the_network_it_remembers);
@@ -1374,5 +1443,8 @@ int main(int, char**) {
   RUN_TEST(test_asking_again_while_it_listens_does_not_make_it_listen_twice);
   RUN_TEST(test_a_machine_updated_from_the_firmware_before_keeps_its_network);
   RUN_TEST(test_a_network_forgotten_on_purpose_does_not_come_back);
+  RUN_TEST(test_the_button_held_through_the_start_forgets_every_network);
+  RUN_TEST(test_the_button_held_through_the_start_wipes_the_radios_own_storage);
+  RUN_TEST(test_a_network_the_radio_could_not_wipe_still_does_not_come_back);
   return UNITY_END();
 }

@@ -144,6 +144,9 @@ class FakeRadio : public Radio {
   // The network the firmware before this one left in the radio.
   String inheritedSsid = "";
   String inheritedPassword = "";
+  // True for a radio that cannot wipe its own storage, which leaves that
+  // network where it is.
+  bool wipeFails = false;
 
   // --- what it records -----------------------------------------------------
 
@@ -329,6 +332,15 @@ class FakeRadio : public Radio {
     }
     *ssid = this->inheritedSsid;
     *password = this->inheritedPassword;
+    return true;
+  }
+
+  bool forgetInherited() override {
+    if (this->wipeFails) {
+      return false;
+    }
+    this->inheritedSsid = "";
+    this->inheritedPassword = "";
     return true;
   }
 };

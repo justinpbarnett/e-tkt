@@ -60,15 +60,6 @@ class Esp32Radio : public Radio {
    */
   void initialize();
 
-  /**
-   * @brief Wipes the radio's own storage, and with it the network the
-   * firmware before this one left there. In place of initialize(), not
-   * after it: the machine restarts once this is done.
-   *
-   * @return whether the radio wiped it.
-   */
-  bool forgetInherited();
-
   void join(const String& ssid, const String& password) override;
   void leave() override;
   void stopStation() override;
@@ -82,4 +73,10 @@ class Esp32Radio : public Radio {
   int clients() override;
   bool survey(std::vector<HeardNetwork>* heard) override;
   bool inherited(String* ssid, String* password) override;
+
+  /**
+   * @brief Radio::forgetInherited(). In place of initialize(), not after it:
+   * this brings the driver up itself.
+   */
+  bool forgetInherited() override;
 };

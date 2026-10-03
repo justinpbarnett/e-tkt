@@ -174,6 +174,23 @@ NearbyNetworks LinkSupervisor::nearby() {
   return nearby;
 }
 
+void LinkSupervisor::forgetNetworks() {
+  this->logger->log("Button held through the start: forgetting every network");
+  this->settings->reset();
+
+  // The firmware before this one kept its network in the radio's own
+  // storage, and this one leaves it there. That goes as well: a network
+  // forgotten here is not to come back with a firmware put back on.
+  if (this->radio->forgetInherited()) {
+    this->logger->log("Wiped the radio's own storage");
+  } else {
+    this->logger->warn("Could not wipe the radio's own storage");
+  }
+  this->display->render(Screen::WIFI_RESET);
+  delay(WIFI_RESET_SHOWN_MS);
+  ESP.restart();
+}
+
 void LinkSupervisor::start(uint32_t nowMs) {
   // The firmware before this one kept its one network in the radio itself.
   // Looked for once: see NetworkSettings::imported().

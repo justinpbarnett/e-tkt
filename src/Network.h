@@ -4,7 +4,6 @@
 #include <ESPAsyncWebServer.h>
 
 #include "Api.h"
-#include "Display.h"
 #include "Esp32Radio.h"
 #include "LinkSupervisor.h"
 #include "Logger.h"
@@ -33,7 +32,6 @@ class Network {
  private:
   Logger* logger;
   AsyncWebServer* server;
-  Display* display;
   Api* api;
   Esp32Radio* radio;
   NetworkSettings* settings;
@@ -42,17 +40,9 @@ class Network {
   static void supervisorTask(void* arg);
 
  public:
-  Network(Logger* logger, Display* display, Api* api, Esp32Radio* radio,
+  Network(Logger* logger, Api* api, Esp32Radio* radio,
           NetworkSettings* settings, LinkSupervisor* link);
   ~Network();
-
-  /**
-   * @brief Makes the machine forget every network it remembers, and the one
-   * the firmware before this one left in the radio, says so on the screen,
-   * and restarts. For the button held through the start. It does not return,
-   * and it comes before initialize().
-   */
-  void forgetNetworks();
 
   /**
    * @brief Starts the radio, the server and the link, and returns. The link

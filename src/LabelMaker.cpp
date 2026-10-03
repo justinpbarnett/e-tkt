@@ -90,8 +90,8 @@ Logger* logger = new Logger();
 // that moves, sounds or blinks for a job, so they all share the one.
 StopSignal* stopSignal = new StopSignal();
 Sound* sound = new Sound(stopSignal);
-// The one place that knows the screen is an OLED. ETKT, the link and Network
-// take it as a Display, which is all any of them draws through.
+// The one place that knows the screen is an OLED. ETKT and the link take it
+// as a Display, which is all either of them draws through.
 OledDisplay* display = new OledDisplay(sound, screen);
 Settings* settings = new Settings(logger);
 Roll* roll = new Roll(logger);
@@ -121,7 +121,7 @@ LinkSupervisor* linkSupervisor =
 // such request to: what the job runner does, and how the machine is reached.
 Api* api = new Api(etkt, linkSupervisor, networkSettings, logger);
 Network* network =
-    new Network(logger, display, api, radio, networkSettings, linkSupervisor);
+    new Network(logger, api, radio, networkSettings, linkSupervisor);
 // The pin is still named for what the switch on it was first for. Held
 // through the start, it still is that.
 Button* button = new Button(WIFI_RESET_PIN, etkt, logger);
@@ -146,7 +146,7 @@ void setup() {
   // forget its networks. It restarts to do so, and nothing below runs.
   button->initialize();
   if (button->heldAtStart()) {
-    network->forgetNetworks();
+    linkSupervisor->forgetNetworks();
   }
 
   // Start the webserver and the link. Neither waits for a network, so the

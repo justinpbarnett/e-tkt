@@ -11,7 +11,6 @@
 
 #include "Api.h"
 #include "Configuration.h"
-#include "Display.h"
 #include "Esp32Radio.h"
 #include "LinkSupervisor.h"
 #include "Logger.h"
@@ -100,10 +99,9 @@ class ApiHandler : public AsyncWebHandler {
 
 // --- Network ---
 
-Network::Network(Logger* logger, Display* display, Api* api, Esp32Radio* radio,
+Network::Network(Logger* logger, Api* api, Esp32Radio* radio,
                  NetworkSettings* settings, LinkSupervisor* link) {
   this->logger = logger;
-  this->display = display;
   this->api = api;
   this->radio = radio;
   this->settings = settings;
@@ -119,23 +117,6 @@ void Network::supervisorTask(void* arg) {
     network->link->step();
     vTaskDelay(pdMS_TO_TICKS(WIFI_STEP_MS));
   }
-}
-
-void Network::forgetNetworks() {
-  this->logger->log("Button held through the start: forgetting every network");
-  this->settings->reset();
-
-  // The firmware before this one kept its network in the radio's own
-  // storage, and this one leaves it there. That goes as well: a network
-  // forgotten here is not to come back with a firmware put back on.
-  if (this->radio->forgetInherited()) {
-    this->logger->log("Wiped the radio's own storage");
-  } else {
-    this->logger->warn("Could not wipe the radio's own storage");
-  }
-  this->display->render(Screen::WIFI_RESET);
-  delay(1500);
-  esp_restart();
 }
 
 namespace {

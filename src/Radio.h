@@ -145,4 +145,15 @@ class Radio {
    * @return false when there is none.
    */
   virtual bool inherited(String* ssid, String* password) = 0;
+
+  /**
+   * @brief Wipes the radio's own storage, and with it the network inherited()
+   * gives, so that the firmware before this one does not find it there if it
+   * is ever put back on. For a machine told to forget every network, which
+   * restarts once this is done: nothing else is asked of the radio before it
+   * or after it.
+   *
+   * @return whether the radio wiped it.
+   */
+  virtual bool forgetInherited() = 0;
 };

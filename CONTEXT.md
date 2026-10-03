@@ -71,7 +71,7 @@ While nothing runs, a press prints the **last run** as the button comes up: what
 Held for `BUTTON_HOLD_MS` while nothing runs, it unloads the roll, and the next press loads one in place of printing.
 So a roll is changed with a hold and two presses: unload, load, and the run carries on.
 A press comes before those when the tape ran out while the run printed, to stop it.
-Held down as the machine starts, for all of `BUTTON_BOOT_HOLD_MS`, it does none of that: the machine forgets every **remembered network** and the password of its **own network**, and restarts.
+Held down as the machine starts, for all of `BUTTON_BOOT_HOLD_MS`, it does none of that, and makes a **Wi-Fi reset**: the machine forgets every **remembered network** and the password of its **own network**, and restarts.
 A reading that has not held for `BUTTON_DEBOUNCE_MS` is no press, because the pin has read low with nobody near it.
 A press that comes down before the machine has sat idle for `BUTTON_ARMING_MS` starts nothing, so a finger on its way to stop a job that has just ended does not print the run again.
 It used to be the wifi reset button and nothing else, and the pin is still named `WIFI_RESET_PIN`.
@@ -361,6 +361,13 @@ A network sent again exactly as it is kept changes nothing in the list, and is a
 The link takes it once the reply has left, as it takes every change, and whatever other change came beside it.
 The same request come again under its **command id** is not one: that is the panel making sure the first one arrived, and a try under way is left alone.
 `NetworkSettings::tryRequests()`, which `LinkSupervisor` follows beside `revision()`.
+
+**Wi-Fi reset** - what the **button** held through the start does, named for what the screen says.
+The machine forgets every **remembered network**, goes back to join mode with the **router option** on, and throws away the password of its **own network**, so the next one is new.
+It also wipes the network the firmware before this one kept in the radio itself, so that firmware put back on does not find it there.
+Should that wipe fail, the network still does not come back on this firmware, which takes it over only once.
+The screen then says WI-FI RESET for `WIFI_RESET_SHOWN_MS`, and the machine restarts.
+`LinkSupervisor::forgetNetworks()`, before the link's first step, with `Radio::forgetInherited()` for the wipe, so `test/test_link` runs it against the `FakeRadio` and counts the restart.
 
 **Own network** - the Wi-Fi network the machine runs itself, with the whole panel on it at `WIFI_OWN_ADDRESS`.
 Its name is `E-TKT-` and the **machine id**, so three machines on one table are three networks.
