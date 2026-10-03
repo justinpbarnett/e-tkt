@@ -169,44 +169,38 @@
               </div>
             </div>
 
+            <!-- One count, and beside it Max: as many as the tape left on the
+                 roll will take. While Max is on, the count shows what that
+                 comes to, or the placeholder while there is nothing to
+                 measure it by. -->
             <div class="field">
               <p class="label" id="quantity-label">Quantity</p>
-              <div class="segmented" role="radiogroup" aria-labelledby="quantity-label">
-                <label class="segment">
-                  <input type="radio" name="quantity" value="one" checked />
-                  <span>One</span>
-                </label>
-                <label class="segment">
-                  <input type="radio" name="quantity" value="multiple" />
-                  <span>Multiple</span>
-                </label>
-                <label class="segment">
-                  <input type="radio" name="quantity" value="max" id="quantity-max" />
-                  <span>Max</span>
-                </label>
-              </div>
-              <div class="stepper copies" id="copies-stepper" hidden>
-                <button type="button" class="btn-key" id="copies-less" aria-label="Fewer labels">
-                  <svg class="icon icon-step" viewBox="0 0 14 14" aria-hidden="true" focusable="false">
-                    <path d="M2 7h10" />
-                  </svg>
+              <div class="quantity" role="group" aria-labelledby="quantity-label">
+                <div class="stepper">
+                  <button type="button" class="btn-key" id="copies-less" aria-label="Fewer labels">
+                    <svg class="icon icon-step" viewBox="0 0 14 14" aria-hidden="true" focusable="false">
+                      <path d="M2 7h10" />
+                    </svg>
+                  </button>
+                  <input
+                    type="number"
+                    class="input stepper-value"
+                    id="copies-input"
+                    inputmode="numeric"
+                    step="1"
+                    value="1"
+                    placeholder="–"
+                    aria-label="Number of labels"
+                  />
+                  <button type="button" class="btn-key" id="copies-more" aria-label="More labels">
+                    <svg class="icon icon-step" viewBox="0 0 14 14" aria-hidden="true" focusable="false">
+                      <path d="M2 7h10M7 2v10" />
+                    </svg>
+                  </button>
+                </div>
+                <button type="button" class="btn btn-compact btn-toggle" id="max-button" aria-pressed="false">
+                  Max
                 </button>
-                <input
-                  type="number"
-                  class="input stepper-value"
-                  id="copies-input"
-                  inputmode="numeric"
-                  min="2"
-                  step="1"
-                  value="2"
-                  aria-label="Number of labels"
-                />
-                <button type="button" class="btn-key" id="copies-more" aria-label="More labels">
-                  <svg class="icon icon-step" viewBox="0 0 14 14" aria-hidden="true" focusable="false">
-                    <path d="M2 7h10M7 2v10" />
-                  </svg>
-                </button>
-                <span class="stepper-unit" aria-hidden="true">labels</span>
               </div>
               <p class="note" id="quantity-note"></p>
             </div>

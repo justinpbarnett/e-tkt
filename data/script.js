@@ -56,7 +56,7 @@ import {
   rememberedSummary,
   routerChange,
 } from "./network.js";
-import { plural, quantity, settledCopies, steppedCopies } from "./quantity.js";
+import { plural, Quantity } from "./quantity.js";
 import {
   activity,
   CapabilitiesMismatch,
@@ -168,6 +168,8 @@ const state = {
   // The copies this page last asked the device for, so the stops are laid
   // out for a run of labels from the tap rather than from the first poll.
   sentCopies: null,
+  // How many labels the form asks for: the count, and whether Max is on.
+  quantity: new Quantity(),
   // How long the device says the run on the form would take.
   estimates: new Estimates(),
   // The stops this page has asked for, and what the last one came to.
@@ -219,10 +221,10 @@ const el = {
   length: $("label-length"),
   keys: document.querySelectorAll("[data-insert]"),
   clearButton: $("clear-button"),
-  copiesStepper: $("copies-stepper"),
   copiesInput: $("copies-input"),
   copiesLess: $("copies-less"),
   copiesMore: $("copies-more"),
+  maxButton: $("max-button"),
   quantityNote: $("quantity-note"),
   cutInput: $("cut-input"),
   printButton: $("print-button"),
@@ -329,6 +331,9 @@ async function startup() {
   document.body.dataset.printing = "false";
   applyTheme(document.documentElement.dataset.theme === "dark" ? "dark" : "light");
   el.cutInput.checked = storedCut();
+  // The count starts as the page has it, which is what the field shows
+  // before this runs.
+  state.quantity.typed(el.copiesInput.value);
   wireEvents();
   drawTape();
   render();
@@ -382,21 +387,25 @@ function wireEvents() {
   for (const radio of el.form.elements.margin) {
     radio.addEventListener("change", labelChanged);
   }
-  for (const radio of el.form.elements.quantity) {
-    radio.addEventListener("change", render);
-  }
-  el.copiesInput.addEventListener("input", render);
-  el.copiesInput.addEventListener("change", commitCopies);
+  el.copiesInput.addEventListener("input", () => {
+    state.quantity.typed(el.copiesInput.value);
+    render();
+  });
+  el.copiesInput.addEventListener("change", settleCopies);
   el.copiesInput.addEventListener("keydown", (event) => {
     // Settles the number rather than printing it. A run of labels is too
     // much to start from a key pressed to finish typing a count.
     if (event.key === "Enter") {
       event.preventDefault();
-      commitCopies();
+      settleCopies();
     }
   });
   el.copiesLess.addEventListener("click", () => stepCopies(-1));
   el.copiesMore.addEventListener("click", () => stepCopies(1));
+  el.maxButton.addEventListener("click", () => {
+    state.quantity.toggleMax();
+    render();
+  });
   el.cutInput.addEventListener("change", cutChanged);
 
   el.feedButton.addEventListener("click", () => send("feed"));
@@ -639,6 +648,7 @@ async function retrieveCapabilities() {
 
   takeDownProblem("capabilities");
   el.input.maxLength = typedLengthLimit(device);
+  el.copiesInput.min = device.copies.minimum;
   el.copiesInput.max = device.copies.maximum;
   const disagreement = commandListDisagreement(device);
   if (disagreement !== null) {
@@ -808,35 +818,28 @@ function drawPrinting(status) {
 //   quantity   //
 //--------------//
 
-// What the quantity options come to as the page has them now, as quantity()
-// in quantity.js works it out.
-function quantityChosen() {
-  const typed = el.input.value;
-  return quantity(
-    {
-      mode: el.form.elements.quantity.value,
-      copiesText: el.copiesInput.value,
-      labelLength: isValidLabelText(typed, device) ? codePoints(buildTreatedLabel()) : null,
-      tapeLeftMm: tapeLeftMm(state.status),
-    },
-    device,
-  );
+// What the quantity is measured against, as Quantity in quantity.js takes
+// it: the label as it would be sent, and the tape left on the roll.
+function quantityMeasure() {
+  return {
+    labelLength: isValidLabelText(el.input.value, device) ? codePoints(buildTreatedLabel()) : null,
+    tapeLeftMm: tapeLeftMm(state.status),
+  };
 }
 
-// Settles the Multiple field on a count the device will take.
-function commitCopies() {
-  if (device === null) {
-    return;
-  }
-  el.copiesInput.value = settledCopies(el.copiesInput.value, device);
+// What the quantity comes to as the page has it now.
+function quantityChosen() {
+  return state.quantity.chosen(quantityMeasure(), device);
+}
+
+// Settles the count on one the device will take.
+function settleCopies() {
+  state.quantity.settle(device);
   render();
 }
 
 function stepCopies(step) {
-  if (device === null) {
-    return;
-  }
-  el.copiesInput.value = steppedCopies(el.copiesInput.value, step, device);
+  state.quantity.step(step, quantityMeasure(), device);
   render();
 }
 
@@ -1794,23 +1797,22 @@ function renderPrintView(running, offer, focused) {
   }
 
   // how many
+  // Max goes off for good once it has nothing left to print to the end of,
+  // rather than stay on for a choice that cannot be made.
+  state.quantity.measured(quantityMeasure(), device);
   const chosen = quantityChosen();
-  // quantity() falls back to One once Max has nothing left to print to the
-  // end of, rather than leave a choice selected that cannot be made.
-  if (el.form.elements.quantity.value !== chosen.mode) {
-    el.form.elements.quantity.value = chosen.mode;
+  // Only when it differs. What is typed into the field is what the quantity
+  // holds already, so the field is written over only by a step, a count
+  // settled, or Max.
+  if (el.copiesInput.value !== chosen.text) {
+    el.copiesInput.value = chosen.text;
   }
-  for (const radio of el.form.elements.quantity) {
-    radio.disabled =
-      busy ||
-      (radio.value === "max" && !chosen.maxAvailable) ||
-      (radio.value === "multiple" && !chosen.multipleAvailable);
-  }
-  el.copiesStepper.hidden = chosen.mode !== "multiple";
   el.copiesInput.disabled = busy;
   el.copiesInput.setAttribute("aria-invalid", chosen.copiesInvalid ? "true" : "false");
   el.copiesLess.disabled = busy || !chosen.fewerAvailable;
   el.copiesMore.disabled = busy || !chosen.moreAvailable;
+  el.maxButton.disabled = busy || !chosen.maxAvailable;
+  el.maxButton.setAttribute("aria-pressed", chosen.max ? "true" : "false");
   setText(el.quantityNote, chosen.note.text);
   setTone(el.quantityNote, chosen.note.tone);
   el.cutInput.disabled = busy;

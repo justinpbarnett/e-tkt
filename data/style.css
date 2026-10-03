@@ -469,6 +469,26 @@ a {
   }
 }
 
+/* A button that stays down once pressed, and comes up when pressed again.
+   Up, it is a secondary button. Down, it is filled like a ticked box. */
+.btn-toggle {
+  border-color: var(--hairline);
+  background: var(--card);
+  color: var(--ink);
+}
+
+@media (hover: hover) {
+  .btn-toggle:hover:not(:disabled):not([aria-pressed="true"]) {
+    background: var(--page);
+  }
+}
+
+.btn-toggle[aria-pressed="true"] {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--card);
+}
+
 .btn-ghost {
   background: transparent;
   color: var(--text-2);
@@ -1096,6 +1116,12 @@ body[data-printing="true"] .tape-tip.visible {
   border-color: var(--danger);
 }
 
+/* Firefox fades a placeholder by itself, on top of the colour it is given. */
+.input::placeholder {
+  color: var(--text-3);
+  opacity: 1;
+}
+
 input.stepper-value {
   width: 76px;
   padding: 10px 8px;
@@ -1123,8 +1149,13 @@ input.stepper-value,
   font-size: 14px;
 }
 
-.copies {
-  margin-top: 12px;
+/* How many labels: the count, and beside it the button for all the roll
+   will take. On one line down to a 320px phone. */
+.quantity {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
 }
 
 /*------------*/

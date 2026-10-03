@@ -242,8 +242,13 @@ Uncut, a run comes out as one strip to cut apart by hand, and a little sooner.
 The panel's "Cut after each label" box is `cut`, and the browser keeps the choice.
 `/api/status` reports the label being pressed as `copy` of `copies`, and the roll is charged after each one, so the tape left moves label by label.
 
-**Quantity** - the panel's way of asking for a run: one, multiple (2 up to `MAX_COPIES`), or max.
+**Quantity** - the panel's way of asking for a run: a count from 1 to `MAX_COPIES`, typed or stepped with minus and plus, or Max.
 Max is the labels that fit, capped at `MAX_COPIES`, worked out in the panel and sent as a number; the device has no idea of the end of the roll.
+With Max on, the count shows what Max comes to, and Max off again gives back the count that was there before.
+Typing a count, or a step of minus or plus from the one shown, turns Max off.
+Max goes off once the roll is spent or too short for one of the label, and a new roll does not turn it on again: that would be a roll of labels from one press of Print.
+It used to be three choices, one, multiple and max, with a count to type only for multiple.
+`Quantity` in `data/quantity.js`.
 
 **Last run** - the last run the machine started, and how far it got: the label, how many of it, whether each is cut, and how many of them are printed.
 It is what a press of the **button** prints, so a run can be repeated, or carried on after a roll change, with no phone and no network to ask it over.

@@ -36,7 +36,7 @@ If the wheel on your machine turns against the tape, set `REVERSE_LOAD_WHEEL_DIR
 The machine can't see the tape, so the app counts what is left on the roll: the roll length you give here, minus the tape fed since.
 The length starts at the last roll's, and a new roll is usually 3 m.
 If yours is a different length, or you are putting back a part-used roll, set its length before feeding it through.
-"MAX", in the quantity of labels to print, is as many as that count says will fit.
+"MAX", beside the number of labels to print, is as many as that count says will fit.
 
 ## to take a reel out
 
