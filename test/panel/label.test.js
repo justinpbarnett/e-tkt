@@ -76,6 +76,18 @@ test("the characters of a label the wheel does not carry are named once each, as
   assert.deepEqual(unprintableCharacters("a!", null), []);
 });
 
+test("a label is checked as the machine prints it, which upper-cases a to z and no other letter", () => {
+  // The page's own upper-casing knows more letters than the machine's. It
+  // made "ß" into "SS", "ﬁ" into "FI" and "ı" into "I", which the wheel
+  // carries, and the machine refused each of those labels on arrival,
+  // because it leaves every letter but a to z as it is.
+  const device = labelMaker();
+  assert.deepEqual(unprintableCharacters("Straße", device), ["ß"]);
+  assert.deepEqual(unprintableCharacters("ﬁx ıt", device), ["ﬁ", "ı"]);
+  assert.equal(isValidLabelText("STRAßE", device), false);
+  assert.deepEqual(hintFor("STRAßE", device), { text: "Not on the wheel: ß", tone: "danger" });
+});
+
 test("a label can be printed once it has text and the wheel carries all of it", () => {
   // Checked against the set the device served, so this answer and the
   // device's cannot drift apart, and refused outright until it has served

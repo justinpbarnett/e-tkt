@@ -69,15 +69,23 @@ export function codePoints(text) {
   return Array.from(text).length;
 }
 
+// The label as the machine prints it, which has only capitals. The machine
+// upper-cases a to z and leaves every other character as it is, and so does
+// this. The page's own toUpperCase() knows more letters: it made "ß" into
+// "SS", which the wheel carries, so a label the machine refuses passed here.
+function asPrinted(text) {
+  return text.replace(/[a-z]/g, (letter) => letter.toUpperCase());
+}
+
 // Each character of the label the wheel does not carry, once, in the order
 // typed. Case does not matter: the label is sent lowercase and the firmware
-// upper-cases it again.
+// upper-cases it again, as asPrinted() does.
 export function unprintableCharacters(text, device) {
   if (device === null) {
     return [];
   }
   const found = [];
-  for (const character of text.toUpperCase()) {
+  for (const character of asPrinted(text)) {
     if (device.printable.indexOf(character) < 0 && !found.includes(character)) {
       found.push(character);
     }
@@ -107,7 +115,7 @@ export function hintFor(text, device) {
   if (unprintable.length > 0) {
     return { text: "Not on the wheel: " + unprintable.join(" "), tone: "danger" };
   }
-  const upper = text.toUpperCase();
+  const upper = asPrinted(text);
   const surprises = Object.keys(device.aliases)
     .filter((character) => upper.indexOf(character) >= 0)
     .map((character) => character + " prints " + device.aliases[character]);
