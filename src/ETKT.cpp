@@ -499,8 +499,6 @@ void ETKT::feedCommandInternal() {
   this->printhead->rest();
   delay(REST_SETTLE_MS);
   this->feeder->feed();
-  this->ledFinish->off();
-  this->ledChar->off();
 }
 
 void ETKT::reelCommandInternal() {
@@ -531,8 +529,6 @@ void ETKT::reelCommandInternal() {
   if (!this->stopSignal->cutShort()) {
     this->roll->putIn();
   }
-  this->ledFinish->off();
-  this->ledChar->off();
 }
 
 void ETKT::unloadCommandInternal() {
@@ -553,8 +549,6 @@ void ETKT::unloadCommandInternal() {
   if (this->feeder->backOut(REEL_FEEDS)) {
     this->roll->takeOut();
   }
-  this->ledFinish->off();
-  this->ledChar->off();
 }
 
 void ETKT::cutCommandInternal() {
@@ -564,7 +558,6 @@ void ETKT::cutCommandInternal() {
   delay(REST_SETTLE_MS);
 
   this->printhead->cut(this->calibration, CUT_COMMAND_PRESSES);
-  ledChar->off();
 }
 
 void ETKT::saveCommandInternal() {
@@ -577,15 +570,13 @@ void ETKT::saveCommandInternal() {
   // business: how long a confirmation stays up is a decision about this
   // command, not about how to draw a screen.
   delay(SAVED_SCREEN_MS);
-  ledFinish->off();
 
   settings->save(this->calibration.align, this->calibration.force);
   display->render(Screen::REBOOTING);
   delay(REBOOT_SCREEN_MS);
-  ledFinish->off();
-  ledChar->off();
-  delay(500);
 
+  // The one command that never gets back to loop() to have its lights put
+  // out. It lights none, and both are out as every command starts.
   // TODO: Does the device actually need to reboot?
   // I think all the state gets updated properly without it.
   ESP.restart();
@@ -597,7 +588,6 @@ void ETKT::testCommandInternal() {
   // press is always at the minimum force, whatever the job's calibration
   // says. See Printhead::testPress().
   display->render(Screen::TESTING);
-  ledFinish->off();
 
   this->printhead->testPress(this->calibration);
 }

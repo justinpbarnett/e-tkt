@@ -8,7 +8,7 @@
 // replaces them. These used to be delay() calls inside the renderers, which
 // meant Display decided how long its caller blocked.
 #define SAVED_SCREEN_MS 3000
-#define REBOOT_SCREEN_MS 2000
+#define REBOOT_SCREEN_MS 2500
 
 /**
  * @brief The fixed screens the machine shows while it is doing something.
