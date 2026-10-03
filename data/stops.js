@@ -248,7 +248,7 @@ function becameOf(response, reply) {
 
 // The device's record of what the last stop cut short, or null. It keeps
 // one until the next command, and has none when nothing was cut short.
-function lastStop(status) {
+export function lastStop(status) {
   const stopped = status === null ? null : status.stopped;
   return stopped !== null && typeof stopped === "object" ? stopped : null;
 }

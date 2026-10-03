@@ -150,7 +150,9 @@ A machine whose wheel turns against the tape is put right with `REVERSE_LOAD_WHE
 A stop halts the wheel and the tape together.
 A length is `ROLL_LENGTH_MIN_MM` to `ROLL_LENGTH_MAX_MM`.
 A request without one keeps the last roll's, and a device that has never been told one starts at `DEFAULT_ROLL_LENGTH_MM`, 3 m.
-`ETKT::reelCommandInternal()` and `DaisyWheel::turnAlong()`.
+A load sent from Setup takes the panel back to the print view once the roll is in, since there is nothing left to do in Setup.
+It stays in Setup when the load was stopped, so the stopped notice can be read and the load sent again, and when a calibration there is not saved yet, or a problem is showing.
+`ETKT::reelCommandInternal()` and `DaisyWheel::turnAlong()`, and `RollLoad` in `data/setup.js` for the panel's way back.
 
 **Unloading a roll** - the `unload` command, which undoes a load, so the roll can come out without being cut or fed the rest of the way through.
 The press goes to rest, and the tape backs out `REEL_FEEDS`, as far as a load pulls it in: from the cutter, where the last cut left its end, to behind the cog.
@@ -439,6 +441,9 @@ Setup has a Network card, which says how the machine is reached and changes it: 
 A change there that can cost a phone its way to the machine asks first, and the card moves only when the machine says the change is made.
 A change made there, and a listen, is sent again under its **command id** until it is answered, since the answer can be lost over the very link the change is about.
 Meanwhile the card says so beside what the change was made with, and a change the page gives up on is said to be one that may or may not have been made.
+Setup has a Back at its top, beside the theme button, as well as the one at its foot beside Save, so the way out is in reach however far down the page is scrolled.
+Either one asks first when a calibration there is not saved.
+When a load takes the page back to the print view by itself, as **loading a roll** says, the print view takes no taps for `STOP_ARMING_MS`, so a finger on its way down to Setup's stop does not land on what has taken its place.
 `script.js` reads the page and draws it.
 What the page says and decides is worked out in the ES modules beside it, which never touch the page, so `node --test "test/panel/*.test.js"` covers them: `link.js` for the sending, `network.js` for the Network card.
 `test/panel/capabilities.json` is the `/api/capabilities` reply those tests run against, with `network.json` and `nearby.json` beside it for the Network card, and the simulator's tests hold all three to the firmware's.

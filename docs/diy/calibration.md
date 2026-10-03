@@ -46,9 +46,9 @@ Also, when turning the machine on, the press angle should be at 2mm from the I_n
 
 In the app, click on "SETUP".
 
-The "Calibration" card holds the two settings, each with a test of its own, and we will start with the first: the alignment.
+The "Calibration" card, at the foot of the page under "Roll" and "Network", holds the two settings, each with a test of its own, and we will start with the first: the alignment.
 
-<img src="../assets/app/setup.png" width="50%" alt="The Setup view, with the align and force settings under Calibration">
+<img src="../assets/app/calibration.png" width="50%" alt="The foot of the Setup view, with the align and force settings under Calibration, and Back and Save under them">
 
 ### Alignment
 

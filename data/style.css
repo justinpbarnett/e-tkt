@@ -267,6 +267,14 @@ input {
   outline: none;
 }
 
+/* The print view, for a moment after the page has gone back to it by itself
+   at the end of a load. A finger on its way to the stop in Setup comes down
+   on whatever is there now, so a tap that soon does not count. The script
+   says when. */
+.view[data-settling] {
+  pointer-events: none;
+}
+
 a {
   color: var(--focus-ring);
 }
@@ -289,6 +297,12 @@ a {
   justify-content: space-between;
   gap: 16px;
   margin-bottom: 20px;
+}
+
+.masthead-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 /* The brand tracks a display heading at -0.07em, for a title in Title Case.
@@ -602,6 +616,14 @@ a {
   width: 14px;
   height: 14px;
   stroke-width: 1.5;
+}
+
+/* Points the way a back button goes. Drawn no wider than it is, so what
+   stands between it and its word is the button's gap and no more. */
+.icon-back {
+  width: 7px;
+  height: 14px;
+  stroke-width: 2.5;
 }
 
 /* The square every stop button has had since tape recorders. */

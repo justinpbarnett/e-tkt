@@ -27,9 +27,10 @@ The E-TKT uses generic 9mm DYMO-compatible label reel. They are cheap and come i
 
 ### 4. in the app, go to "SETUP" and press "LOAD NEW ROLL", check step 3 again, then press "FEED TAPE THROUGH" and wait
 
-<img src="../assets/app/setup.png" width="50%" alt="The Setup view, with the tape left on the roll above the calibration"><img src="../assets/app/reel.png" width="50%" alt="The Load a new roll dialog, asking for the roll length">
+<img src="../assets/app/setup.png" width="50%" alt="The Setup view, with the tape left on the roll at the top"><img src="../assets/app/reel.png" width="50%" alt="The Load a new roll dialog, asking for the roll length">
 
 While the tape goes through, the daisy wheel turns with it, so the front corner of the tape slides past the wheel instead of catching on it and folding over.
+Once the roll is in, the app goes back to the label screen by itself.
 If the tape catches anyway, press the stop button, then "UNLOAD ROLL" to back it out, and load it again.
 If the wheel on your machine turns against the tape, set `REVERSE_LOAD_WHEEL_DIRECTION` to `true` in `src/Configuration.h` and flash the firmware again.
 

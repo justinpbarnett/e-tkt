@@ -57,6 +57,7 @@ import {
   routerChange,
 } from "./network.js";
 import { plural, Quantity } from "./quantity.js";
+import { RollLoad } from "./setup.js";
 import {
   activity,
   CapabilitiesMismatch,
@@ -108,7 +109,8 @@ const LAST_HEARD_TICK_MS = 1000;
 // How long a stop button, or what takes its place once the stop is done,
 // ignores taps after it comes up. The stop comes up where the finger that
 // started the command may still be tapping, and the page may scroll to it;
-// a tap that soon was meant for what was there before.
+// a tap that soon was meant for what was there before. So does the print
+// view, when it takes the place of Setup's stop at the end of a load.
 const STOP_ARMING_MS = 700;
 
 // How close to the top of the screen scrolling to the stops may take the
@@ -178,6 +180,12 @@ const state = {
   // end of the command it stopped, or a problem stopping it.
   revealStop: false,
   view: "print",
+  // The new roll this page asked to load from Setup, while it goes in: the
+  // page goes back to the print view once it is in.
+  load: new RollLoad(),
+  // Set for a moment after the page has gone back to the print view by
+  // itself, while a tap on that view does not count: see leaveAfterLoad().
+  settling: false,
   // The calibration Setup shows, against the one the device has saved.
   calibration: new CalibrationDraft(),
   // The last thing that went wrong, and which view it belongs to.
@@ -202,6 +210,7 @@ const state = {
 const $ = (id) => document.getElementById(id);
 
 const el = {
+  mastheadBackButton: $("masthead-back-button"),
   themeButton: $("theme-button"),
   viewName: $("view-name"),
   offline: $("offline"),
@@ -271,7 +280,7 @@ const el = {
   setupRunActions: $("setup-run-actions"),
   setupStopButton: $("setup-stop-button"),
   setupStopText: $("setup-stop-text"),
-  cancelButton: $("cancel-button"),
+  backButton: $("back-button"),
   saveButton: $("save-button"),
   stopNotices: document.querySelectorAll("[data-stop-notice]"),
   problems: document.querySelectorAll("[data-problem]"),
@@ -439,7 +448,9 @@ function wireEvents() {
   for (const button of [el.testAlignButton, el.testFullButton]) {
     button.addEventListener("click", () => testCommand(button));
   }
-  el.cancelButton.addEventListener("click", leaveSetup);
+  for (const button of [el.mastheadBackButton, el.backButton]) {
+    button.addEventListener("click", leaveSetup);
+  }
   el.saveButton.addEventListener("click", confirmSave);
 
   for (const button of document.querySelectorAll("[data-dismiss]")) {
@@ -474,6 +485,7 @@ function wireEvents() {
       lengthMm !== null &&
       (await send(el.reelButton.dataset.command, { length_mm: lengthMm }))
     ) {
+      state.load.started(state.sent);
       scrollStopsIntoPlace(el.setupRunActions, el.reelButton);
     }
   });
@@ -1031,6 +1043,8 @@ function requestStop(kind, row) {
     return;
   }
   state.problem = null;
+  // A load stopped from here ends in Setup, too late or not.
+  state.load.stopAsked();
   // A command still on its way is the one the stop is for, and the page
   // sends it no more: the stop goes now, and says what became of it.
   const request = state.stops.ask(kind, state.sent, performance.now());
@@ -1269,6 +1283,30 @@ function closeSetup() {
   drawTape();
   window.scrollTo(0, 0);
   el.setupButton.focus({ preventScroll: true });
+}
+
+// Goes back to the print view once a roll loaded from Setup is in, as
+// setup.js has it: nothing is left to do in Setup then, and the way out of
+// it is off the bottom of the screen. Asked each time a status comes in.
+function leaveAfterLoad() {
+  const leave = state.load.statusArrived({
+    status: state.status,
+    running: runningCommand(),
+    setup: state.view === "setup",
+    problem: state.problem !== null,
+    unsaved: state.calibration.unsaved(),
+  });
+  if (!leave) {
+    return;
+  }
+  // The stop was under a finger until now, and the print view takes its
+  // place. A tap already on its way down was not meant for what is there.
+  state.settling = true;
+  setTimeout(() => {
+    state.settling = false;
+    render();
+  }, STOP_ARMING_MS);
+  closeSetup();
 }
 
 // The steppers for align and force.
@@ -1660,6 +1698,7 @@ async function poll() {
     }
     applyStatus(await response.json(), requestedAt);
     state.link.heard(performance.now());
+    leaveAfterLoad();
   } catch (error) {
     // Once, when the page starts saying so, rather than every second after.
     if (state.link.missed()) {
@@ -1736,6 +1775,9 @@ function render() {
   renderOffline(offline);
   el.printView.hidden = state.view !== "print";
   el.setupView.hidden = state.view !== "setup";
+  el.mastheadBackButton.hidden = state.view !== "setup";
+  // style.css keeps taps off it meanwhile.
+  el.printView.toggleAttribute("data-settling", state.settling);
   setText(el.viewName, state.view === "setup" ? "Setup" : "Label maker");
 
   renderPrintView(running, offer, focused);
@@ -1931,7 +1973,9 @@ function renderSetupView(running, offer, focused) {
   // numbers it already has.
   el.saveButton.disabled =
     busy || offline || calibration.fieldsFor("save", device) === null || !calibration.unsaved() || state.restarting;
-  el.cancelButton.disabled = state.restarting;
+  for (const button of [el.mastheadBackButton, el.backButton]) {
+    button.disabled = state.restarting;
+  }
 
   // the stop, for anything that can be stopped, whoever started it
   showArmed(el.setupRunActions, offer !== null && state.view === "setup");
