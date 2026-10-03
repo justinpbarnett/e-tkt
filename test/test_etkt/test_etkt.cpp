@@ -562,6 +562,40 @@ void test_no_job_starts_the_screen_again(void) {
   TEST_ASSERT_EQUAL_INT(0, display->countOf(DisplayCall::INITIALIZE));
 }
 
+// How bright the LED on `pin` was left: the last level written to it, and 0
+// when nothing has been.
+static int lightLeftAt(uint8_t pin) {
+  int level = 0;
+  for (const StubPinWrite& write : stubAnalogWrites()) {
+    if (write.pin == pin) {
+      level = write.value;
+    }
+  }
+  return level;
+}
+
+// The lights say that the machine is at work. One left on once a job has
+// ended says so of a machine that is not: home left both at full, and the
+// two tests left the character light dim after their last press.
+void test_no_job_leaves_a_light_on(void) {
+  for (size_t i = 0; i < ETKT::COMMAND_COUNT; i++) {
+    const CommandSpec& spec = ETKT::COMMANDS[i];
+    if (spec.run == NULL) {
+      continue;
+    }
+    CommandOptions options;
+    options.command = spec.command;
+    options.label = "A";
+    options.align = 5;
+    options.force = 5;
+    etkt->submit(options);
+    etkt->loop();
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, lightLeftAt(FINISH_LED_PIN), spec.name);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, lightLeftAt(CHARACTER_LED_PIN), spec.name);
+  }
+}
+
 // The full test trials an align and a force before either is saved, and
 // the cut that ends it is part of the trial. It used to cut at the saved
 // align, so the tape it handed back was pressed at one align and cut at
@@ -1615,6 +1649,7 @@ int main(int, char**) {
   RUN_TEST(test_a_second_job_is_refused_while_the_first_waits_its_turn);
   RUN_TEST(test_a_job_posted_while_the_idle_screen_draws_is_taken);
   RUN_TEST(test_no_job_starts_the_screen_again);
+  RUN_TEST(test_no_job_leaves_a_light_on);
   RUN_TEST(test_the_full_test_cuts_at_the_align_it_is_testing);
   RUN_TEST(test_a_stop_with_nothing_running_stops_nothing_later);
   RUN_TEST(test_saving_cannot_be_stopped);

@@ -420,6 +420,13 @@ void ETKT::loop() {
     (this->*(spec->run))();
   }
 
+  // The lights say that the machine is at work, and the job is over here,
+  // however it ended. So they go out here, and no handler has to remember
+  // to: home used to leave both on, and the tests left the character light
+  // dim from their last press.
+  this->ledFinish->off();
+  this->ledChar->off();
+
   // Whether a stop cut this command short, as against arriving while it was
   // finishing anyway.
   const bool stopped = this->stopSignal->cutShort();
