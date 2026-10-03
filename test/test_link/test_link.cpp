@@ -931,6 +931,27 @@ void test_a_network_typed_in_again_is_tried_again_at_once(void) {
   TEST_ASSERT_TRUE(StationLink::JOINED == supervisor->status().station);
 }
 
+void test_a_network_typed_in_again_beside_a_router_change_is_tried_at_once(
+    void) {
+  // Two changes on the Network card, inside the time the link waits for
+  // the replies to leave: the router option, and then "try again". The
+  // list is as it was, and the try is still asked for.
+  settings->remember("Church", CHURCH_KEY);
+  start();
+  run(WIFI_OWN_AFTER_MS + 5000);
+  radio->phones = 1;
+  run(5000);
+  const size_t tries = radio->joins.size();
+
+  radio->add("Church", CHURCH_KEY);
+  settings->setRouterOffered(false);
+  settings->remember("Church", CHURCH_KEY);
+  run(WIFI_SETTLE_MS + WIFI_RETRY_MS + 4000);
+
+  TEST_ASSERT_EQUAL_INT((int)tries + 1, (int)radio->joins.size());
+  TEST_ASSERT_TRUE(StationLink::JOINED == supervisor->status().station);
+}
+
 void test_forgetting_the_network_it_is_on_leaves_it(void) {
   joinChurch();
 
@@ -1334,6 +1355,8 @@ int main(int, char**) {
       test_going_back_to_joining_keeps_its_own_network_open_until_it_has_joined);
   RUN_TEST(test_a_network_typed_in_is_tried_within_seconds);
   RUN_TEST(test_a_network_typed_in_again_is_tried_again_at_once);
+  RUN_TEST(
+      test_a_network_typed_in_again_beside_a_router_change_is_tried_at_once);
   RUN_TEST(test_forgetting_the_network_it_is_on_leaves_it);
   RUN_TEST(test_forgetting_the_network_it_is_on_tries_the_next_within_seconds);
   RUN_TEST(test_forgetting_another_network_does_not_disturb_the_one_it_is_on);

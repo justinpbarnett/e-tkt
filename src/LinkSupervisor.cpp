@@ -192,6 +192,7 @@ void LinkSupervisor::start(uint32_t nowMs) {
   }
 
   this->seenRevision = this->settings->revision();
+  this->seenTryRequests = this->settings->tryRequests();
   this->mode = this->settings->mode();
   this->routerOffered = this->settings->routerOffered();
   this->networks = this->settings->networks();
@@ -230,14 +231,17 @@ bool LinkSupervisor::followSettings(uint32_t nowMs) {
   const std::vector<RememberedNetwork> latest = this->settings->networks();
   const bool networksKept = sameNetworks(latest, this->networks);
   this->networks = latest;
+  // A network sent again exactly as it is kept changes nothing in the list,
+  // and is still the panel asking for a try now, whatever else changed
+  // beside it.
+  const uint32_t tryRequests = this->settings->tryRequests();
+  const bool tryAsked = tryRequests != this->seenTryRequests;
+  this->seenTryRequests = tryRequests;
 
   const NetworkMode mode = this->settings->mode();
   if (mode != this->mode) {
     this->switchMode(mode, nowMs);
-  } else if (mode == NetworkMode::JOIN && !(routerChanged && networksKept)) {
-    // A network sent again exactly as it is kept changes nothing in the
-    // list, and is still followed: that is the panel asking for a try now.
-    // A change to the router alone is not.
+  } else if (mode == NetworkMode::JOIN && (!networksKept || tryAsked)) {
     this->followNetworks(nowMs);
   }
   // What the change asks of the radio is given a step to happen before

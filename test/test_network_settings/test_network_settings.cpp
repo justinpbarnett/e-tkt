@@ -459,6 +459,34 @@ void test_what_changes_nothing_leaves_the_revision_alone(void) {
   TEST_ASSERT_EQUAL_UINT32(seen, settings->revision());
 }
 
+void test_every_network_typed_in_is_a_try_request(void) {
+  // Sent again exactly as it is kept, a network changes nothing in the list,
+  // and is still somebody asking for a try now.
+  uint32_t seen = settings->tryRequests();
+
+  takes("Basement", "correct horse");
+  TEST_ASSERT_TRUE(settings->tryRequests() != seen);
+  seen = settings->tryRequests();
+
+  takes("Basement", "correct horse");
+  TEST_ASSERT_TRUE(settings->tryRequests() != seen);
+}
+
+void test_only_a_network_typed_in_is_a_try_request(void) {
+  // The other changes are followed for what they change, and a network that
+  // is refused asks for nothing.
+  takes("Basement", "correct horse");
+  const uint32_t seen = settings->tryRequests();
+
+  settings->remember("Garage", "short");
+  settings->setMode(NetworkMode::OWN);
+  settings->setRouterOffered(false);
+  settings->prefer("Basement");
+  settings->forget("Basement");
+
+  TEST_ASSERT_EQUAL_UINT32(seen, settings->tryRequests());
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(
@@ -491,5 +519,7 @@ int main(int, char**) {
   RUN_TEST(test_a_reset_leaves_nothing_to_take_over);
   RUN_TEST(test_every_change_the_link_has_to_follow_moves_the_revision);
   RUN_TEST(test_what_changes_nothing_leaves_the_revision_alone);
+  RUN_TEST(test_every_network_typed_in_is_a_try_request);
+  RUN_TEST(test_only_a_network_typed_in_is_a_try_request);
   return UNITY_END();
 }

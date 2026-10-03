@@ -47,7 +47,8 @@ enum class RememberRefusal {
  * The panel changes these from the webserver's task and the link reads them
  * from a task of its own, so every access is under one lock, which also
  * covers Preferences, as Roll's does. revision() is how the link learns that
- * something it has to follow has changed.
+ * something it has to follow has changed, and tryRequests() how it learns
+ * that a network was typed in, which asks for a try at once.
  *
  * A password leaves here only through networks() and ownPassword(), which
  * are for the radio and for the machine's own screen. None is logged.
@@ -72,6 +73,8 @@ class NetworkSettings {
   bool importDone = false;
   // What revision() says.
   uint32_t changeCount = 0;
+  // What tryRequests() says.
+  uint32_t tryRequestCount = 0;
 
   // Writes the list of networks. Under the lock.
   void storeNetworks();
@@ -186,6 +189,14 @@ class NetworkSettings {
    * link's own doing.
    */
   uint32_t revision();
+
+  /**
+   * @brief A number that moves with every network remembered, which is
+   * somebody asking for a try at it now. A network sent again exactly as it
+   * is kept changes nothing in the list, and moves this all the same. It
+   * moves the revision too, so the link takes it once the reply has left.
+   */
+  uint32_t tryRequests();
 
   /**
    * @brief Forgets every network, goes back to joining one, and throws away

@@ -280,6 +280,7 @@ RememberRefusal NetworkSettings::remember(const String& ssid,
     this->storeNetworks();
   }
   this->changeCount++;
+  this->tryRequestCount++;
   this->lock.unlock();
 
   this->logger->log("Remembered the network " + ssid);
@@ -406,6 +407,13 @@ uint32_t NetworkSettings::revision() {
   const uint32_t revision = this->changeCount;
   this->lock.unlock();
   return revision;
+}
+
+uint32_t NetworkSettings::tryRequests() {
+  this->lock.lock();
+  const uint32_t requests = this->tryRequestCount;
+  this->lock.unlock();
+  return requests;
 }
 
 void NetworkSettings::reset() {

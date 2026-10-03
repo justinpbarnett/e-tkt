@@ -127,6 +127,7 @@ class LinkSupervisor {
 
   // --- the settings, as last followed ---
   uint32_t seenRevision = 0;
+  uint32_t seenTryRequests = 0;
   // A change waits WIFI_SETTLE_MS before it is followed.
   TimedFlag changePending;
   NetworkMode mode = NetworkMode::JOIN;

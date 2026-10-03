@@ -337,11 +337,16 @@ The panel changes it under Setup, and it is kept in EEPROM.
 **Remembered network** - a network the machine has been given the name and the password of.
 It keeps up to `MAX_REMEMBERED`, in the order they are tried, and a network added again takes the place of the one of its name, at the front.
 A name is 1 to `Radio::MAX_NAME_BYTES` bytes of text, and a password is nothing, for an open network, or `Radio::MIN_PASSWORD_LENGTH` to `Radio::MAX_PASSWORD_LENGTH` bytes, which is what WPA2 takes.
-A network sent again exactly as it is kept is still followed with a try at once, which is the panel asking for one.
-The same request come again under its **command id** is not: that is the panel making sure the first one arrived, and a try under way is left alone.
+Each network typed in is a **try request**.
 The first start of this firmware takes over the one network the firmware before it kept in the radio itself.
 A password goes from here to the radio and nowhere else: none is logged, and no reply of the **Api** carries one.
 `NetworkSettings`, in EEPROM.
+
+**Try request** - a network typed in on the panel, which asks the machine to try it at once.
+A network sent again exactly as it is kept changes nothing in the list, and is a try request all the same: it is how the panel asks for another try.
+The link takes it once the reply has left, as it takes every change, and whatever other change came beside it.
+The same request come again under its **command id** is not one: that is the panel making sure the first one arrived, and a try under way is left alone.
+`NetworkSettings::tryRequests()`, which `LinkSupervisor` follows beside `revision()`.
 
 **Own network** - the Wi-Fi network the machine runs itself, with the whole panel on it at `WIFI_OWN_ADDRESS`.
 Its name is `E-TKT-` and the **machine id**, so three machines on one table are three networks.
