@@ -296,6 +296,8 @@ class Server:
         headers = {"Content-Type": reply["contentType"]}
         if reply["allow"] is not None:
             headers["Allow"] = reply["allow"]
+        if reply["cacheControl"] is not None:
+            headers["Cache-Control"] = reply["cacheControl"]
         return web.Response(
             status=reply["code"], headers=headers,
             body=reply["body"].encode("utf-8", "surrogateescape"))

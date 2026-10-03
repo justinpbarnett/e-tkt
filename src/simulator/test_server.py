@@ -687,13 +687,14 @@ class Program(unittest.TestCase):
 
     def test_a_line_that_is_not_a_request_is_answered_all_the_same(self):
         # One reply to every line, or the next reply would be read as this
-        # one's.
+        # one's. Nothing says how long it may be kept, as the device never
+        # sends it.
         done = self.run_program(lines=b"GET /api/status\n")
         self.assertEqual(0, done.returncode)
         self.assertEqual(
             [{"code": 500, "contentType": "application/json",
               "body": '{"error":"The simulator could not read the request"}',
-              "allow": None}],
+              "allow": None, "cacheControl": None}],
             [json.loads(line) for line in done.stdout.splitlines()])
 
     def test_a_speed_that_is_not_above_zero_is_refused(self):
@@ -726,9 +727,16 @@ class Panel(RelayTestCase):
             response = await self.client.get(path)
             self.assertEqual("no-cache", response.headers.get("Cache-Control"))
 
-    async def test_the_apis_replies_are_left_as_the_firmware_sent_them(self):
-        response = await self.client.get("/api/status")
-        self.assertNotIn("Cache-Control", response.headers)
+    async def test_no_reply_of_the_apis_is_kept(self):
+        # Each is the device as it was at that moment, and a kept copy would
+        # have the page go on showing it. The firmware says so of every
+        # reply, a refusal too, and the board sends it as a Cache-Control
+        # header.
+        for method, path in [("GET", "/api/status"), ("GET", "/api/nothing"),
+                             ("GET", "/api/cut"), ("POST", "/api/tag")]:
+            response = await self.client.request(method, path)
+            self.assertEqual("no-store", response.headers.get("Cache-Control"),
+                             method + " " + path)
 
     async def test_the_panel_tests_use_the_capabilities_the_firmware_serves(
             self):

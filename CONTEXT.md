@@ -400,8 +400,10 @@ So `test/test_link` walks the link through an evening of bad Wi-Fi in millisecon
 That is the routes, the checks on a request, the words of every refusal, and the JSON of every reply.
 It takes a `Request` and gives back a `Reply`, so the host tests check every reply.
 The webserver in `Network.cpp` is an adapter in front of it.
-It turns each HTTP request under `/api/` into a `Request`, sends the `Reply` back as it comes, and has no rules of its own.
+It turns each HTTP request under `/api/` into a `Request`, sends the `Reply` back as it comes, its headers too, and has no rules of its own.
 A reply too large for its document is a 500 and not a reply with fields missing, and every 500 also goes in the **log**.
+No reply is to be kept: each is the device as it was at that moment, so `Api::handle()` says `no-store` of every one, a refusal too.
+The simulator sends that on as the board does; before, the rule was the board's webserver's own, and the simulator's replies did without it.
 The routes under `/api/network` are how the panel reads and changes the **link**.
 `GET /api/network` says how the machine is reached, and `GET /api/network/nearby` the **networks in reach**, after a `POST` to `listen`.
 The first also says the numbers the machine goes by there: how long a network's name and password may be, how many networks it remembers, and how long its **own network** takes to open and to close.

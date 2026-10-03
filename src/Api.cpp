@@ -51,10 +51,10 @@ static Reply jsonReply(int code, const JsonDocument& doc) {
     Reply failure = {500, JSON_TYPE,
                      String("{\"error\":\"The reply is larger than the device "
                             "has room for\"}"),
-                     NULL};
+                     NULL, NULL};
     return failure;
   }
-  Reply reply = {code, JSON_TYPE, jsonText(doc), NULL};
+  Reply reply = {code, JSON_TYPE, jsonText(doc), NULL, NULL};
   return reply;
 }
 
@@ -270,7 +270,7 @@ Api::Api(ETKT* etkt, LinkSupervisor* linkSupervisor,
 }
 
 Reply Api::handle(const Request& request) {
-  const Reply reply = this->route(request);
+  Reply reply = this->route(request);
   // A 500 is the device failing rather than the caller. The panel reads a
   // poll that failed as the device being out of reach and shows nothing of
   // what the reply said, so it goes in the log too, where somebody at the
@@ -278,6 +278,10 @@ Reply Api::handle(const Request& request) {
   if (reply.code == 500) {
     this->logger->error(request.path + " failed with 500: " + reply.body);
   }
+  // True only at that moment: a kept copy would be the device as it was, and
+  // the page would go on showing that. Said here of every reply, a refusal
+  // and an answer given again too, so no route can leave it out.
+  reply.cacheControl = "no-store";
   return reply;
 }
 
@@ -703,7 +707,7 @@ Reply Api::capabilities(const Request& /*request*/) {
 // /api/log at the machine's address in a phone browser to find out why the
 // last label came out wrong.
 Reply Api::log(const Request& /*request*/) {
-  Reply reply = {200, TEXT_TYPE, this->logger->recent(), NULL};
+  Reply reply = {200, TEXT_TYPE, this->logger->recent(), NULL, NULL};
   return reply;
 }
 
@@ -884,7 +888,7 @@ Reply Api::changeNetwork(const Request& request, NetworkChange change) {
           return refused;
         }
         // Never sent: see above.
-        Reply changed = {200, JSON_TYPE, String(), NULL};
+        Reply changed = {200, JSON_TYPE, String(), NULL, NULL};
         return changed;
       });
   return made.code == 200 ? this->network(request) : made;

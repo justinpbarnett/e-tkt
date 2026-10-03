@@ -54,6 +54,10 @@ struct Reply {
   // For a 405, the method the path does answer to, which HTTP asks the
   // reply to name in an Allow header. NULL for every other reply.
   const char* allow;
+
+  // How long the browser may keep the reply, as the Cache-Control header
+  // carries it. Api::handle() says "no-store" of every reply it gives.
+  const char* cacheControl;
 };
 
 /**
@@ -62,9 +66,9 @@ struct Reply {
  * every reply.
  *
  * The webserver is an adapter in front of this. It turns each request under
- * /api/ into a Request, and sends back the Reply as it comes. So a reply can
- * be tested on a host, and the webserver has no rules of its own to drift
- * from the ones tested here.
+ * /api/ into a Request, and sends back the Reply as it comes, its headers
+ * too. So a reply can be tested on a host, and the webserver has no rules of
+ * its own to drift from the ones tested here.
  */
 class Api {
  private:

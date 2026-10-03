@@ -212,6 +212,21 @@ void test_a_method_nothing_answers_to_is_told_the_one_that_is(void) {
   TEST_ASSERT_EQUAL_INT((int)Command::IDLE, (int)running());
 }
 
+// Each reply is the device as it was at that moment, and a kept copy would
+// have the page go on showing it. So every one says it is not to be kept: a
+// refusal, and an answer given again, as well. The webserver sends it as a
+// Cache-Control header, and has no say in it.
+void test_no_reply_is_to_be_kept(void) {
+  TEST_ASSERT_EQUAL_STRING("no-store", get("/api/status").cacheControl);
+  TEST_ASSERT_EQUAL_STRING("no-store", get("/api/nothing").cacheControl);
+  TEST_ASSERT_EQUAL_STRING("no-store", get("/api/cut").cacheControl);
+  TEST_ASSERT_EQUAL_STRING("no-store", post("/api/tag", "{}").cacheControl);
+  TEST_ASSERT_EQUAL_STRING("no-store",
+                           postUnder("press-1", "/api/cut", "{}").cacheControl);
+  TEST_ASSERT_EQUAL_STRING("no-store",
+                           postUnder("press-1", "/api/cut", "{}").cacheControl);
+}
+
 // --- commands ---------------------------------------------------------------
 
 // A command the machine can take is handed to the job runner, which has it by
@@ -2213,6 +2228,7 @@ int main(int, char**) {
   RUN_TEST(test_idle_is_not_a_command_anyone_can_post);
   RUN_TEST(test_a_command_asked_for_with_get_is_told_to_post);
   RUN_TEST(test_a_method_nothing_answers_to_is_told_the_one_that_is);
+  RUN_TEST(test_no_reply_is_to_be_kept);
   RUN_TEST(test_a_command_is_handed_to_the_job_runner);
   RUN_TEST(test_a_command_while_another_runs_is_refused_as_a_conflict);
   RUN_TEST(test_a_command_that_trials_an_align_needs_one);

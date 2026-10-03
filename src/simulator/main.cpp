@@ -7,7 +7,8 @@
 //   in   {"method": "POST", "path": "/api/tag", "query": {},
 //         "contentType": "application/json", "body": "{\"tag\": \"HI\"}"}
 //   out  {"code": 200, "contentType": "application/json",
-//         "body": "{\"result\":\"success\"}", "allow": null}
+//         "body": "{\"result\":\"success\"}", "allow": null,
+//         "cacheControl": "no-store"}
 //
 // A line is read the way ApiHandler in Network.cpp reads a request off the
 // webserver on the device. So every route, refusal, status and log line the
@@ -250,14 +251,17 @@ static bool readRequest(std::string& line, Request& request) {
  * @brief Writes one reply line to stdout, and sends it on its way.
  */
 static void writeReply(const Reply& reply) {
-  // Every string is stored as a pointer, so four members are all the
+  // Every string is stored as a pointer, so five members are all the
   // document holds, however long the body.
-  StaticJsonDocument<JSON_OBJECT_SIZE(4)> doc;
+  StaticJsonDocument<JSON_OBJECT_SIZE(5)> doc;
   doc["code"] = reply.code;
   doc["contentType"] = reply.contentType;
   doc["body"] = reply.body.c_str();
   // NULL, for every reply but a 405, is null.
   doc["allow"] = reply.allow;
+  // NULL only for the simulator's own refusal below, which the device never
+  // sends.
+  doc["cacheControl"] = reply.cacheControl;
   std::string line;
   serializeJson(doc, line);
   line += '\n';
@@ -402,7 +406,7 @@ class Simulator {
       Reply refused = {500, "application/json",
                        "{\"error\":\"The simulator could not read the "
                        "request\"}",
-                       NULL};
+                       NULL, NULL};
       writeReply(refused);
       return;
     }

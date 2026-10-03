@@ -25,9 +25,9 @@
 
 // The webserver's side of the Api. Every request under /api/, whatever its
 // method or type, goes to the Api as a Request, and its Reply comes back as it
-// is. Whether a path exists, which method it takes and what its body must
-// hold are the Api's to say, and are tested there, so this answers for all of
-// /api/ and has no rules of its own.
+// is. Whether a path exists, which method it takes, what its body must hold
+// and how long a reply may be kept are the Api's to say, and are tested
+// there, so this answers for all of /api/ and has no rules of its own.
 class ApiHandler : public AsyncWebHandler {
  private:
   Api* api;
@@ -91,9 +91,9 @@ class ApiHandler : public AsyncWebHandler {
     if (reply.allow != NULL) {
       response->addHeader("Allow", reply.allow);
     }
-    // True only at that moment: a stored copy would be the device as it
-    // was, and the page would keep showing that.
-    response->addHeader("Cache-Control", "no-store");
+    if (reply.cacheControl != NULL) {
+      response->addHeader("Cache-Control", reply.cacheControl);
+    }
     request->send(response);
   }
 };
