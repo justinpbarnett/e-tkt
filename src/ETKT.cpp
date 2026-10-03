@@ -731,46 +731,73 @@ void ETKT::tagCommandInternal() {
   this->ledFinish->fadeOut(LIGHT_FULL, FINISH_FADE_MS);
 }
 
+std::vector<LabelStep> labelSteps(int labelLength, bool cut) {
+  const int characters = labelLength < 0 ? 0 : labelLength;
+  std::vector<LabelStep> steps;
+  // Room for every step at once: the longest label has some 500, and a list
+  // that grows a step at a time asks the heap for more room again and again.
+  steps.reserve(2 * characters + 3);
+  // The lead, up to the first character.
+  steps.push_back({LabelStep::FEED, LEAD_FEEDS});
+  // Each character, and the feed on to the next, asked for as the press is
+  // done with it.
+  for (int i = 0; i < characters; i++) {
+    steps.push_back({LabelStep::STAMP, 0});
+    steps.push_back({LabelStep::FEED, 1});
+  }
+  // The tape topped up to something the user can take hold of, after the
+  // last character's feed. topUpFeeds() says how far, and why a single
+  // letter is left short; the panel works out how many labels fit on the
+  // roll from the same rule.
+  const int topUp = topUpFeeds(labelLength);
+  if (topUp > 0) {
+    steps.push_back({LabelStep::FEED, topUp});
+  }
+  if (cut) {
+    steps.push_back({LabelStep::CUT, LABEL_CUT_PRESSES});
+  }
+  return steps;
+}
+
 void ETKT::printLabel(const String& label, int copy, int copies) {
   // What a label may say is CHARACTERS in CharacterSet.h, less the cut
   // mark, plus the space. printableCharacters() is that list; the webapp
   // fetches it rather than keeping one of its own.
   const std::vector<String> characters = Utility::characters(label);
   const int labelLength = characters.size();
+  // The characters pressed so far.
+  int pressed = 0;
 
-  // The tape runs one feed ahead of the press from here on. Each feed is
-  // started as the character before it is done, and the wheel turns to the
-  // next character while it runs. The press waits for both.
-  this->feeder->start(LEAD_FEEDS);
+  // The tape runs one feed ahead of the press from here on, and the wheel
+  // turns to the next character, or to the cut mark, while it runs. The
+  // press waits for both. A stop that is up by the end of the characters
+  // asks for no more tape, and turns the wheel nowhere.
+  for (const LabelStep& step : labelSteps(labelLength, this->command->cut)) {
+    switch (step.kind) {
+      case LabelStep::FEED:
+        this->feeder->start(step.count);
+        break;
+      case LabelStep::STAMP:
+        this->printhead->stamp(characters[pressed], this->calibration);
+        // A character that was pressed has waited for the tape already. A
+        // space is only its feed, so it waits here. The screen is drawn
+        // next, and a redraw stalls a feed that is still under way.
+        this->feeder->finish();
+        if (this->stopSignal->shouldStop()) {
+          return;
+        }
+        pressed++;
 
-  for (int i = 0; i < labelLength; i++) {
-    this->printhead->stamp(characters[i], this->calibration);
-    // A character that was pressed has waited for the tape already. A space
-    // is only its feed, so it waits here. The screen is drawn next, and a
-    // redraw stalls a feed that is still under way.
-    this->feeder->finish();
-    if (this->stopSignal->shouldStop()) {
-      return;
+        this->display->renderProgress(pressed, label, copy, copies);
+
+        this->lock.lock();
+        this->progress = progressPercent(pressed, labelLength);
+        this->lock.unlock();
+        break;
+      case LabelStep::CUT:
+        this->printhead->cut(this->calibration, step.count);
+        break;
     }
-
-    this->display->renderProgress(i + 1, label, copy, copies);
-
-    this->lock.lock();
-    this->progress = progressPercent(i + 1, labelLength);
-    this->lock.unlock();
-
-    this->feeder->start(1);
-  }
-
-  // Top the tape up to something the user can take hold of. topUpFeeds()
-  // says how far, and why a single letter is left short; the panel works out
-  // how many labels fit on the roll from the same rule. The top-up follows
-  // the last character's feed, and the wheel turns to the cut mark while
-  // both run. A stop that is up by now asks for no more tape, and turns the
-  // wheel nowhere.
-  this->feeder->start(topUpFeeds(labelLength));
-  if (this->command->cut) {
-    this->printhead->cut(this->calibration, LABEL_CUT_PRESSES);
   }
   // Without the cut, the tape is still on its way to the end of the label.
   this->feeder->finish();
@@ -851,22 +878,32 @@ RunEstimate ETKT::estimate(const CommandOptions& options,
 
 uint64_t ETKT::labelUs(const std::vector<String>& characters, bool cut,
                        const Calibration& calibration, String* wheel) const {
-  // As printLabel() runs them: the lead feeds up to the first character, and
-  // each character after it waits for the one feed started as the character
-  // before it was done.
+  // The steps printLabel() takes. The feeds asked for since the last press
+  // run as one, which the next press waits for while the wheel turns to it:
+  // the lead for the first character, a character's feed for the next, and
+  // the last character's feed and the top-up for the cut.
   uint64_t us = 0;
-  int feeds = LEAD_FEEDS;
-  for (const String& character : characters) {
-    us += this->printhead->stampUs(wheel, character,
-                                   this->feeder->feedUs(feeds), calibration);
-    feeds = 1;
+  int feeds = 0;
+  int pressed = 0;
+  for (const LabelStep& step : labelSteps(characters.size(), cut)) {
+    switch (step.kind) {
+      case LabelStep::FEED:
+        feeds += step.count;
+        break;
+      case LabelStep::STAMP:
+        us +=
+            this->printhead->stampUs(wheel, characters[pressed],
+                                     this->feeder->feedUs(feeds), calibration);
+        pressed++;
+        feeds = 0;
+        break;
+      case LabelStep::CUT:
+        us += this->printhead->cutUs(wheel, this->feeder->feedUs(feeds),
+                                     calibration, step.count);
+        feeds = 0;
+        break;
+    }
   }
-  // The top-up runs on from the last character's feed, and the cut waits for
-  // both.
-  feeds += topUpFeeds(characters.size());
-  if (!cut) {
-    return us + this->feeder->feedUs(feeds);
-  }
-  return us + this->printhead->cutUs(wheel, this->feeder->feedUs(feeds),
-                                     calibration, LABEL_CUT_PRESSES);
+  // Without the cut, the label is done once its tape has stopped.
+  return us + this->feeder->feedUs(feeds);
 }

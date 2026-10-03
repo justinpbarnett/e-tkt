@@ -301,6 +301,70 @@ void test_the_cut_button_presses_three_times_and_a_label_once(void) {
   }
 }
 
+// The steps of a label as they read: "feed 1, stamp, cut 1".
+static String stepsOf(const std::vector<LabelStep>& steps) {
+  String said;
+  for (const LabelStep& step : steps) {
+    if (said.length() > 0) {
+      said += ", ";
+    }
+    switch (step.kind) {
+      case LabelStep::FEED:
+        said += String("feed ") + step.count;
+        break;
+      case LabelStep::STAMP:
+        said += "stamp";
+        break;
+      case LabelStep::CUT:
+        said += String("cut ") + step.count;
+        break;
+    }
+  }
+  return said;
+}
+
+// A label is the lead, each character pressed and the tape fed one on past
+// it, the top-up, and the cut when the run cuts. Here AB, two characters,
+// which four blank feeds of top-up bring to the six of MIN_LABEL_CHARACTERS.
+// The tape runs a feed ahead of the press, so the top-up follows the last
+// character's feed.
+void test_a_label_is_the_lead_each_character_the_top_up_and_the_cut(void) {
+  TEST_ASSERT_EQUAL_STRING(
+      "feed 1, stamp, feed 1, stamp, feed 1, feed 4, cut 1",
+      stepsOf(labelSteps(2, true)).c_str());
+  TEST_ASSERT_EQUAL_STRING("feed 1, stamp, feed 1, stamp, feed 1, feed 4",
+                           stepsOf(labelSteps(2, false)).c_str());
+}
+
+// A label as long as the minimum has no top-up, and nor has a single letter,
+// which is left short on purpose. Neither asks for a feed of nothing.
+void test_a_label_with_no_top_up_asks_for_no_feed_of_nothing(void) {
+  TEST_ASSERT_EQUAL_STRING("feed 1, stamp, feed 1, cut 1",
+                           stepsOf(labelSteps(1, true)).c_str());
+  TEST_ASSERT_EQUAL_STRING(
+      "feed 1, stamp, feed 1, stamp, feed 1, stamp, feed 1, stamp, feed 1, "
+      "stamp, feed 1, stamp, feed 1",
+      stepsOf(labelSteps(6, false)).c_str());
+}
+
+// The panel works out how many labels fit on the roll from labelFeeds(), and
+// the steps are what the machine feeds. They are worked out apart, so this
+// holds them to each other, cut or not: the cut takes no tape.
+void test_a_label_feeds_the_tape_the_labels_that_fit_are_counted_in(void) {
+  for (int length = 0; length <= 12; length++) {
+    for (const bool cut : {true, false}) {
+      int feeds = 0;
+      for (const LabelStep& step : labelSteps(length, cut)) {
+        if (step.kind == LabelStep::FEED) {
+          feeds += step.count;
+        }
+      }
+      const String name = String(length) + (cut ? ", cut" : ", not cut");
+      TEST_ASSERT_EQUAL_INT_MESSAGE(labelFeeds(length), feeds, name.c_str());
+    }
+  }
+}
+
 // A new roll is declared as it goes in, and threading it through to the
 // cutter is the first tape off it.
 void test_a_reel_loads_a_roll_of_the_declared_length(void) {
@@ -1637,6 +1701,9 @@ int main(int, char**) {
   RUN_TEST(test_the_wheel_turns_while_the_tape_feeds_up_to_each_character);
   RUN_TEST(test_a_run_can_leave_out_the_cut);
   RUN_TEST(test_the_cut_button_presses_three_times_and_a_label_once);
+  RUN_TEST(test_a_label_is_the_lead_each_character_the_top_up_and_the_cut);
+  RUN_TEST(test_a_label_with_no_top_up_asks_for_no_feed_of_nothing);
+  RUN_TEST(test_a_label_feeds_the_tape_the_labels_that_fit_are_counted_in);
   RUN_TEST(test_a_reel_loads_a_roll_of_the_declared_length);
   RUN_TEST(test_a_reel_without_a_length_takes_the_last_roll_length);
   RUN_TEST(test_a_reel_turns_the_wheel_with_the_tape_as_it_threads_it);

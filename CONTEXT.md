@@ -185,6 +185,11 @@ A one-character label is left short on purpose.
 The panel pads its own labels to the minimum, so a top-up is what a label posted some other way gets.
 `topUpFeeds()`.
 
+**Label steps** - what one label is, in order: the **lead**, each character pressed and the tape fed one on past it, the **top-up**, and the **cut** when the run cuts.
+The tape runs one feed ahead of the press throughout, so each feed is asked for as the step before it is done.
+`labelSteps()` in `ETKT.cpp` is the one list of them: `ETKT::printLabel()` takes the steps, and the **estimate** adds up how long each takes, so the two cannot drift apart.
+Its feeds are the ones **labels that fit** counts, and `test/test_etkt` holds the two to each other.
+
 **Tape left** - what the roll's two numbers leave: the declared length less the feeds times `FEED_LENGTH_UM`, and never less than nothing.
 The end of the tape leaves the cog and cannot be fed, so `TAPE_TAIL_FEEDS` is held back as well.
 That tail is waste: on a loaded 3 m roll of " FORGIVEN " with a space on each side the length counted 72 labels and 71 printed, and the 72nd ran off the cog.

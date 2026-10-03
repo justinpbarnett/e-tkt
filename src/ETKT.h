@@ -327,6 +327,42 @@ struct RunEstimate {
   uint32_t runMs = 0;
 };
 
+/**
+ * @brief One step of a label. See labelSteps().
+ */
+struct LabelStep {
+  enum Kind {
+    // Asks for `count` more feeds, after any still under way, and goes on
+    // without waiting for them.
+    FEED,
+    // Presses the label's next character once the tape has come up to it,
+    // and waits for the tape to stop. A space presses nothing, and is only
+    // the wait.
+    STAMP,
+    // Presses the cut mark `count` times once the tape has come up to it.
+    CUT,
+  };
+  Kind kind;
+  // The feeds a FEED asks for, or the presses of a CUT. 0 for a STAMP.
+  int count;
+};
+
+/**
+ * @brief The steps of one label `labelLength` characters long, in order:
+ * the lead, each character pressed and the tape fed one on past it, the
+ * top-up, and the cut if `cut`.
+ *
+ * The one list of them. ETKT::printLabel() takes these steps, and the
+ * estimate adds up how long each takes, so the two cannot drift apart. The
+ * tape runs one feed ahead of the press: each feed is asked for as the step
+ * before it is done, and the wheel turns to the next character, or to the
+ * cut mark, while it runs.
+ *
+ * @param labelLength characters in the label, spaces included, in UTF-8
+ *        code points rather than bytes.
+ */
+std::vector<LabelStep> labelSteps(int labelLength, bool cut);
+
 class PrinterBusyException : public std::exception {
  public:
   const char* what() const throw() {
@@ -496,8 +532,8 @@ class ETKT {
 
   /**
    * @brief How long printLabel() takes to press `characters`, with or
-   * without the cut, from the wheel at `wheel`. Leaves `wheel` where the
-   * label leaves it.
+   * without the cut, from the wheel at `wheel`: the time of each of the
+   * label's labelSteps(), added up. Leaves `wheel` where the label leaves it.
    */
   uint64_t labelUs(const std::vector<String>& characters, bool cut,
                    const Calibration& calibration, String* wheel) const;
