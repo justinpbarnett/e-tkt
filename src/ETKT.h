@@ -331,13 +331,13 @@ struct RunEstimate {
  * @brief One step of a label. See labelSteps().
  */
 struct LabelStep {
-  enum Kind {
+  enum class Kind {
     // Asks for `count` more feeds, after any still under way, and goes on
     // without waiting for them.
     FEED,
-    // Presses the label's next character once the tape has come up to it,
-    // and waits for the tape to stop. A space presses nothing, and is only
-    // the wait.
+    // Presses the label's `character` once the tape has come up to it, and
+    // waits for the tape to stop. A space presses nothing, and is only the
+    // wait.
     STAMP,
     // Presses the cut mark `count` times once the tape has come up to it.
     CUT,
@@ -345,6 +345,9 @@ struct LabelStep {
   Kind kind;
   // The feeds a FEED asks for, or the presses of a CUT. 0 for a STAMP.
   int count;
+  // Which of the label's characters a STAMP presses, counted from 0. 0 for a
+  // FEED or a CUT.
+  int character;
 };
 
 /**

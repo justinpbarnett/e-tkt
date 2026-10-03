@@ -732,18 +732,18 @@ void ETKT::tagCommandInternal() {
 }
 
 std::vector<LabelStep> labelSteps(int labelLength, bool cut) {
-  const int characters = labelLength < 0 ? 0 : labelLength;
+  const int stamps = labelLength < 0 ? 0 : labelLength;
   std::vector<LabelStep> steps;
   // Room for every step at once: the longest label has some 500, and a list
   // that grows a step at a time asks the heap for more room again and again.
-  steps.reserve(2 * characters + 3);
+  steps.reserve(2 * stamps + 3);
   // The lead, up to the first character.
-  steps.push_back({LabelStep::FEED, LEAD_FEEDS});
+  steps.push_back({LabelStep::Kind::FEED, LEAD_FEEDS, 0});
   // Each character, and the feed on to the next, asked for as the press is
   // done with it.
-  for (int i = 0; i < characters; i++) {
-    steps.push_back({LabelStep::STAMP, 0});
-    steps.push_back({LabelStep::FEED, 1});
+  for (int character = 0; character < stamps; character++) {
+    steps.push_back({LabelStep::Kind::STAMP, 0, character});
+    steps.push_back({LabelStep::Kind::FEED, 1, 0});
   }
   // The tape topped up to something the user can take hold of, after the
   // last character's feed. topUpFeeds() says how far, and why a single
@@ -751,10 +751,10 @@ std::vector<LabelStep> labelSteps(int labelLength, bool cut) {
   // roll from the same rule.
   const int topUp = topUpFeeds(labelLength);
   if (topUp > 0) {
-    steps.push_back({LabelStep::FEED, topUp});
+    steps.push_back({LabelStep::Kind::FEED, topUp, 0});
   }
   if (cut) {
-    steps.push_back({LabelStep::CUT, LABEL_CUT_PRESSES});
+    steps.push_back({LabelStep::Kind::CUT, LABEL_CUT_PRESSES, 0});
   }
   return steps;
 }
@@ -765,8 +765,6 @@ void ETKT::printLabel(const String& label, int copy, int copies) {
   // fetches it rather than keeping one of its own.
   const std::vector<String> characters = Utility::characters(label);
   const int labelLength = characters.size();
-  // The characters pressed so far.
-  int pressed = 0;
 
   // The tape runs one feed ahead of the press from here on, and the wheel
   // turns to the next character, or to the cut mark, while it runs. The
@@ -774,11 +772,11 @@ void ETKT::printLabel(const String& label, int copy, int copies) {
   // asks for no more tape, and turns the wheel nowhere.
   for (const LabelStep& step : labelSteps(labelLength, this->command->cut)) {
     switch (step.kind) {
-      case LabelStep::FEED:
+      case LabelStep::Kind::FEED:
         this->feeder->start(step.count);
         break;
-      case LabelStep::STAMP:
-        this->printhead->stamp(characters[pressed], this->calibration);
+      case LabelStep::Kind::STAMP: {
+        this->printhead->stamp(characters[step.character], this->calibration);
         // A character that was pressed has waited for the tape already. A
         // space is only its feed, so it waits here. The screen is drawn
         // next, and a redraw stalls a feed that is still under way.
@@ -786,7 +784,8 @@ void ETKT::printLabel(const String& label, int copy, int copies) {
         if (this->stopSignal->shouldStop()) {
           return;
         }
-        pressed++;
+        // The characters pressed so far, this one with them.
+        const int pressed = step.character + 1;
 
         this->display->renderProgress(pressed, label, copy, copies);
 
@@ -794,7 +793,8 @@ void ETKT::printLabel(const String& label, int copy, int copies) {
         this->progress = progressPercent(pressed, labelLength);
         this->lock.unlock();
         break;
-      case LabelStep::CUT:
+      }
+      case LabelStep::Kind::CUT:
         this->printhead->cut(this->calibration, step.count);
         break;
     }
@@ -884,20 +884,18 @@ uint64_t ETKT::labelUs(const std::vector<String>& characters, bool cut,
   // the last character's feed and the top-up for the cut.
   uint64_t us = 0;
   int feeds = 0;
-  int pressed = 0;
   for (const LabelStep& step : labelSteps(characters.size(), cut)) {
     switch (step.kind) {
-      case LabelStep::FEED:
+      case LabelStep::Kind::FEED:
         feeds += step.count;
         break;
-      case LabelStep::STAMP:
+      case LabelStep::Kind::STAMP:
         us +=
-            this->printhead->stampUs(wheel, characters[pressed],
+            this->printhead->stampUs(wheel, characters[step.character],
                                      this->feeder->feedUs(feeds), calibration);
-        pressed++;
         feeds = 0;
         break;
-      case LabelStep::CUT:
+      case LabelStep::Kind::CUT:
         us += this->printhead->cutUs(wheel, this->feeder->feedUs(feeds),
                                      calibration, step.count);
         feeds = 0;

@@ -301,7 +301,8 @@ void test_the_cut_button_presses_three_times_and_a_label_once(void) {
   }
 }
 
-// The steps of a label as they read: "feed 1, stamp, cut 1".
+// The steps of a label as they read: "feed 1, stamp 0, cut 1", where a stamp
+// names the character it presses, from 0.
 static String stepsOf(const std::vector<LabelStep>& steps) {
   String said;
   for (const LabelStep& step : steps) {
@@ -309,13 +310,13 @@ static String stepsOf(const std::vector<LabelStep>& steps) {
       said += ", ";
     }
     switch (step.kind) {
-      case LabelStep::FEED:
+      case LabelStep::Kind::FEED:
         said += String("feed ") + step.count;
         break;
-      case LabelStep::STAMP:
-        said += "stamp";
+      case LabelStep::Kind::STAMP:
+        said += String("stamp ") + step.character;
         break;
-      case LabelStep::CUT:
+      case LabelStep::Kind::CUT:
         said += String("cut ") + step.count;
         break;
     }
@@ -330,20 +331,20 @@ static String stepsOf(const std::vector<LabelStep>& steps) {
 // character's feed.
 void test_a_label_is_the_lead_each_character_the_top_up_and_the_cut(void) {
   TEST_ASSERT_EQUAL_STRING(
-      "feed 1, stamp, feed 1, stamp, feed 1, feed 4, cut 1",
+      "feed 1, stamp 0, feed 1, stamp 1, feed 1, feed 4, cut 1",
       stepsOf(labelSteps(2, true)).c_str());
-  TEST_ASSERT_EQUAL_STRING("feed 1, stamp, feed 1, stamp, feed 1, feed 4",
+  TEST_ASSERT_EQUAL_STRING("feed 1, stamp 0, feed 1, stamp 1, feed 1, feed 4",
                            stepsOf(labelSteps(2, false)).c_str());
 }
 
 // A label as long as the minimum has no top-up, and nor has a single letter,
 // which is left short on purpose. Neither asks for a feed of nothing.
 void test_a_label_with_no_top_up_asks_for_no_feed_of_nothing(void) {
-  TEST_ASSERT_EQUAL_STRING("feed 1, stamp, feed 1, cut 1",
+  TEST_ASSERT_EQUAL_STRING("feed 1, stamp 0, feed 1, cut 1",
                            stepsOf(labelSteps(1, true)).c_str());
   TEST_ASSERT_EQUAL_STRING(
-      "feed 1, stamp, feed 1, stamp, feed 1, stamp, feed 1, stamp, feed 1, "
-      "stamp, feed 1, stamp, feed 1",
+      "feed 1, stamp 0, feed 1, stamp 1, feed 1, stamp 2, feed 1, stamp 3, "
+      "feed 1, stamp 4, feed 1, stamp 5, feed 1",
       stepsOf(labelSteps(6, false)).c_str());
 }
 
@@ -355,7 +356,7 @@ void test_a_label_feeds_the_tape_the_labels_that_fit_are_counted_in(void) {
     for (const bool cut : {true, false}) {
       int feeds = 0;
       for (const LabelStep& step : labelSteps(length, cut)) {
-        if (step.kind == LabelStep::FEED) {
+        if (step.kind == LabelStep::Kind::FEED) {
           feeds += step.count;
         }
       }
