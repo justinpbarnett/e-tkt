@@ -138,6 +138,32 @@ void test_a_stop_while_homing_halts_the_wheel_within_a_step(void) {
   TEST_ASSERT_EQUAL_INT32(stoppedAt, charStepper->shaft);
 }
 
+// A wheel turned by hand while its coils were off can stand on the magnet
+// whatever slot the count last said. Homing steps off the magnet a little
+// way on, the way it searches, and finds it again within a turn: never back
+// to a count, which from most slots is most of a turn the other way.
+void test_homing_that_starts_on_the_magnet_turns_only_the_way_it_searches(
+    void) {
+  daisywheel->home(5);
+  const long homing = charStepper->valuesOf(StepperCall::STEP).front();
+  // The slot furthest on from the J.
+  daisywheel->move("I", 5);
+  // Turned by hand onto the magnet.
+  charStepper->shaft = 1000 + FakeMagnet::ARC / 2;
+  charStepper->clear();
+
+  TEST_ASSERT_TRUE(daisywheel->home(5) == Turn::REACHED);
+
+  const std::vector<long> steps = charStepper->valuesOf(StepperCall::STEP);
+  for (size_t i = 0; i < steps.size(); i++) {
+    TEST_ASSERT_EQUAL_INT32(homing, steps[i]);
+  }
+  // Round to the magnet once at most, and on to the J.
+  TEST_ASSERT_TRUE(steps.size() <
+                   FakeMagnet::REVOLUTION +
+                       FakeMagnet::REVOLUTION / WHEEL_SLOT_COUNT);
+}
+
 // --- turning to a slot ------------------------------------------------------
 
 // Every turn to a slot homes first, so a wheel that has lost its magnet is
@@ -280,6 +306,8 @@ int main(int argc, char** argv) {
   RUN_TEST(test_a_wheel_with_no_magnet_to_find_is_lost);
   RUN_TEST(test_a_lost_wheel_gives_up_within_a_turn_and_a_half);
   RUN_TEST(test_a_stop_while_homing_halts_the_wheel_within_a_step);
+  RUN_TEST(
+      test_homing_that_starts_on_the_magnet_turns_only_the_way_it_searches);
   RUN_TEST(test_a_turn_on_a_wheel_with_no_magnet_is_lost);
   RUN_TEST(test_a_turn_puts_the_slot_under_the_press_from_any_slot);
   RUN_TEST(test_a_turn_to_a_character_the_wheel_lacks_goes_nowhere);

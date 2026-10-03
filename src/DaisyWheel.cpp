@@ -55,7 +55,12 @@ Turn DaisyWheel::home(int align) {
   // and if so, move it a little bit to get the sensor into an un-trigerred
   // position.
   if (this->hall->triggered()) {
-    long position = -this->stepsPerChar * 4;
+    // On from wherever the wheel stands, the way the search goes. A count to
+    // go to is a little bit only from the J: from a slot further round, or
+    // from a wheel turned by hand or halted partway round, it can be most of
+    // a turn back the other way.
+    const long position =
+        this->stepper->currentPosition() + (long)(-this->stepsPerChar * 4);
     logger->log(String("Moving to position: ") + position +
                 " because the hall sensor is already triggered.");
     if (!runToNewPosition(this->stepper, position, this->stop,
