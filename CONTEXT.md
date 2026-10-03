@@ -77,6 +77,15 @@ A press that comes down before the machine has sat idle for `BUTTON_ARMING_MS` s
 It used to be the wifi reset button and nothing else, and the pin is still named `WIFI_RESET_PIN`.
 `Button`, read every `BUTTON_POLL_MS` from a task of its own, since a press is to stop a job while the command loop is busy running it.
 
+**Lights** - the two LEDs in the top of the machine, which say that it is at work: the character light and the finish light.
+The character light is dim while a run or a cut is under way, and full while the press is down.
+The finish light is faint while a feed, a load or an unload moves the tape, and blinks and then fades out as a run ends, unless a **stop** came during it.
+A home lights both at full.
+One left on once a job has ended says that of a machine that is not at work, so the **job runner** puts both out as each command ends, and no command has to remember to.
+A home used to leave both on, and the two tests the character light.
+A stop ends a blink or a fade early and leaves the light dark, which does not count as cutting the job short.
+`Light` in `Light.h`, as `ledChar` on `CHARACTER_LED_PIN` and `ledFinish` on `FINISH_LED_PIN`.
+
 ## What a label is
 
 **Label** - the text a user asks for.
@@ -226,7 +235,7 @@ Every command that moves is stoppable; a save is not.
 The panel offers the red stop for every command the device says is stoppable, and never for one it says is not.
 
 **Job runner** - `ETKT`, which takes one command at a time and runs it.
-The web server's task hands it a command with `submit()`, which holds one at a time, and the command loop takes it from there in `loop()`: it runs the command, puts out both lights, parks the motors, lets the command go, and then draws the idle screen, so a job posted while that draws is taken.
+The web server's task hands it a command with `submit()`, which holds one at a time, and the command loop takes it from there in `loop()`: it runs the command, puts out both **lights**, parks the motors, lets the command go, and then draws the idle screen, so a job posted while that draws is taken.
 That is the end of every command, in one place, so no handler has to put away what it used, however it ended.
 Every stop rule lives here: what can be stopped, what a stop leaves on the tape, and what the panel is told afterwards.
 Everything it presses goes through the **printhead**, at the job's one **calibration**.
