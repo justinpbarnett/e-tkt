@@ -539,7 +539,7 @@ class ETKT {
                    const Calibration& calibration, String* wheel) const;
 
   /**
-   * Interanl handlers for each type of command the device can do.
+   * Internal handlers for each type of command the device can do.
    */
   void cutCommandInternal();
   void feedCommandInternal();

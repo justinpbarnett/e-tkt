@@ -25,8 +25,9 @@
  * reached over: a network it joins, or its own.
  *
  * The server hands every request under /api/ to the Api and serves the panel
- * from RAM. The machine is advertised over mDNS under a name of its own, so
- * that two of them on one network do not answer to the same one.
+ * from the firmware, which holds it in flash. The machine is advertised over
+ * mDNS under a name of its own, so that two of them on one network do not
+ * answer to the same one.
  */
 class Network {
  private:
