@@ -3,7 +3,8 @@
 // The second adapter for Background in src/Motion.h, beside Feeder: what
 // runs while a motor turns, as the tape does while the wheel turns. It moves
 // nothing, and only notes each turn it got: when it came, and where the motor
-// it watches was then.
+// it watches was then. A test can give it a job of so many turns, which is
+// under way until it has had them.
 
 #include <algorithm>
 #include <vector>
@@ -21,14 +22,21 @@ class FakeBackground : public Background {
   std::vector<unsigned long> atUs;
   // Where the motor was at each turn, if there is one to watch.
   std::vector<long> positions;
+  // How many more turns the job it stands for takes. None, until a test
+  // gives it one.
+  long turnsLeft = 0;
 
   void keepGoing() override {
     this->atUs.push_back(micros());
     if (this->motor != nullptr) {
       this->positions.push_back(this->motor->currentPosition());
     }
+    if (this->turnsLeft > 0) {
+      this->turnsLeft--;
+    }
   }
-  void finish() override {}
+  void finish() override { this->turnsLeft = 0; }
+  bool underWay() const override { return this->turnsLeft > 0; }
 
   // Forgets the turns so far.
   void clear() {

@@ -57,6 +57,7 @@ A stop that comes during a press lets that press finish and presses no more.
 **Printhead** - the daisy wheel and the press worked together: everything that comes down on the tape.
 A character and the align test's press are each a turn of the wheel and then a press, and the cut is a turn and then as many presses as it is asked for, unless a stop comes in between.
 The press never comes down on a slot the wheel did not reach, nor on tape that is still moving: the tape feeds up to the character while the wheel turns to it, and the press waits for both.
+While a roll is loaded it presses nothing, and turns the wheel the way the tape feeds for as long as the tape is coming, as **loading a roll** says.
 `Printhead`, which the job runner drives in place of the wheel and the press.
 
 **Calibration** - an align and a force together, the pair one job presses at from its first character to its cut.
@@ -141,8 +142,15 @@ The panel says roll, and `reel`, the command that loads one, is the older word f
 
 **Loading a roll** - the `reel` command.
 Whatever was fed before it is charged to the old roll, the count starts again at the declared length, and `REEL_FEEDS` then pull the new tape through from the cog to past the cutter, charged to the new one.
+While the tape comes through, the daisy wheel turns the way it feeds, at `LOAD_WHEEL_SPEED`.
+A new tape goes in front corner first, and a wheel that stands still can catch that corner on a tooth and fold it over, which jams the load until the tape is backed out by hand.
+The wheel makes whole turns and finishes the one it is in once the tape stops, so it comes to rest where it began, and the load ends up to a second or so after the tape does.
+It counts to no slot on the way, so the next character homes first.
+A machine whose wheel turns against the tape is put right with `REVERSE_LOAD_WHEEL_DIRECTION`.
+A stop halts the wheel and the tape together.
 A length is `ROLL_LENGTH_MIN_MM` to `ROLL_LENGTH_MAX_MM`.
 A request without one keeps the last roll's, and a device that has never been told one starts at `DEFAULT_ROLL_LENGTH_MM`, 3 m.
+`ETKT::reelCommandInternal()` and `DaisyWheel::turnAlong()`.
 
 **Unloading a roll** - the `unload` command, which undoes a load, so the roll can come out without being cut or fed the rest of the way through.
 The press goes to rest, and the tape backs out `REEL_FEEDS`, as far as a load pulls it in: from the cutter, where the last cut left its end, to behind the cog.

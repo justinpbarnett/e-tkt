@@ -29,7 +29,7 @@ description: "E-TKT"
 - A big red stop button for when something goes wrong, which stops the machine at once and offers to cut off a half-pressed label;
 - Stop after this label, to end a run of labels early without wasting tape;
 - Estimate of the tape left on the roll, counted from what the machine has fed since the roll went in;
-- "LOAD NEW ROLL" function to install a new tape reel, of 3 m or any length from 0.5 to 10 m;
+- "LOAD NEW ROLL" function to install a new tape reel, of 3 m or any length from 0.5 to 10 m, with the daisy wheel turning along so the tape does not catch on it;
 - "UNLOAD ROLL" function to back the tape out, so a reel can come out before it runs out without cutting the tape;
 - Manual commands: feed & cut;
 - Calibration setup for fine tuning the character alignment and pressing force;

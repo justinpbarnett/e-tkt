@@ -239,6 +239,236 @@ void test_a_turn_keeps_the_tape_going_the_whole_way(void) {
   TEST_ASSERT_LESS_THAN_UINT32(1000, tape->longestWaitUs(began, micros()));
 }
 
+// --- turning with the tape ------------------------------------------------
+// A new roll goes in front corner first, and a wheel that stands still can
+// catch that corner on a tooth and fold it over. So while a roll is loaded
+// the wheel turns the way the tape feeds, for as long as the tape does.
+
+// Gives the tape a job that lasts so long. The loop that keeps it going comes
+// round once every yield().
+static void feedTapeFor(unsigned long ms) {
+  tape->turnsLeft = ms * 1000UL / STUB_YIELD_US;
+}
+
+// The wheel only ever turns one way with tape in it, the way homing searches,
+// and that is the way the tape feeds.
+void test_the_wheel_turns_with_the_tape_the_way_it_homes(void) {
+  daisywheel->home(5);
+  const long homing = charStepper->valuesOf(StepperCall::STEP).front();
+  const long along = REVERSE_LOAD_WHEEL_DIRECTION ? -homing : homing;
+  charStepper->clear();
+
+  feedTapeFor(3000);
+  daisywheel->turnAlong();
+
+  const std::vector<long> steps = charStepper->valuesOf(StepperCall::STEP);
+  TEST_ASSERT_FALSE(steps.empty());
+  for (size_t i = 0; i < steps.size(); i++) {
+    TEST_ASSERT_EQUAL_INT32(along, steps[i]);
+  }
+}
+
+// At LOAD_WHEEL_SPEED from the tape's first moment to its last: never faster,
+// and slower only for the fifth of a second it takes to get up to speed.
+void test_the_wheel_turns_at_the_load_speed_for_as_long_as_the_tape_feeds(
+    void) {
+  static long stepsWithTape;
+  stepsWithTape = 0;
+  charStepper->afterStep = [] {
+    if (tape->underWay()) {
+      stepsWithTape++;
+    }
+  };
+
+  feedTapeFor(3000);
+  daisywheel->turnAlong();
+
+  const long atSpeed = 3 * LOAD_WHEEL_SPEED;
+  TEST_ASSERT_TRUE(stepsWithTape <= atSpeed);
+  TEST_ASSERT_TRUE(stepsWithTape > atSpeed * 9 / 10);
+}
+
+// The wheel makes whole turns, and finishes the one it is in once the tape
+// is through. So it comes to rest where it began, and the stepper's count,
+// which says where on the wheel it is, is what it was.
+void test_the_wheel_turning_with_the_tape_comes_to_rest_where_it_began(void) {
+  daisywheel->move("A", 5);
+  const long shaft = charStepper->shaft;
+  const long count = charStepper->currentPosition();
+
+  // Long enough to end partway through a turn.
+  feedTapeFor(2700);
+  daisywheel->turnAlong();
+
+  const long turned = labs(charStepper->shaft - shaft);
+  TEST_ASSERT_TRUE(turned >= 2 * FakeMagnet::REVOLUTION);
+  TEST_ASSERT_EQUAL_INT32(0, turned % FakeMagnet::REVOLUTION);
+  TEST_ASSERT_EQUAL_INT32(count, charStepper->currentPosition());
+  // The coils are the job runner's to let go of, with the rest of the
+  // printhead.
+  TEST_ASSERT_TRUE(charStepper->energized);
+}
+
+// A load changes nothing about the home that follows it, not even one that
+// starts on the magnet and so steps off it first.
+void test_a_home_after_turning_with_the_tape_is_the_home_it_was_before(void) {
+  daisywheel->home(5);
+  // Turned by hand onto the magnet, so homing starts by stepping off it.
+  const long onTheMagnet = 1000 + FakeMagnet::ARC / 2;
+  charStepper->shaft = onTheMagnet;
+  charStepper->clear();
+  daisywheel->home(5);
+  const std::vector<long> before = charStepper->valuesOf(StepperCall::STEP);
+
+  charStepper->shaft = onTheMagnet;
+  feedTapeFor(3000);
+  daisywheel->turnAlong();
+  charStepper->clear();
+  TEST_ASSERT_TRUE(daisywheel->home(5) == Turn::REACHED);
+  const std::vector<long> after = charStepper->valuesOf(StepperCall::STEP);
+
+  TEST_ASSERT_EQUAL_UINT32(before.size(), after.size());
+  for (size_t i = 0; i < before.size(); i++) {
+    TEST_ASSERT_EQUAL_INT32(before[i], after[i]);
+  }
+}
+
+// Nor about the turn that follows it: the wheel is where it was, and as fast
+// as it was, so the turn takes as long as its estimate says.
+void test_a_turn_after_turning_with_the_tape_takes_as_long_as_ever(void) {
+  daisywheel->move("K", 5);
+  feedTapeFor(3000);
+  daisywheel->turnAlong();
+  TEST_ASSERT_EQUAL_FLOAT(CHARACTER_STEPPER_MAX_SPEED, charStepper->maxSpeed());
+  // The next job comes long after the wheel's last step, as an estimate
+  // takes it to.
+  delay(100);
+
+  const unsigned long start = micros();
+  TEST_ASSERT_TRUE(daisywheel->move("A", 5) == Turn::REACHED);
+  TEST_ASSERT_EQUAL_UINT32(daisywheel->moveUs("K", "A", 5), micros() - start);
+}
+
+// The tape is why the wheel turns, so every round of the turn keeps it going,
+// as every other loop of the wheel's does.
+void test_turning_with_the_tape_keeps_the_tape_going_the_whole_way(void) {
+  feedTapeFor(3000);
+  tape->clear();
+  const unsigned long began = micros();
+
+  daisywheel->turnAlong();
+
+  TEST_ASSERT_FALSE(tape->underWay());
+  TEST_ASSERT_LESS_THAN_UINT32(1000, tape->longestWaitUs(began, micros()));
+}
+
+// A load is stopped because the tape is not catching, and the wheel is one
+// of the things it catches on. The stop halts the wheel within a step. It is
+// the tape's to obey: the wheel only keeps the tape company, so it neither
+// waits for the tape nor says that anything was cut short.
+void test_a_stop_halts_the_wheel_turning_with_the_tape_within_a_step(void) {
+  const long shaft = charStepper->shaft;
+  const long count = charStepper->currentPosition();
+  static int steps;
+  static long stoppedAt;
+  steps = 0;
+  stoppedAt = 0;
+  charStepper->afterStep = [] {
+    // More than a turn in.
+    if (++steps == 4000) {
+      stopSignal->raise(StopCause::OPERATOR);
+      stoppedAt = charStepper->shaft;
+    }
+  };
+
+  feedTapeFor(10000);
+  daisywheel->turnAlong();
+
+  TEST_ASSERT_EQUAL_INT32(stoppedAt, charStepper->shaft);
+  TEST_ASSERT_TRUE(tape->underWay());
+  TEST_ASSERT_FALSE(stopSignal->cutShort());
+  TEST_ASSERT_EQUAL_FLOAT(CHARACTER_STEPPER_MAX_SPEED, charStepper->maxSpeed());
+  // Where on the wheel it stopped, less the whole turn.
+  TEST_ASSERT_EQUAL_INT32((charStepper->shaft - shaft) % FakeMagnet::REVOLUTION,
+                          charStepper->currentPosition() - count);
+}
+
+// A wheel halted partway round is at no slot, whatever it was at before, so
+// the next character homes before it counts from anywhere.
+void test_a_wheel_stopped_while_turning_with_the_tape_homes_before_it_counts(
+    void) {
+  daisywheel->move("K", 5);
+  const long slotOfK = magnet->bearing();
+  static int steps;
+  steps = 0;
+  charStepper->afterStep = [] {
+    if (++steps == 500) {
+      stopSignal->raise(StopCause::OPERATOR);
+    }
+  };
+  feedTapeFor(10000);
+  daisywheel->turnAlong();
+  TEST_ASSERT_NOT_EQUAL(slotOfK, magnet->bearing());
+
+  stopSignal->clear();
+  TEST_ASSERT_TRUE(daisywheel->move("K", 5) == Turn::REACHED);
+  TEST_ASSERT_EQUAL_INT32(slotOfK, magnet->bearing());
+}
+
+// A load stopped because the tape caught can leave the wheel on the magnet,
+// part of a turn on from the slot it began at. The home that follows turns
+// only the way it searches, and no further round than the magnet.
+void test_a_home_after_a_load_stopped_on_the_magnet_turns_only_one_way(void) {
+  daisywheel->home(5);
+  const long homing = charStepper->valuesOf(StepperCall::STEP).front();
+  daisywheel->move("I", 5);
+  charStepper->afterStep = [] {
+    if (magnet->inFront()) {
+      stopSignal->raise(StopCause::OPERATOR);
+    }
+  };
+  feedTapeFor(10000);
+  daisywheel->turnAlong();
+  TEST_ASSERT_TRUE(magnet->inFront());
+
+  charStepper->afterStep = nullptr;
+  stopSignal->clear();
+  charStepper->clear();
+  TEST_ASSERT_TRUE(daisywheel->home(5) == Turn::REACHED);
+
+  const std::vector<long> steps = charStepper->valuesOf(StepperCall::STEP);
+  for (size_t i = 0; i < steps.size(); i++) {
+    TEST_ASSERT_EQUAL_INT32(homing, steps[i]);
+  }
+  // Round to the magnet once at most, and on to the J.
+  TEST_ASSERT_TRUE(steps.size() <
+                   FakeMagnet::REVOLUTION +
+                       FakeMagnet::REVOLUTION / WHEEL_SLOT_COUNT);
+}
+
+// A stop that is already up leaves the wheel as it was, with its coils off,
+// and is still the tape's to obey.
+void test_a_stop_before_turning_with_the_tape_leaves_the_wheel_alone(void) {
+  charStepper->clear();
+  stopSignal->raise(StopCause::OPERATOR);
+
+  feedTapeFor(3000);
+  daisywheel->turnAlong();
+
+  TEST_ASSERT_TRUE(charStepper->calls.empty());
+  TEST_ASSERT_TRUE(tape->underWay());
+  TEST_ASSERT_FALSE(stopSignal->cutShort());
+}
+
+// With no tape on its way there is nothing to turn for.
+void test_with_no_tape_under_way_the_wheel_stays_where_it_is(void) {
+  charStepper->clear();
+
+  daisywheel->turnAlong();
+
+  TEST_ASSERT_TRUE(charStepper->calls.empty());
+}
+
 // --- how long it takes ----------------------------------------------------
 // A job's estimate adds up the wheel's turns, so the wheel's own estimates
 // are held to the wheel, on the virtual clock.
@@ -313,6 +543,19 @@ int main(int argc, char** argv) {
   RUN_TEST(test_a_turn_to_a_character_the_wheel_lacks_goes_nowhere);
   RUN_TEST(test_a_stop_partway_through_a_turn_halts_the_wheel_within_a_step);
   RUN_TEST(test_a_turn_keeps_the_tape_going_the_whole_way);
+  RUN_TEST(test_the_wheel_turns_with_the_tape_the_way_it_homes);
+  RUN_TEST(
+      test_the_wheel_turns_at_the_load_speed_for_as_long_as_the_tape_feeds);
+  RUN_TEST(test_the_wheel_turning_with_the_tape_comes_to_rest_where_it_began);
+  RUN_TEST(test_a_home_after_turning_with_the_tape_is_the_home_it_was_before);
+  RUN_TEST(test_a_turn_after_turning_with_the_tape_takes_as_long_as_ever);
+  RUN_TEST(test_turning_with_the_tape_keeps_the_tape_going_the_whole_way);
+  RUN_TEST(test_a_stop_halts_the_wheel_turning_with_the_tape_within_a_step);
+  RUN_TEST(
+      test_a_wheel_stopped_while_turning_with_the_tape_homes_before_it_counts);
+  RUN_TEST(test_a_home_after_a_load_stopped_on_the_magnet_turns_only_one_way);
+  RUN_TEST(test_a_stop_before_turning_with_the_tape_leaves_the_wheel_alone);
+  RUN_TEST(test_with_no_tape_under_way_the_wheel_stays_where_it_is);
   RUN_TEST(test_the_estimate_of_a_home_is_how_long_it_takes);
   RUN_TEST(test_a_wheel_that_has_lost_its_place_is_estimated_from_the_j);
   RUN_TEST(test_the_estimate_of_a_turn_is_how_long_it_takes);

@@ -102,11 +102,13 @@ void Feeder::keepGoing() {
 }
 
 void Feeder::finish() {
-  while (this->phase != Phase::IDLE) {
+  while (this->underWay()) {
     this->keepGoing();
     yield();
   }
 }
+
+bool Feeder::underWay() const { return this->phase != Phase::IDLE; }
 
 void Feeder::feed(int repeat) {
   this->start(repeat);

@@ -19,6 +19,7 @@
 
 #include "Arduino.h"
 #include "HostMachine.h"
+#include "Tape.h"
 
 static HostMachine* machine;
 
@@ -332,6 +333,91 @@ void test_a_reel_without_a_length_takes_the_last_roll_length(void) {
   const RollState roll = etkt->createStatus().roll;
   TEST_ASSERT_EQUAL_UINT32(5000, roll.lengthMm);
   TEST_ASSERT_EQUAL_UINT32(16, roll.feedsUsed);
+}
+
+// A new tape goes in front corner first, and a wheel that stands still can
+// catch that corner on a tooth and fold it over, which jams the load. So the
+// wheel turns for as long as the tape is threaded through, the one way it
+// ever turns: the way homing searches, which is the way the tape feeds.
+void test_a_reel_turns_the_wheel_with_the_tape_as_it_threads_it(void) {
+  // The way the boot's home searched for the magnet.
+  const long homing = charStepper->valuesOf(StepperCall::STEP).front();
+  const long along = REVERSE_LOAD_WHEEL_DIRECTION ? -homing : homing;
+  charStepper->clear();
+  // Whether the wheel took a step while each feed of the load moved the tape.
+  static std::vector<bool> turnedDuringFeed;
+  turnedDuringFeed.assign(REEL_FEEDS, false);
+  charStepper->afterStep = [] {
+    if (feedStepper->distanceToGo() != 0) {
+      turnedDuringFeed[feeder->feeds()] = true;
+    }
+  };
+
+  submit(Command::REEL);
+  etkt->loop();
+
+  for (int feed = 0; feed < REEL_FEEDS; feed++) {
+    TEST_ASSERT_TRUE_MESSAGE(turnedDuringFeed[feed], "the wheel stood still");
+  }
+  for (const long step : charStepper->valuesOf(StepperCall::STEP)) {
+    TEST_ASSERT_EQUAL_INT32(along, step);
+  }
+  // The same tape as ever, and both motors let go of once it is through.
+  TEST_ASSERT_EQUAL_UINT32(REEL_FEEDS, etkt->createStatus().roll.feedsUsed);
+  TEST_ASSERT_FALSE(charStepper->energized);
+  TEST_ASSERT_FALSE(feedStepper->energized);
+}
+
+// A load is stopped because the tape is not catching, and the wheel is one
+// of the things it catches on. The stop halts the wheel within a step, as it
+// halts the tape, and both motors let go.
+void test_a_stopped_load_halts_the_wheel_as_it_halts_the_tape(void) {
+  static long wheelSteps;
+  wheelSteps = 0;
+  charStepper->afterStep = [] {
+    wheelSteps++;
+    if (wheelSteps == 500) {
+      etkt->stop();
+    }
+  };
+
+  submit(Command::REEL);
+  etkt->loop();
+
+  TEST_ASSERT_EQUAL_INT32(500, wheelSteps);
+  // Partway through its first feed.
+  TEST_ASSERT_TRUE(feedStepper->currentPosition() != 0);
+  TEST_ASSERT_TRUE(labs(feedStepper->currentPosition()) < STEPS_PER_FEED);
+  TEST_ASSERT_EQUAL_INT(Command::REEL,
+                        (int)etkt->createStatus().stopped.command);
+  TEST_ASSERT_FALSE(charStepper->energized);
+  TEST_ASSERT_FALSE(feedStepper->energized);
+}
+
+// The tape is what a load is for, and the wheel only keeps it company. A
+// stop that comes once the last feed has arrived finds the roll threaded all
+// the way through, so it cuts nothing short: the roll is in, and nobody is
+// told to load it again.
+void test_a_stop_once_the_tape_is_through_leaves_the_load_finished(void) {
+  submit(Command::UNLOAD);
+  etkt->loop();
+  static long threaded;
+  threaded =
+      feedStepper->currentPosition() +
+      REEL_FEEDS * STEPS_PER_FEED * (REVERSE_FEED_STEPPER_DIRECTION ? 1 : -1);
+  feedStepper->afterStep = [] {
+    if (feedStepper->currentPosition() == threaded) {
+      etkt->stop();
+    }
+  };
+
+  submit(Command::REEL);
+  etkt->loop();
+
+  const StatusUpdate status = etkt->createStatus();
+  TEST_ASSERT_EQUAL_INT(Command::IDLE, (int)status.stopped.command);
+  TEST_ASSERT_FALSE(status.roll.out);
+  TEST_ASSERT_FALSE(charStepper->energized);
 }
 
 // A roll that has been threaded comes out again without being cut or fed
@@ -1519,6 +1605,9 @@ int main(int, char**) {
   RUN_TEST(test_the_cut_button_presses_three_times_and_a_label_once);
   RUN_TEST(test_a_reel_loads_a_roll_of_the_declared_length);
   RUN_TEST(test_a_reel_without_a_length_takes_the_last_roll_length);
+  RUN_TEST(test_a_reel_turns_the_wheel_with_the_tape_as_it_threads_it);
+  RUN_TEST(test_a_stopped_load_halts_the_wheel_as_it_halts_the_tape);
+  RUN_TEST(test_a_stop_once_the_tape_is_through_leaves_the_load_finished);
   RUN_TEST(test_an_unload_backs_the_tape_out_as_far_as_a_reel_threads_it);
   RUN_TEST(test_an_unload_leaves_the_roll_count_as_it_was);
   RUN_TEST(test_a_stopped_unload_lets_go_of_the_tape_and_leaves_nothing_to_cut);

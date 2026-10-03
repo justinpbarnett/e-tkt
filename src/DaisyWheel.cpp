@@ -192,6 +192,59 @@ Turn DaisyWheel::move(String c, int alignFactor) {
   return Turn::REACHED;
 }
 
+// How far the wheel goes on turning once it begins to slow down from
+// LOAD_WHEEL_SPEED, in steps, by AccelStepper's own sum.
+static const long LOAD_SLOWING_STEPS =
+    (long)((float)LOAD_WHEEL_SPEED * LOAD_WHEEL_SPEED /
+           (2.0 * CHARACTER_STEPPER_MAX_ACCELERATION));
+
+void DaisyWheel::turnAlong() {
+  if (!ENABLE_DAISYWHEEL) {
+    this->background->finish();
+    return;
+  }
+  // Before the coils are powered, so a stop that is already up leaves the
+  // wheel as it was, and so does a background with nothing to do.
+  if (!this->background->underWay() || this->stop->raised()) {
+    return;
+  }
+
+  logger->log("Turning with the tape");
+  this->stepper->enableOutputs();
+  // No slot is counted to on the way, so the next move() homes first.
+  this->lose();
+  this->stepper->setMaxSpeed(LOAD_WHEEL_SPEED);
+  // The way homing searches, backwards for the stepper, unless the
+  // configuration turns it round.
+  const long turn =
+      (REVERSE_LOAD_WHEEL_DIRECTION ? 1L : -1L) * this->stepsPerRevolution;
+  const long from = this->stepper->currentPosition();
+  // Whole turns for as long as there is tape still to come, and then to the
+  // end of the turn the wheel is in, so it comes to rest where it began.
+  while (this->background->underWay() || this->stepper->distanceToGo() != 0) {
+    // raised() and not shouldStop(): the stop is the background's to obey.
+    if (this->stop->raised()) {
+      break;
+    }
+    // The next turn is asked for before the wheel would begin to slow down
+    // for the end of this one, so it turns at one speed all the way.
+    if (this->background->underWay() &&
+        labs(this->stepper->distanceToGo()) <= 2 * LOAD_SLOWING_STEPS) {
+      this->stepper->move(this->stepper->distanceToGo() + turn);
+    }
+    this->stepper->run();
+    this->background->keepGoing();
+    yield();
+  }
+  // At rest, or halted here by a stop. The count goes back to what it was,
+  // less the whole turns, so it still says where on the wheel the stepper is.
+  this->stepper->setCurrentPosition(from +
+                                    (this->stepper->currentPosition() - from) %
+                                        this->stepsPerRevolution);
+  // As initialize() set it up, for the turns that count slots.
+  this->stepper->setMaxSpeed(TIMING.maxSpeed);
+}
+
 unsigned long DaisyWheel::homeUs(const String& from, int align) const {
   const int slot = wheelSlot(from);
   std::lock_guard<std::mutex> guard(this->estimateLock);

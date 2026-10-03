@@ -111,6 +111,12 @@ class Feeder : public Background {
   void finish() override;
 
   /**
+   * @brief Whether feeds asked for are still going: from start() until the
+   * last of them is done, the motor is free and the tape has settled.
+   */
+  bool underWay() const override;
+
+  /**
    * @brief Pushes the tape forward `repeat` feeds, and leaves the motor
    * free: start() and finish() in one.
    */

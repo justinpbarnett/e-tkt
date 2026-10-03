@@ -93,6 +93,21 @@ class Printhead {
   void turnTo(const String& slot, const Calibration& calibration);
 
   /**
+   * @brief Turns the wheel the way the tape feeds for as long as the tape
+   * is feeding, and presses nothing.
+   *
+   * For a new roll on its way through, so the front corner of the tape
+   * rides past the wheel's teeth: see DaisyWheel::turnAlong(). The press
+   * has to be at rest first. The wheel makes whole turns, so it comes to
+   * rest where it began, a moment after the tape does.
+   *
+   * A stop halts the wheel within a step, and whether it cut anything short
+   * is the tape's to say. The wheel turns to no slot, so the next character
+   * homes before it counts from anywhere.
+   */
+  void turnWithTape();
+
+  /**
    * @brief Presses one character of a label into the tape.
    *
    * The wheel turns to the character's slot and the press comes down once,

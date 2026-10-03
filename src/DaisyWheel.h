@@ -128,6 +128,25 @@ class DaisyWheel {
   Turn move(String c, int alignFactor);
 
   /**
+   * @brief Turns the wheel the way the tape feeds, at LOAD_WHEEL_SPEED, for
+   * as long as the background is under way.
+   *
+   * For a new roll on its way through the machine: the wheel's teeth move
+   * with the front corner of the tape, where a wheel that stands still can
+   * catch it. The wheel makes whole turns, so it finishes the one it is in
+   * once the background is done, and comes to rest where it began, with its
+   * coils still on. No slot is counted to on the way, so the wheel is left
+   * unreferenced.
+   *
+   * A stop halts the wheel within a step, and is left for the background to
+   * obey. This turn only keeps the background company, so a stop that comes
+   * once the background has nothing left to drop cuts nothing short. With
+   * nothing under way, or with a stop already up, the wheel is left as it
+   * was.
+   */
+  void turnAlong();
+
+  /**
    * @brief How long home(align) takes with the wheel at the slot for
    * `from`: the search for the magnet, the align, and the wait after.
    *

@@ -56,6 +56,8 @@ void Printhead::turnTo(const String& slot, const Calibration& calibration) {
   }
 }
 
+void Printhead::turnWithTape() { this->daisywheel->turnAlong(); }
+
 void Printhead::stamp(const String& character, const Calibration& calibration) {
   // The wheel carries no space. Asked for one, it would say so in the log,
   // let go of its coils, and home again for the character after.

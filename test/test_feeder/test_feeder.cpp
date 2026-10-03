@@ -276,6 +276,43 @@ void test_a_started_feed_moves_only_while_it_is_kept_going(void) {
   TEST_ASSERT_EQUAL_INT32(1, feeder->feeds());
 }
 
+// Whatever keeps the tape company, as the wheel does while a roll is loaded,
+// asks how long for. The answer is yes from the moment feeds are asked for
+// until the motor has let go and the tape has settled, not only while the
+// motor steps.
+void test_feeds_are_under_way_from_the_start_until_the_tape_has_settled(void) {
+  feeder->initialize();
+  TEST_ASSERT_FALSE(feeder->underWay());
+
+  feeder->start(2);
+  TEST_ASSERT_TRUE(feeder->underWay());
+  while (stepper->currentPosition() != 2 * FEED_STEP * FEED_DIRECTION) {
+    feeder->keepGoing();
+    yield();
+    TEST_ASSERT_TRUE(feeder->underWay());
+  }
+  // The last feed has arrived, and the coils have their waits still to come.
+  TEST_ASSERT_TRUE(feeder->underWay());
+
+  feeder->finish();
+  TEST_ASSERT_FALSE(feeder->underWay());
+}
+
+void test_feeds_let_go_of_are_no_longer_under_way(void) {
+  feeder->initialize();
+  feeder->start(3);
+  pause(500, feeder);
+  feeder->deenergize();
+  TEST_ASSERT_FALSE(feeder->underWay());
+}
+
+void test_feeds_a_stop_was_ahead_of_are_never_under_way(void) {
+  feeder->initialize();
+  stop->raise(StopCause::OPERATOR);
+  feeder->start(3);
+  TEST_ASSERT_FALSE(feeder->underWay());
+}
+
 void test_feeds_asked_for_during_a_feed_follow_it(void) {
   feeder->initialize();
   feeder->start(1);
@@ -480,6 +517,9 @@ int main(int, char**) {
   RUN_TEST(test_a_feed_a_stop_cut_short_counts_as_a_whole_one);
   RUN_TEST(test_a_feed_that_finishes_before_a_stop_is_not_cut_short);
   RUN_TEST(test_a_started_feed_moves_only_while_it_is_kept_going);
+  RUN_TEST(test_feeds_are_under_way_from_the_start_until_the_tape_has_settled);
+  RUN_TEST(test_feeds_let_go_of_are_no_longer_under_way);
+  RUN_TEST(test_feeds_a_stop_was_ahead_of_are_never_under_way);
   RUN_TEST(test_feeds_asked_for_during_a_feed_follow_it);
   RUN_TEST(test_a_feed_asked_for_as_the_motor_lets_go_still_happens);
   RUN_TEST(test_deenergize_lets_go_of_a_feed_under_way_and_counts_it);

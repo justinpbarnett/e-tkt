@@ -40,6 +40,12 @@ class Background {
    * @brief Keeps going until the job is done, and returns then.
    */
   virtual void finish() = 0;
+
+  /**
+   * @brief Whether there is a job still going: finish() would have something
+   * to wait for. Asking changes nothing.
+   */
+  virtual bool underWay() const = 0;
 };
 
 // How often a loop that keeps a motor going comes round on the board: the

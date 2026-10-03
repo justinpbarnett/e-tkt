@@ -512,7 +512,12 @@ void ETKT::reelCommandInternal() {
                          : (int)this->roll->state().lengthMm;
   this->roll->load(length);
 
-  this->feeder->feed(REEL_FEEDS);
+  // The wheel turns the way the tape feeds while the tape is threaded
+  // through. A wheel that stands still can catch the front corner of a new
+  // tape on a tooth and fold it over, which jams the load.
+  this->feeder->start(REEL_FEEDS);
+  this->printhead->turnWithTape();
+  this->feeder->finish();
   // Threaded through to the cutter, unless a stop cut the feeds short. A
   // load is stopped because the tape is not catching, and the roll is then
   // no more in the machine than it was.

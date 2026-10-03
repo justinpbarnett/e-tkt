@@ -367,6 +367,62 @@ void test_a_stop_while_the_press_waits_for_the_tape_keeps_it_up(void) {
   TEST_ASSERT_TRUE(stopSignal->cutShort());
 }
 
+// A new roll goes through front corner first, and a tooth of a wheel that
+// stands still can catch that corner and fold it over. So the wheel turns
+// for as long as a new tape feeds through: it has moved on at every step the
+// tape takes, from the first to the last.
+void test_the_wheel_is_turning_at_every_step_a_new_tape_takes(void) {
+  static long wheelWasAt;
+  static int stoodStill;
+  wheelWasAt = charStepper->shaft;
+  stoodStill = 0;
+  feedStepper->afterStep = [] {
+    if (charStepper->shaft == wheelWasAt) {
+      stoodStill++;
+    }
+    wheelWasAt = charStepper->shaft;
+  };
+  const long tapeWasAt = feedStepper->currentPosition();
+
+  feeder->start(3);
+  printhead->turnWithTape();
+  feeder->finish();
+
+  TEST_ASSERT_EQUAL_INT32(3 * STEPS_PER_FEED,
+                          labs(feedStepper->currentPosition() - tapeWasAt));
+  TEST_ASSERT_EQUAL_INT(0, stoodStill);
+}
+
+// It is only a turn. The press stays where it rests, so nothing comes down
+// on a tape that is on its way through.
+void test_turning_with_a_new_tape_presses_nothing(void) {
+  const size_t pressFrom = pressServo->calls.size();
+
+  feeder->start(2);
+  printhead->turnWithTape();
+  feeder->finish();
+
+  TEST_ASSERT_EQUAL_UINT32(pressFrom, pressServo->calls.size());
+  TEST_ASSERT_EQUAL_INT(0, (int)strokes->strokes.size());
+}
+
+// The wheel counted to no slot on the way, so the character after a new
+// roll finds home before it turns, and lands where it always does.
+void test_the_character_after_a_new_tape_lands_in_its_slot(void) {
+  const Calibration calibration = {5, 5};
+  printhead->stamp("A", calibration);
+  const long slotOfA = strokes->strokes.back().bearing;
+  printhead->stamp("B", calibration);
+
+  feeder->start(2);
+  printhead->turnWithTape();
+  feeder->finish();
+  printhead->stamp("A", calibration);
+
+  TEST_ASSERT_EQUAL_INT(3, (int)strokes->strokes.size());
+  TEST_ASSERT_EQUAL_INT32(slotOfA, strokes->strokes.back().bearing);
+}
+
 // --- the cut ------------------------------------------------------------
 
 // The cut is the cut mark pressed as many times as the job asks, each
@@ -601,6 +657,9 @@ int main(int, char**) {
   RUN_TEST(test_nothing_comes_down_on_tape_that_is_still_moving);
   RUN_TEST(test_the_wheel_turns_to_the_next_character_while_the_tape_feeds);
   RUN_TEST(test_a_stop_while_the_press_waits_for_the_tape_keeps_it_up);
+  RUN_TEST(test_the_wheel_is_turning_at_every_step_a_new_tape_takes);
+  RUN_TEST(test_turning_with_a_new_tape_presses_nothing);
+  RUN_TEST(test_the_character_after_a_new_tape_lands_in_its_slot);
   RUN_TEST(
       test_the_cut_presses_the_cut_mark_as_often_as_asked_at_the_jobs_force);
   RUN_TEST(test_a_stop_during_a_cut_is_obeyed_before_the_next_press);

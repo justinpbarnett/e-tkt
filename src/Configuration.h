@@ -40,6 +40,24 @@
 #define CHARACTER_STEPPER_MAX_ACCELERATION 16000
 
 /**
+ * How fast the daisy wheel turns while a new roll is loaded, in steps/s, and
+ * which way. A new tape goes in front corner first, and a wheel that stands
+ * still can catch that corner on a tooth and fold it over, which jams the
+ * load. A wheel that turns with the tape carries the corner through. 3200
+ * steps a second is one turn of the wheel a second: its teeth then move many
+ * times faster than the tape does, and still gently.
+ *
+ * The wheel turns the way it homes and prints, which the machine is designed
+ * to be the way the tape feeds. If a new tape catches because the wheel on
+ * your machine turns against it, set REVERSE_LOAD_WHEEL_DIRECTION to true.
+ */
+#define LOAD_WHEEL_SPEED 3200
+#define REVERSE_LOAD_WHEEL_DIRECTION false
+static_assert(LOAD_WHEEL_SPEED > 0,
+              "LOAD_WHEEL_SPEED must be positive, or a load waits forever for "
+              "a wheel that never finishes its turn");
+
+/**
  * Debugging
  *
  * Alter these to enable/disable individual parts of the hardware while
