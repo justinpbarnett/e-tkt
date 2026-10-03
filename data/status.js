@@ -205,7 +205,8 @@ export function printingRun(status, device) {
 //   status      the last api/status, or null before there is one
 //   stop        the stop the device has been asked for, as Stops.pending()
 //               has it, or null
-//   sentCopies  how many labels this page last asked for
+//   sentCopies  how many labels the command this page last sent asks for,
+//               or null when it is not a run of labels
 //   offline     whether the page has lost touch with the device
 //   unanswered  whether the command is still on its way and has had no
 //               answer, so the page is sending it again

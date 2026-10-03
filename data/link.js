@@ -120,11 +120,14 @@ export const NEVER_STARTED = Symbol("never started");
 export const UNKNOWN = Symbol("unknown");
 
 // A command this page sends to the device: the name the device answers to it
-// by, the id it goes under, whether the page is still sending it, and what
+// by, the id it goes under, the copies it asks for, whether the page is still
+// sending it or waiting for a status to say what became of it, and what
 // became of it when something other than its own answer says.
 export class Sending {
   // The name the device answers to it by.
   name;
+  // How many labels it asks for, when it is a run of labels, or null.
+  copies;
   // The id every try of it goes under.
   id = newCommandId();
   // Says what became of it, to whoever waits on outcome.
@@ -141,9 +144,14 @@ export class Sending {
   #followedByStop = false;
   // Whether a status has named it.
   #named = false;
+  // When the device took it, at a time from performance.now(), until a
+  // status asked for after that arrives. null before it took it, and after.
+  #acceptedAt = null;
 
-  constructor(name) {
+  // body is what it is posted with.
+  constructor(name, body = {}) {
     this.name = name;
+    this.copies = body.copies ?? null;
   }
 
   // Whether the page is still sending it. The device may have it by now or
@@ -187,9 +195,31 @@ export class Sending {
     this.#say(outcome);
   }
 
-  // A status. Returns whether it names this command as the last the device
-  // took, which is the device saying it took it.
-  statusArrived(status) {
+  // The device took it, at a time from performance.now(): its answer said
+  // so, or something else did. Unless a status has named it: that status is
+  // on the page, with what has become of the command since.
+  accepted(at) {
+    if (!this.#named) {
+      this.#acceptedAt = at;
+    }
+  }
+
+  // Whether the page has yet to hear from a status what became of it: from
+  // the tap until a status asked for after the device took it arrives, or
+  // until the page has done sending one the device did not take. Without the
+  // wait for that status a quick command could come and go between two
+  // polls, and the page never show it running.
+  awaitingReport() {
+    return this.#onItsWay || this.#acceptedAt !== null;
+  }
+
+  // A status, asked for at a time from performance.now(). Returns whether it
+  // names this command as the last the device took, which is the device
+  // saying it took it.
+  statusArrived(status, requestedAt) {
+    if (this.#acceptedAt !== null && requestedAt >= this.#acceptedAt) {
+      this.#acceptedAt = null;
+    }
     if (status.last_command_id !== this.id) {
       return false;
     }
@@ -197,12 +227,21 @@ export class Sending {
     this.became(TAKEN);
     return true;
   }
+}
 
-  // Whether a status has named it. That status is on the page, with what has
-  // become of the command since.
-  named() {
-    return this.#named;
+// The command the device is running, or about to, or null when it is idle:
+// the one this page sent, as a Sending, while the page has yet to hear from a
+// status what became of it, and otherwise the one the last status says is
+// running. sent is null until the page has sent one, and so is status until
+// the first one lands.
+export function runningCommand(sent, status) {
+  if (sent !== null && sent.awaitingReport()) {
+    return sent.name;
   }
+  if (status !== null && status.busy) {
+    return status.command;
+  }
+  return null;
 }
 
 // What the wait before the next try came to, when nothing else did first.

@@ -12,6 +12,7 @@ import {
   deliver,
   lastHeardText,
   newCommandId,
+  runningCommand,
 } from "../../data/link.js";
 
 const ACCEPTED = { ok: true, status: 200 };
@@ -150,10 +151,8 @@ test("a status that names the command ends the wait for its answer", async () =>
   // A status that names another command, or none, says nothing of this one.
   assert.equal(command.statusArrived({ busy: true, last_command_id: "5d7e21b6843f9a0c" }), false);
   assert.equal(command.statusArrived({ busy: false }), false);
-  assert.equal(command.named(), false);
   assert.equal(await soFar(delivery), WAITING);
   assert.equal(command.statusArrived({ busy: true, last_command_id: command.id }), true);
-  assert.equal(command.named(), true);
   assert.equal(await delivery, TAKEN);
   assert.equal(link.tries, 1);
   // Nor is the page told there was no answer: it has had one.
@@ -243,6 +242,59 @@ test("a command is on its way from when it is sent until the page has done sendi
   assert.equal(command.onItsWay(), true);
   command.over();
   assert.equal(command.onItsWay(), false);
+});
+
+test("the machine is busy with the command this page is sending, and otherwise with the one the last status names", () => {
+  // From the tap, before the device has said anything of the command, so the
+  // buttons are held at once. A command the device did not take, refused or
+  // given up on, leaves it to the status again.
+  const idle = { busy: false, command: "idle" };
+  const feeding = { busy: true, command: "feed" };
+  assert.equal(runningCommand(null, null), null);
+  assert.equal(runningCommand(null, idle), null);
+  assert.equal(runningCommand(null, feeding), "feed");
+  const command = new Sending("tag");
+  assert.equal(runningCommand(command, null), "tag");
+  assert.equal(runningCommand(command, idle), "tag");
+  command.over();
+  assert.equal(runningCommand(command, idle), null);
+  assert.equal(runningCommand(command, feeding), "feed");
+});
+
+test("a command the device took is running until a status asked for after that says what became of it", () => {
+  // A quick command can come and go between two polls, and a status asked
+  // for before the device took it is from before it ran. Without this the
+  // page would never show such a command running, and would offer its
+  // buttons again while it ran. Times are from performance.now().
+  const idle = { busy: false, command: "idle" };
+  const command = new Sending("feed");
+  command.accepted(1000);
+  command.over();
+  assert.equal(runningCommand(command, idle), "feed");
+  command.statusArrived(idle, 999);
+  assert.equal(runningCommand(command, idle), "feed");
+  command.statusArrived(idle, 1000);
+  assert.equal(runningCommand(command, idle), null);
+});
+
+test("a command a status named before its answer came is running for as long as the statuses say", () => {
+  // That status is on the page already, with what has become of the command
+  // since, so there is no other to wait for.
+  const idle = { busy: false, command: "idle" };
+  const command = new Sending("feed");
+  command.statusArrived({ ...idle, last_command_id: command.id }, 900);
+  command.accepted(1000);
+  command.over();
+  assert.equal(runningCommand(command, idle), null);
+  assert.equal(runningCommand(command, { busy: true, command: "feed" }), "feed");
+});
+
+test("a run of labels on its way says how many it asks for", () => {
+  // So the stops are laid out for the run from the tap, before a status says
+  // how many labels it has. It is what the body asks the device for, and
+  // nothing else the page sends asks for copies.
+  assert.equal(new Sending("tag", { tag: " hi ", copies: 5, cut: true }).copies, 5);
+  assert.equal(new Sending("feed", {}).copies, null);
 });
 
 test("a command is being sent again once a try of it has had no answer, for as long as another is to follow", () => {

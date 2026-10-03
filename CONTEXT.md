@@ -228,6 +228,9 @@ It builds and runs on a host against fakes, so `test/test_etkt` checks those rul
 
 **Busy** - a command is running.
 The machine runs one at a time, and a second request is refused with a 409: the request was fine, the machine was not.
+The **panel** holds its buttons while the machine is busy as far as it knows, which `runningCommand()` in `link.js` says.
+That is from the tap on a command until a status asked for after the machine took it arrives, and otherwise while the last status says a command is running.
+Without the wait for that status a quick command could come and go between two polls, and the panel never show it running.
 
 **Command id** - what the panel sends a command or a stop under, as `?id=`, so that one whose answer was lost on the way back can be sent again and not run twice.
 The device keeps what it answered under its newest ids, and a request that comes again under one of them is told what it was told the first time, with nothing more done.
@@ -458,5 +461,5 @@ Setup has a Back at its top, beside the theme button, as well as the one at its 
 Either one asks first when a calibration there is not saved.
 When a load takes the page back to the print view by itself, as **loading a roll** says, the print view takes no taps for `STOP_ARMING_MS`, so a finger on its way down to Setup's stop does not land on what has taken its place.
 `script.js` reads the page and draws it.
-What the page says and decides is worked out in the ES modules beside it, which never touch the page, so `node --test "test/panel/*.test.js"` covers them: `link.js` for the sending, `network.js` for the Network card.
+What the page says and decides is worked out in the ES modules beside it, which never touch the page, so `node --test "test/panel/*.test.js"` covers them: `link.js` for the sending and for whether the machine is **busy**, `network.js` for the Network card.
 `test/panel/capabilities.json` is the `/api/capabilities` reply those tests run against, with `network.json` and `nearby.json` beside it for the Network card, and the simulator's tests hold all three to the firmware's.

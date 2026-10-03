@@ -38,7 +38,17 @@ import {
   typedLengthLimit,
   unprintableCharacters,
 } from "./label.js";
-import { Link, NEVER_STARTED, Sending, TAKEN, UNKNOWN, deliver, lastHeardText, newCommandId } from "./link.js";
+import {
+  Link,
+  NEVER_STARTED,
+  Sending,
+  TAKEN,
+  UNKNOWN,
+  deliver,
+  lastHeardText,
+  newCommandId,
+  runningCommand,
+} from "./link.js";
 import {
   NEARBY_POLL_MS,
   NETWORK_POLL_MS,
@@ -157,19 +167,12 @@ const state = {
   // Whether the device is answering the page, and when it last did.
   link: new Link(),
   // The command this page last sent, as a Sending: its name and the id it
-  // went under, whether the page is still sending it, and what became of it
+  // went under, the copies it asks for, whether the page is still sending it
+  // or waiting for a status to say what became of it, and what became of it
   // when a status, or a stop sent after it, says so before its own answer
-  // does. null until the page has sent one.
+  // does. null until the page has sent one. The machine is busy with it, as
+  // runningCommand() in link.js has it, from the tap until that status.
   sent: null,
-  // A command the device has accepted that no poll has reported on yet.
-  // Without it a quick command could come and go between two polls and the
-  // page never show it running. With it the page is busy from the moment
-  // the device says yes until a status asked for after that says what
-  // became of it.
-  pending: null,
-  // The copies this page last asked the device for, so the stops are laid
-  // out for a run of labels from the tap rather than from the first poll.
-  sentCopies: null,
   // How many labels the form asks for: the count, and whether Max is on.
   quantity: new Quantity(),
   // How long the device says the run on the form would take.
@@ -945,7 +948,7 @@ async function send(name, data = {}, { sendAgain = true } = {}) {
   state.revealStop = false;
   // One id for every try, so a device that took the command, and whose
   // answer was lost, says so to the next try and does not run it twice.
-  const sending = new Sending(name);
+  const sending = new Sending(name, data);
   state.sent = sending;
   render();
   let accepted = false;
@@ -965,11 +968,7 @@ async function send(name, data = {}, { sendAgain = true } = {}) {
       // stop is all there is to say.
     } else if (answer === TAKEN || answer.ok) {
       accepted = true;
-      // Unless a status has named the command: that status is on the page
-      // already, with what has become of the command since.
-      if (!sending.named()) {
-        state.pending = { name: name, acceptedAt: performance.now() };
-      }
+      sending.accepted(performance.now());
     } else {
       const reply = await readJson(answer);
       // Refused because a stop sent after it got there first, the command
@@ -1022,7 +1021,7 @@ function formRun() {
 // idle and in touch, and the form has a run the device would take. null
 // otherwise. The print button and the estimate under it both go by this.
 function printableRun() {
-  if (runningCommand() !== null || state.link.lost()) {
+  if (runningCommand(state.sent, state.status) !== null || state.link.lost()) {
     return null;
   }
   return formRun();
@@ -1036,7 +1035,6 @@ async function printLabels() {
   }
   // Puts a phone's keyboard away, so the label printing is what is on screen.
   el.input.blur();
-  state.sentCopies = run.copies;
   if (await send("tag", run)) {
     scrollStopsIntoPlace(el.runActions, el.activity);
   }
@@ -1299,7 +1297,7 @@ function closeSetup() {
 function leaveAfterLoad() {
   const leave = state.load.statusArrived({
     status: state.status,
-    running: runningCommand(),
+    running: runningCommand(state.sent, state.status),
     setup: state.view === "setup",
     problem: state.problem !== null,
     unsaved: state.calibration.unsaved(),
@@ -1652,7 +1650,11 @@ function pickNetwork(ssid) {
 // once it does. The dialog says what went wrong if it does not, or the page
 // does, if the dialog was closed in the meantime.
 async function addNetwork() {
-  if (state.networkCard.network === null || state.networkCard.busy || runningCommand() !== null) {
+  if (
+    state.networkCard.network === null ||
+    state.networkCard.busy ||
+    runningCommand(state.sent, state.status) !== null
+  ) {
     return;
   }
   const adding = typedNetwork();
@@ -1724,9 +1726,6 @@ async function poll() {
 
 function applyStatus(status, requestedAt) {
   state.status = status;
-  if (state.pending !== null && requestedAt >= state.pending.acceptedAt) {
-    state.pending = null;
-  }
   state.stops.statusArrived(status, requestedAt);
   // A stop the page was still trying to get through is over once the device
   // has nothing left to stop, and so is what the page said about trying.
@@ -1737,24 +1736,10 @@ function applyStatus(status, requestedAt) {
   // that is the one this page last sent, the command arrived, whatever became
   // of its answer: the page stops waiting for one, and no longer says it
   // could not get the command through.
-  if (state.sent !== null && state.sent.statusArrived(status)) {
+  if (state.sent !== null && state.sent.statusArrived(status, requestedAt)) {
     takeDownProblem("command");
   }
   state.calibration.statusArrived(status, state.view === "setup");
-}
-
-// The command the device is running, or about to, or null when it is idle.
-function runningCommand() {
-  if (state.sent !== null && state.sent.onItsWay()) {
-    return state.sent.name;
-  }
-  if (state.pending !== null) {
-    return state.pending.name;
-  }
-  if (state.status !== null && state.status.busy) {
-    return state.status.command;
-  }
-  return null;
 }
 
 //------------//
@@ -1762,7 +1747,7 @@ function runningCommand() {
 //------------//
 
 function render() {
-  const command = runningCommand();
+  const command = runningCommand(state.sent, state.status);
   const busy = command !== null;
   const offline = state.link.lost();
   // What the page knows of the command running, as activity() and
@@ -1771,7 +1756,7 @@ function render() {
     command: command,
     status: state.status,
     stop: state.stops.pending(state.status),
-    sentCopies: state.sentCopies,
+    sentCopies: state.sent === null ? null : state.sent.copies,
     offline: offline,
     unanswered: state.sent !== null && state.sent.tryingAgain(),
   };
