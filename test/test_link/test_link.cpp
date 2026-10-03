@@ -96,6 +96,17 @@ static void joinChurch(void) {
   TEST_ASSERT_TRUE(StationLink::JOINED == supervisor->status().station);
 }
 
+// A machine that has not found the church's network for over a minute, so
+// its own network is open, with a phone on it. The tries are five minutes
+// apart from then on: each one takes the radio away from the phone.
+static void putAPhoneOnItsOwnNetwork(void) {
+  settings->remember("Church", CHURCH_KEY);
+  start();
+  run(WIFI_OWN_AFTER_MS + 5000);
+  radio->phones = 1;
+  run(5000);
+}
+
 // How many lines of the log hold this text.
 static int count(const char* text) {
   int n = 0;
@@ -898,11 +909,7 @@ void test_a_network_typed_in_is_tried_within_seconds(void) {
   // Somebody stands at the machine with a phone on its own network and
   // types in the network it should be on. They are waiting to see it work,
   // and the tries are five minutes apart by then.
-  settings->remember("Church", CHURCH_KEY);
-  start();
-  run(WIFI_OWN_AFTER_MS + 5000);
-  radio->phones = 1;
-  run(5000);
+  putAPhoneOnItsOwnNetwork();
 
   settings->remember("Basement", BASEMENT_KEY);
   radio->add("Basement", BASEMENT_KEY);
@@ -916,11 +923,7 @@ void test_a_network_typed_in_is_tried_within_seconds(void) {
 
 void test_a_network_typed_in_again_is_tried_again_at_once(void) {
   // The panel's "try again": the same network, sent as it is kept.
-  settings->remember("Church", CHURCH_KEY);
-  start();
-  run(WIFI_OWN_AFTER_MS + 5000);
-  radio->phones = 1;
-  run(5000);
+  putAPhoneOnItsOwnNetwork();
   const size_t tries = radio->joins.size();
 
   radio->add("Church", CHURCH_KEY);
@@ -936,11 +939,7 @@ void test_a_network_typed_in_again_beside_a_router_change_is_tried_at_once(
   // Two changes on the Network card, inside the time the link waits for
   // the replies to leave: the router option, and then "try again". The
   // list is as it was, and the try is still asked for.
-  settings->remember("Church", CHURCH_KEY);
-  start();
-  run(WIFI_OWN_AFTER_MS + 5000);
-  radio->phones = 1;
-  run(5000);
+  putAPhoneOnItsOwnNetwork();
   const size_t tries = radio->joins.size();
 
   radio->add("Church", CHURCH_KEY);
@@ -950,6 +949,32 @@ void test_a_network_typed_in_again_beside_a_router_change_is_tried_at_once(
 
   TEST_ASSERT_EQUAL_INT((int)tries + 1, (int)radio->joins.size());
   TEST_ASSERT_TRUE(StationLink::JOINED == supervisor->status().station);
+}
+
+void test_the_router_option_changed_and_changed_back_asks_for_no_try(void) {
+  // A change of mind inside the time the link waits changes nothing, and a
+  // try would take the radio away from the phone for nothing.
+  putAPhoneOnItsOwnNetwork();
+  const size_t tries = radio->joins.size();
+
+  settings->setRouterOffered(false);
+  settings->setRouterOffered(true);
+  run(WIFI_SETTLE_MS + WIFI_RETRY_MS + 4000);
+
+  TEST_ASSERT_EQUAL_INT((int)tries, (int)radio->joins.size());
+  TEST_ASSERT_EQUAL_INT(0, radio->closings);
+}
+
+void test_the_mode_changed_and_changed_back_asks_for_no_try(void) {
+  putAPhoneOnItsOwnNetwork();
+  const size_t tries = radio->joins.size();
+
+  settings->setMode(NetworkMode::OWN);
+  settings->setMode(NetworkMode::JOIN);
+  run(WIFI_SETTLE_MS + WIFI_RETRY_MS + 4000);
+
+  TEST_ASSERT_EQUAL_INT((int)tries, (int)radio->joins.size());
+  TEST_ASSERT_EQUAL_INT(0, radio->closings);
 }
 
 void test_forgetting_the_network_it_is_on_leaves_it(void) {
@@ -1426,6 +1451,8 @@ int main(int, char**) {
   RUN_TEST(test_a_network_typed_in_again_is_tried_again_at_once);
   RUN_TEST(
       test_a_network_typed_in_again_beside_a_router_change_is_tried_at_once);
+  RUN_TEST(test_the_router_option_changed_and_changed_back_asks_for_no_try);
+  RUN_TEST(test_the_mode_changed_and_changed_back_asks_for_no_try);
   RUN_TEST(test_forgetting_the_network_it_is_on_leaves_it);
   RUN_TEST(test_forgetting_the_network_it_is_on_tries_the_next_within_seconds);
   RUN_TEST(test_forgetting_another_network_does_not_disturb_the_one_it_is_on);
