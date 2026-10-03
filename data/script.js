@@ -32,9 +32,9 @@ import { CalibrationDraft, RESTART_SECONDS } from "./calibration.js";
 import {
   codePoints,
   hintFor,
-  isValidLabelText,
   paddedLabel,
   paddedLabelTarget,
+  sentLabel,
   typedLengthLimit,
   unprintableCharacters,
 } from "./label.js";
@@ -674,9 +674,15 @@ async function retrieveCapabilities() {
 //   label   //
 //-----------//
 
-// The label as the device will be sent it, margin and all, or what the
-// tape shows while nothing is typed.
-function buildTreatedLabel() {
+// The label on the form as the device would be sent it, or null while the
+// device would refuse it. What is printed, measured and timed goes by this.
+function formLabel() {
+  return sentLabel(el.input.value, el.form.elements.margin.value, device);
+}
+
+// What the tape shows: the label with its margin on, or WRITE HERE while
+// nothing is typed.
+function tapeLabel() {
   return paddedLabel(el.input.value || "WRITE HERE", el.form.elements.margin.value, device);
 }
 
@@ -732,7 +738,7 @@ function getLabelWidth(element, label) {
 // Sizes the strip to the label the device will be sent, margins and all, so
 // what is on the screen is the piece of tape that comes out.
 function drawTape() {
-  el.input.style.width = getLabelWidth(el.input, buildTreatedLabel()) + "px";
+  el.input.style.width = getLabelWidth(el.input, tapeLabel()) + "px";
   updateOverflow();
   followCaret();
 }
@@ -833,8 +839,9 @@ function drawPrinting(status) {
 // What the quantity is measured against, as Quantity in quantity.js takes
 // it: the label as it would be sent, and the tape left on the roll.
 function quantityMeasure() {
+  const label = formLabel();
   return {
-    labelLength: isValidLabelText(el.input.value, device) ? codePoints(buildTreatedLabel()) : null,
+    labelLength: label === null ? null : codePoints(label),
     tapeLeftMm: tapeLeftMm(state.status),
   };
 }
@@ -1003,11 +1010,12 @@ function sendUntilAnswered(delivery) {
 // The run of labels on the form, as it is posted to api/tag, or null while
 // the form has none the device would take.
 function formRun() {
+  const label = formLabel();
   const copies = quantityChosen().copies;
-  if (!isValidLabelText(el.input.value, device) || copies === null) {
+  if (label === null || copies === null) {
     return null;
   }
-  return { tag: buildTreatedLabel().toLowerCase(), copies: copies, cut: el.cutInput.checked };
+  return { tag: label, copies: copies, cut: el.cutInput.checked };
 }
 
 // The run on the form while pressing print would send it: the machine is
@@ -1823,13 +1831,13 @@ function renderPrintView(running, offer, focused) {
 
   // the label
   const typed = el.input.value;
-  const valid = isValidLabelText(typed, device);
+  const label = formLabel();
   el.input.disabled = busy;
   el.input.setAttribute("aria-invalid", unprintableCharacters(typed, device).length > 0 ? "true" : "false");
   const hint = hintFor(typed, device);
   setText(el.hint, hint.text);
   setTone(el.hint, hint.tone);
-  setText(el.length, valid ? formatLength(labelLengthMm(codePoints(buildTreatedLabel()), device)) : "");
+  setText(el.length, label === null ? "" : formatLength(labelLengthMm(codePoints(label), device)));
   for (const key of el.keys) {
     key.disabled = busy;
   }

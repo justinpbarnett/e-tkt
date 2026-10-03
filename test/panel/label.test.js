@@ -7,6 +7,7 @@ import {
   hintFor,
   isValidLabelText,
   paddedLabel,
+  sentLabel,
   typedLengthLimit,
   unprintableCharacters,
 } from "../../data/label.js";
@@ -97,6 +98,33 @@ test("a label can be printed once it has text and the wheel carries all of it", 
   assert.equal(isValidLabelText("", device), false);
   assert.equal(isValidLabelText("hello!", device), false);
   assert.equal(isValidLabelText("hello", null), false);
+});
+
+test("a label is sent with its margin on, in lower case", () => {
+  // The machine upper-cases it again on the way to the wheel.
+  const device = labelMaker();
+  assert.equal(sentLabel("Room 101", "loose", device), " room 101 ");
+  assert.equal(sentLabel("AB", "tight", device), "  ab  ");
+});
+
+test("no label is sent while the device would refuse what is typed", () => {
+  // Nothing typed, a character the wheel does not carry, or no word yet from
+  // the device on what it carries.
+  const device = labelMaker();
+  assert.equal(sentLabel("", "loose", device), null);
+  assert.equal(sentLabel("hello!", "loose", device), null);
+  assert.equal(sentLabel("Straße", "loose", device), null);
+  assert.equal(sentLabel("hello", "loose", null), null);
+});
+
+test("a capital other than A to Z is sent as typed, which is how the machine prints it", () => {
+  // The machine upper-cases a to z and no other letter, so a capital the
+  // browser put in lower case would come back to it as one the wheel does
+  // not carry. The panel takes the set the device serves, so this holds
+  // for any wheel: here, one that carries Ä.
+  const device = labelMaker();
+  const wheel = { ...device, printable: device.printable + "Ä" };
+  assert.equal(sentLabel("ÄB", "tight", wheel), "  Äb  ");
 });
 
 test("the line under the tape names what the wheel does not carry", () => {

@@ -100,6 +100,21 @@ export function isValidLabelText(text, device) {
   return device !== null && text.length > 0 && unprintableCharacters(text, device).length === 0;
 }
 
+// The label as the machine is sent it: with the margin on, and A to Z in
+// lower case, which the machine upper-cases again. null while the device
+// would refuse what is typed, so nothing goes out that it cannot print.
+//
+// A to Z only, as the machine's upper-casing is a to z only. Whatever the
+// wheel carries, the machine then prints asPrinted() of what was typed,
+// which is what the page checked. The browser's toLowerCase() would turn
+// a capital Ä into an ä that the machine leaves as it is.
+export function sentLabel(typed, margin, device) {
+  if (!isValidLabelText(typed, device)) {
+    return null;
+  }
+  return paddedLabel(typed, margin, device).replace(/[A-Z]/g, (letter) => letter.toLowerCase());
+}
+
 // The line under the tape. Normally it lists what may be typed. While the
 // label holds a character the wheel does not carry it names it, and while it
 // holds one the wheel prints as something else it says what that will come

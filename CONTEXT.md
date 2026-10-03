@@ -93,6 +93,11 @@ The panel centres a label by padding spaces onto both sides before it posts it: 
 `MIN_LABEL_CHARACTERS` and `MAX_LABEL_CHARACTERS` are both bounds on the sent length, because that is what the device receives and checks; the panel subtracts its widest margin from the maximum to cap what anyone can type.
 Reading the maximum as a typed length is what first made it 247 and made the device refuse the longest label the panel could produce.
 
+**Sent label** - the label as the device is sent it: the margin on, and A to Z in lower case.
+The machine upper-cases a to z on the way to the wheel and leaves every other character as it is, and the panel checks a label under the same rule, so what it checks is what prints.
+The browser's own upper-casing knows more letters: it made "ß" into "SS", which the wheel carries, and the panel let through labels that the machine then refused.
+`sentLabel()` in `label.js`, which is null while the device would refuse what is typed; what the panel prints, measures and times goes by it.
+
 **Character set** - what the wheel carries and what a label may say: which character sits in which slot, the aliases, the printable set, and the note each slot sounds in a label's tune.
 `CharacterSet`, with no Arduino display code, so the host tests can reach it.
 A second module named `Characters` used to sit a letter away from it, holding the notes and the OLED glyphs.
