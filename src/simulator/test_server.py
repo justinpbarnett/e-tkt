@@ -145,6 +145,17 @@ class RelayTestCase(unittest.IsolatedAsyncioTestCase):
         await self.asyncTearDown()
         await self.asyncSetUp()
 
+    async def network(self, there):
+        """How the machine is reached, once it is as a test waits for."""
+        return await self.until("/api/network", there)
+
+    async def remember(self, ssid, password):
+        """Has the machine remember a network, as the panel does."""
+        response = await self.client.post(
+            "/api/network/remember",
+            json={"ssid": ssid, "password": password})
+        self.assertEqual(200, response.status)
+
 
 class Status(RelayTestCase):
     async def test_an_idle_device_reports_the_firmwares_status(self):
@@ -429,17 +440,6 @@ class Network(RelayTestCase):
     # link is looked at whatever the machine is doing, as on the board,
     # where it has a task of its own.
 
-    async def network(self, there):
-        """How the machine is reached, once it is as a test waits for."""
-        return await self.until("/api/network", there)
-
-    async def remember(self, ssid, password):
-        """Has the machine remember a network, as the panel does."""
-        response = await self.client.post(
-            "/api/network/remember",
-            json={"ssid": ssid, "password": password})
-        self.assertEqual(200, response.status)
-
     async def test_a_machine_never_set_up_opens_its_own_network(self):
         # With no network to join, its own is the one way in. It is named
         # after the machine, as the machine's host name is.
@@ -528,6 +528,33 @@ class Network(RelayTestCase):
         nearby = await self.until(
             "/api/network/nearby", lambda nearby: nearby["listens"] > after)
         self.assertEqual(panel_reply("nearby.json"), nearby)
+
+
+class TryRequests(RelayTestCase):
+    # The link follows a change made on the panel once nothing else has
+    # changed for WIFI_SETTLE_MS, 2 s of the machine's, so two changes made
+    # close together are followed as one. At SPEED that is 2 ms of the wall
+    # clock, less than two requests take to arrive. Here it is a fifth of a
+    # second, and a try at a network out of reach a quarter of one.
+    speed = 10
+
+    async def test_a_network_sent_again_beside_a_router_change_is_tried(
+            self):
+        # Upstairs is not in the air, so every try at it fails, and the
+        # Network card shows why until the tries start over. Sending the
+        # network again exactly as it is kept is how the panel asks for a
+        # try now. Sent just after a tick of the router box, inside the wait,
+        # it once went unheard: the tries went on as they were, and the
+        # failure stayed up.
+        await self.remember("Upstairs", "labelmaker")
+        failed = await self.network(lambda network: "failure" in network)
+        self.assertEqual("Upstairs", failed["failure"]["network"])
+        response = await self.client.post(
+            "/api/network/router",
+            json={"offered": not failed["router_offered"]})
+        self.assertEqual(200, response.status)
+        await self.remember("Upstairs", "labelmaker")
+        await self.network(lambda network: "failure" not in network)
 
 
 class Serial(RelayTestCase):
