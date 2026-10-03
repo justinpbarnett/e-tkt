@@ -257,11 +257,12 @@ class LinkSupervisor {
   NearbyNetworks nearby();
 
   /**
-   * @brief Makes the machine forget every network it remembers, says so on
-   * the screen, and restarts. For the button held through the start, before
-   * the first step(). It does not return on the board.
+   * @brief The Wi-Fi reset: makes the machine forget every network it
+   * remembers, says so on the screen, and restarts. For the button held
+   * through the start, before the first step(). It does not return on the
+   * board.
    */
-  void forgetNetworks();
+  void resetWifi();
 
   /**
    * @brief The name of the reason a try or a link ended, by the number the

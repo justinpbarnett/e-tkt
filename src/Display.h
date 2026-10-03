@@ -4,11 +4,13 @@
 
 #include "Calibration.h"
 
-// How long the two confirmation screens stay up before whatever comes next
-// replaces them. These used to be delay() calls inside the renderers, which
-// meant Display decided how long its caller blocked.
+// How long the screens that are meant to be read stay up before whatever
+// comes next replaces them: the two confirmations, and WI-FI RESET before
+// the machine restarts. These used to be delay() calls inside the renderers,
+// which meant Display decided how long its caller blocked.
 #define SAVED_SCREEN_MS 3000
 #define REBOOT_SCREEN_MS 2500
+#define WIFI_RESET_SCREEN_MS 1500
 
 /**
  * @brief The fixed screens the machine shows while it is doing something.
@@ -89,10 +91,11 @@ class Display {
    * @brief Shows one of the fixed screens and returns as soon as it is on the
    * glass.
    *
-   * It does not wait afterwards. Two of these screens are meant to be looked
-   * at for a few seconds; SAVED_SCREEN_MS and REBOOT_SCREEN_MS say how long,
-   * and the caller does the waiting, because how long a person stares at a
-   * confirmation is not something a renderer should decide.
+   * It does not wait afterwards. Three of these screens are meant to be
+   * looked at for a second or more; SAVED_SCREEN_MS, REBOOT_SCREEN_MS and
+   * WIFI_RESET_SCREEN_MS say how long, and the caller does the waiting,
+   * because how long a person stares at a screen is not something a renderer
+   * should decide.
    */
   virtual void render(Screen screen) = 0;
 

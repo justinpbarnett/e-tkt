@@ -565,14 +565,14 @@ void ETKT::saveCommandInternal() {
 
   // The job's calibration is the pair this save was sent, since its row says
   // it reads both.
-  display->renderSaved(this->calibration);
+  this->display->renderSaved(this->calibration);
   // The waits used to live inside the two renderers. They are the caller's
   // business: how long a confirmation stays up is a decision about this
   // command, not about how to draw a screen.
   delay(SAVED_SCREEN_MS);
 
-  settings->save(this->calibration.align, this->calibration.force);
-  display->render(Screen::REBOOTING);
+  this->settings->save(this->calibration.align, this->calibration.force);
+  this->display->render(Screen::REBOOTING);
   delay(REBOOT_SCREEN_MS);
 
   // The one command that never gets back to loop() to have its lights put
@@ -587,7 +587,7 @@ void ETKT::testCommandInternal() {
   // neither, and showing them would be worse than showing nothing: the test
   // press is always at the minimum force, whatever the job's calibration
   // says. See Printhead::testPress().
-  display->render(Screen::TESTING);
+  this->display->render(Screen::TESTING);
 
   this->printhead->testPress(this->calibration);
 }
@@ -721,7 +721,7 @@ void ETKT::tagCommandInternal() {
     return;
   }
 
-  display->render(Screen::FINISHED);
+  this->display->render(Screen::FINISHED);
 
   // Blink, then fade out. blink() leaves the LED lit at LIGHT_HALF and the
   // fade restarts from LIGHT_FULL, which is a jump; it is how this has always

@@ -1337,10 +1337,10 @@ void test_a_network_forgotten_on_purpose_does_not_come_back(void) {
 // --- the button held through the start -------------------------------------
 
 // The supervisor as the board builds it, with the button held from the
-// splash on: forgetNetworks() comes before the first step.
+// splash on: resetWifi() comes before the first step.
 static void holdTheButtonThroughTheStart(void) {
   supervisor = new LinkSupervisor(logger, radio, settings, display);
-  supervisor->forgetNetworks();
+  supervisor->resetWifi();
 }
 
 void test_the_button_held_through_the_start_forgets_every_network(void) {

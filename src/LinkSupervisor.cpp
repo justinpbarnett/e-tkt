@@ -174,7 +174,7 @@ NearbyNetworks LinkSupervisor::nearby() {
   return nearby;
 }
 
-void LinkSupervisor::forgetNetworks() {
+void LinkSupervisor::resetWifi() {
   this->logger->log("Button held through the start: forgetting every network");
   this->settings->reset();
 
@@ -187,7 +187,7 @@ void LinkSupervisor::forgetNetworks() {
     this->logger->warn("Could not wipe the radio's own storage");
   }
   this->display->render(Screen::WIFI_RESET);
-  delay(WIFI_RESET_SHOWN_MS);
+  delay(WIFI_RESET_SCREEN_MS);
   ESP.restart();
 }
 

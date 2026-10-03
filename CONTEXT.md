@@ -367,8 +367,8 @@ The same request come again under its **command id** is not one: that is the pan
 The machine forgets every **remembered network**, goes back to join mode with the **router option** on, and throws away the password of its **own network**, so the next one is new.
 It also wipes the network the firmware before this one kept in the radio itself, so that firmware put back on does not find it there.
 Should that wipe fail, the network still does not come back on this firmware, which takes it over only once.
-The screen then says WI-FI RESET for `WIFI_RESET_SHOWN_MS`, and the machine restarts.
-`LinkSupervisor::forgetNetworks()`, before the link's first step, with `Radio::forgetInherited()` for the wipe, so `test/test_link` runs it against the `FakeRadio` and counts the restart.
+The screen then says WI-FI RESET for `WIFI_RESET_SCREEN_MS`, and the machine restarts.
+`LinkSupervisor::resetWifi()`, before the link's first step, with `Radio::forgetInherited()` for the wipe, so `test/test_link` runs it against the `FakeRadio` and counts the restart.
 
 **Own network** - the Wi-Fi network the machine runs itself, with the whole panel on it at `WIFI_OWN_ADDRESS`.
 Its name is `E-TKT-` and the **machine id**, so three machines on one table are three networks.

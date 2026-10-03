@@ -146,7 +146,7 @@ void setup() {
   // forget its networks. It restarts to do so, and nothing below runs.
   button->initialize();
   if (button->heldAtStart()) {
-    linkSupervisor->forgetNetworks();
+    linkSupervisor->resetWifi();
   }
 
   // Start the webserver and the link. Neither waits for a network, so the

@@ -289,10 +289,6 @@ constexpr int WIFI_OWN_CLIENTS = 4;
 // Where the panel is on the machine's own network.
 constexpr char WIFI_OWN_ADDRESS[] = "192.168.4.1";
 
-// How long the screen says WI-FI RESET before the machine restarts, once the
-// button held through the start has made it forget every network.
-constexpr uint32_t WIFI_RESET_SHOWN_MS = 1500;
-
 /**
  * The Button
  *
