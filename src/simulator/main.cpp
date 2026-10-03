@@ -7,8 +7,8 @@
 //   in   {"method": "POST", "path": "/api/tag", "query": {},
 //         "contentType": "application/json", "body": "{\"tag\": \"HI\"}"}
 //   out  {"code": 200, "contentType": "application/json",
-//         "body": "{\"result\":\"success\"}", "allow": null,
-//         "cacheControl": "no-store"}
+//         "body": "{\"result\":\"success\"}",
+//         "headers": [{"name": "Cache-Control", "value": "no-store"}]}
 //
 // A line is read the way ApiHandler in Network.cpp reads a request off the
 // webserver on the device. So every route, refusal, status and log line the
@@ -251,17 +251,21 @@ static bool readRequest(std::string& line, Request& request) {
  * @brief Writes one reply line to stdout, and sends it on its way.
  */
 static void writeReply(const Reply& reply) {
-  // Every string is stored as a pointer, so five members are all the
-  // document holds, however long the body.
-  StaticJsonDocument<JSON_OBJECT_SIZE(5)> doc;
+  // Every string is stored as a pointer, so the members and the headers are
+  // all the document holds, however long the body.
+  const size_t headers = reply.headers.size();
+  DynamicJsonDocument doc(JSON_OBJECT_SIZE(4) + JSON_ARRAY_SIZE(headers) +
+                          headers * JSON_OBJECT_SIZE(2));
   doc["code"] = reply.code;
   doc["contentType"] = reply.contentType;
   doc["body"] = reply.body.c_str();
-  // NULL, for every reply but a 405, is null.
-  doc["allow"] = reply.allow;
-  // NULL only for the simulator's own refusal below, which the device never
-  // sends.
-  doc["cacheControl"] = reply.cacheControl;
+  // As they are, in order, as the device's webserver sends them.
+  JsonArray sent = doc.createNestedArray("headers");
+  for (const Header& header : reply.headers) {
+    JsonObject one = sent.createNestedObject();
+    one["name"] = header.name;
+    one["value"] = header.value;
+  }
   std::string line;
   serializeJson(doc, line);
   line += '\n';
@@ -403,10 +407,11 @@ class Simulator {
   void answer(std::string& line) {
     Request request;
     if (!readRequest(line, request)) {
-      Reply refused = {500, "application/json",
+      Reply refused = {500,
+                       "application/json",
                        "{\"error\":\"The simulator could not read the "
                        "request\"}",
-                       NULL, NULL};
+                       {}};
       writeReply(refused);
       return;
     }

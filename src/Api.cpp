@@ -48,13 +48,14 @@ static const size_t MAX_ID_BYTES = 36;
 // rather than built, so it cannot run out of room itself.
 static Reply jsonReply(int code, const JsonDocument& doc) {
   if (doc.overflowed()) {
-    Reply failure = {500, JSON_TYPE,
+    Reply failure = {500,
+                     JSON_TYPE,
                      String("{\"error\":\"The reply is larger than the device "
                             "has room for\"}"),
-                     NULL, NULL};
+                     {}};
     return failure;
   }
-  Reply reply = {code, JSON_TYPE, jsonText(doc), NULL, NULL};
+  Reply reply = {code, JSON_TYPE, jsonText(doc), {}};
   return reply;
 }
 
@@ -72,7 +73,7 @@ static Reply wrongMethod(const Request& request, Method allowed) {
   const char* name = allowed == Method::POST ? "POST" : "GET";
   Reply reply =
       errorReply(405, String("Please use ") + name + " for " + request.path);
-  reply.allow = name;
+  reply.headers.push_back({"Allow", name});
   return reply;
 }
 
@@ -281,7 +282,7 @@ Reply Api::handle(const Request& request) {
   // True only at that moment: a kept copy would be the device as it was, and
   // the page would go on showing that. Said here of every reply, a refusal
   // and an answer given again too, so no route can leave it out.
-  reply.cacheControl = "no-store";
+  reply.headers.push_back({"Cache-Control", "no-store"});
   return reply;
 }
 
@@ -707,7 +708,7 @@ Reply Api::capabilities(const Request& /*request*/) {
 // /api/log at the machine's address in a phone browser to find out why the
 // last label came out wrong.
 Reply Api::log(const Request& /*request*/) {
-  Reply reply = {200, TEXT_TYPE, this->logger->recent(), NULL, NULL};
+  Reply reply = {200, TEXT_TYPE, this->logger->recent(), {}};
   return reply;
 }
 
@@ -888,7 +889,7 @@ Reply Api::changeNetwork(const Request& request, NetworkChange change) {
           return refused;
         }
         // Never sent: see above.
-        Reply changed = {200, JSON_TYPE, String(), NULL, NULL};
+        Reply changed = {200, JSON_TYPE, String(), {}};
         return changed;
       });
   return made.code == 200 ? this->network(request) : made;

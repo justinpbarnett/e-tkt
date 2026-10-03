@@ -714,15 +714,29 @@ class Program(unittest.TestCase):
 
     def test_a_line_that_is_not_a_request_is_answered_all_the_same(self):
         # One reply to every line, or the next reply would be read as this
-        # one's. Nothing says how long it may be kept, as the device never
-        # sends it.
+        # one's. It has no headers, not even how long it may be kept, as the
+        # device never sends it.
         done = self.run_program(lines=b"GET /api/status\n")
         self.assertEqual(0, done.returncode)
         self.assertEqual(
             [{"code": 500, "contentType": "application/json",
               "body": '{"error":"The simulator could not read the request"}',
-              "allow": None, "cacheControl": None}],
+              "headers": []}],
             [json.loads(line) for line in done.stdout.splitlines()])
+
+    def test_a_reply_line_carries_its_headers(self):
+        # As the device's webserver sends them, in order: the Allow of a
+        # 405, then the Cache-Control every reply has.
+        done = self.run_program(
+            lines=b'{"method": "GET", "path": "/api/cut", "query": {}, '
+                  b'"contentType": "", "body": ""}\n')
+        self.assertEqual(0, done.returncode)
+        [reply] = [json.loads(line) for line in done.stdout.splitlines()]
+        self.assertEqual(405, reply["code"])
+        self.assertEqual(
+            [{"name": "Allow", "value": "POST"},
+             {"name": "Cache-Control", "value": "no-store"}],
+            reply["headers"])
 
     def test_a_speed_that_is_not_above_zero_is_refused(self):
         for speed in ["0", "-1", "nan", "inf", "fast", ""]:

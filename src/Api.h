@@ -4,6 +4,7 @@
 
 #include <map>
 #include <mutex>
+#include <vector>
 
 #include "ArduinoJson.h"
 #include "ETKT.h"
@@ -41,6 +42,14 @@ struct Request {
 };
 
 /**
+ * @brief One header of a Reply, by the name HTTP gives it.
+ */
+struct Header {
+  const char* name;
+  const char* value;
+};
+
+/**
  * @brief The answer to a Request, for the webserver to send as it is.
  */
 struct Reply {
@@ -51,13 +60,12 @@ struct Reply {
 
   String body;
 
-  // For a 405, the method the path does answer to, which HTTP asks the
-  // reply to name in an Allow header. NULL for every other reply.
-  const char* allow;
-
-  // How long the browser may keep the reply, as the Cache-Control header
-  // carries it. Api::handle() says "no-store" of every reply it gives.
-  const char* cacheControl;
+  // Every header but the Content-Type, for the webserver to send as they
+  // are. Two of them are said:
+  //   - Allow, by a 405 alone: the method the path does answer to, which
+  //     HTTP asks the reply to name.
+  //   - Cache-Control, by every reply Api::handle() gives: "no-store".
+  std::vector<Header> headers;
 };
 
 /**

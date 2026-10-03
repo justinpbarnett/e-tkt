@@ -293,11 +293,9 @@ class Server:
             return await self.unanswered(request)
         if reply is None:
             return web.json_response({"error": self.gone()}, status=502)
-        headers = {"Content-Type": reply["contentType"]}
-        if reply["allow"] is not None:
-            headers["Allow"] = reply["allow"]
-        if reply["cacheControl"] is not None:
-            headers["Cache-Control"] = reply["cacheControl"]
+        headers = [("Content-Type", reply["contentType"])]
+        headers += [(header["name"], header["value"])
+                    for header in reply["headers"]]
         return web.Response(
             status=reply["code"], headers=headers,
             body=reply["body"].encode("utf-8", "surrogateescape"))

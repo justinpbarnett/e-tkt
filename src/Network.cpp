@@ -87,11 +87,8 @@ class ApiHandler : public AsyncWebHandler {
     const Reply reply = this->api->handle(asked);
     AsyncWebServerResponse* response =
         request->beginResponse(reply.code, reply.contentType, reply.body);
-    if (reply.allow != NULL) {
-      response->addHeader("Allow", reply.allow);
-    }
-    if (reply.cacheControl != NULL) {
-      response->addHeader("Cache-Control", reply.cacheControl);
+    for (const Header& header : reply.headers) {
+      response->addHeader(header.name, header.value);
     }
     request->send(response);
   }

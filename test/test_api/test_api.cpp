@@ -160,6 +160,19 @@ static const char* errorOf(const Reply& reply) {
   return json(reply)["error"].as<const char*>();
 }
 
+// The value of the reply's header by that name, or NULL for none. Fails the
+// test if the reply has it twice: a browser would read the two as one list.
+static const char* headerOf(const Reply& reply, const char* name) {
+  const char* value = NULL;
+  for (const Header& header : reply.headers) {
+    if (strcmp(header.name, name) == 0) {
+      TEST_ASSERT_NULL_MESSAGE(value, name);
+      value = header.value;
+    }
+  }
+  return value;
+}
+
 static bool endsWith(const std::string& text, const std::string& tail) {
   return text.size() >= tail.size() &&
          text.compare(text.size() - tail.size(), tail.size(), tail) == 0;
@@ -191,7 +204,7 @@ void test_a_command_asked_for_with_get_is_told_to_post(void) {
   const Reply reply = get("/api/cut");
 
   TEST_ASSERT_EQUAL_INT(405, reply.code);
-  TEST_ASSERT_EQUAL_STRING("POST", reply.allow);
+  TEST_ASSERT_EQUAL_STRING("POST", headerOf(reply, "Allow"));
   TEST_ASSERT_EQUAL_STRING("Please use POST for /api/cut", errorOf(reply));
   TEST_ASSERT_EQUAL_INT((int)Command::IDLE, (int)running());
 }
@@ -208,7 +221,7 @@ void test_a_method_nothing_answers_to_is_told_the_one_that_is(void) {
   const Reply reply = api->handle(request);
 
   TEST_ASSERT_EQUAL_INT(405, reply.code);
-  TEST_ASSERT_EQUAL_STRING("POST", reply.allow);
+  TEST_ASSERT_EQUAL_STRING("POST", headerOf(reply, "Allow"));
   TEST_ASSERT_EQUAL_INT((int)Command::IDLE, (int)running());
 }
 
@@ -217,14 +230,20 @@ void test_a_method_nothing_answers_to_is_told_the_one_that_is(void) {
 // refusal, and an answer given again, as well. The webserver sends it as a
 // Cache-Control header, and has no say in it.
 void test_no_reply_is_to_be_kept(void) {
-  TEST_ASSERT_EQUAL_STRING("no-store", get("/api/status").cacheControl);
-  TEST_ASSERT_EQUAL_STRING("no-store", get("/api/nothing").cacheControl);
-  TEST_ASSERT_EQUAL_STRING("no-store", get("/api/cut").cacheControl);
-  TEST_ASSERT_EQUAL_STRING("no-store", post("/api/tag", "{}").cacheControl);
+  const char* const cacheControl = "Cache-Control";
   TEST_ASSERT_EQUAL_STRING("no-store",
-                           postUnder("press-1", "/api/cut", "{}").cacheControl);
+                           headerOf(get("/api/status"), cacheControl));
   TEST_ASSERT_EQUAL_STRING("no-store",
-                           postUnder("press-1", "/api/cut", "{}").cacheControl);
+                           headerOf(get("/api/nothing"), cacheControl));
+  TEST_ASSERT_EQUAL_STRING("no-store", headerOf(get("/api/cut"), cacheControl));
+  TEST_ASSERT_EQUAL_STRING("no-store",
+                           headerOf(post("/api/tag", "{}"), cacheControl));
+  TEST_ASSERT_EQUAL_STRING(
+      "no-store",
+      headerOf(postUnder("press-1", "/api/cut", "{}"), cacheControl));
+  TEST_ASSERT_EQUAL_STRING(
+      "no-store",
+      headerOf(postUnder("press-1", "/api/cut", "{}"), cacheControl));
 }
 
 // --- commands ---------------------------------------------------------------
@@ -813,7 +832,7 @@ void test_the_status_posted_to_is_told_to_get(void) {
   const Reply reply = post("/api/status", "{}");
 
   TEST_ASSERT_EQUAL_INT(405, reply.code);
-  TEST_ASSERT_EQUAL_STRING("GET", reply.allow);
+  TEST_ASSERT_EQUAL_STRING("GET", headerOf(reply, "Allow"));
   TEST_ASSERT_EQUAL_STRING("Please use GET for /api/status", errorOf(reply));
 }
 
@@ -950,7 +969,7 @@ void test_the_capabilities_posted_to_are_told_to_get(void) {
   const Reply reply = post("/api/capabilities", "{}");
 
   TEST_ASSERT_EQUAL_INT(405, reply.code);
-  TEST_ASSERT_EQUAL_STRING("GET", reply.allow);
+  TEST_ASSERT_EQUAL_STRING("GET", headerOf(reply, "Allow"));
   TEST_ASSERT_EQUAL_STRING("Please use GET for /api/capabilities",
                            errorOf(reply));
 }
@@ -1040,7 +1059,7 @@ void test_a_stop_asked_for_with_get_is_told_to_post(void) {
   const Reply reply = get("/api/stop");
 
   TEST_ASSERT_EQUAL_INT(405, reply.code);
-  TEST_ASSERT_EQUAL_STRING("POST", reply.allow);
+  TEST_ASSERT_EQUAL_STRING("POST", headerOf(reply, "Allow"));
   TEST_ASSERT_TRUE(machine->etkt.createStatus().stop == PendingStop::NONE);
 }
 
@@ -1373,7 +1392,7 @@ void test_the_log_posted_to_is_told_to_get(void) {
   const Reply reply = post("/api/log", "{}");
 
   TEST_ASSERT_EQUAL_INT(405, reply.code);
-  TEST_ASSERT_EQUAL_STRING("GET", reply.allow);
+  TEST_ASSERT_EQUAL_STRING("GET", headerOf(reply, "Allow"));
   TEST_ASSERT_EQUAL_STRING("Please use GET for /api/log", errorOf(reply));
 }
 
@@ -1447,7 +1466,7 @@ void test_an_estimate_is_asked_for_with_a_post(void) {
   const Reply reply = get("/api/tag/estimate");
 
   TEST_ASSERT_EQUAL_INT(405, reply.code);
-  TEST_ASSERT_EQUAL_STRING("POST", reply.allow);
+  TEST_ASSERT_EQUAL_STRING("POST", headerOf(reply, "Allow"));
   TEST_ASSERT_EQUAL_STRING("Please use POST for /api/tag/estimate",
                            errorOf(reply));
 }
@@ -1765,7 +1784,7 @@ void test_what_says_how_the_machine_is_reached_is_asked_for_with_a_get(void) {
     const Reply reply = post(path, "{}");
 
     TEST_ASSERT_EQUAL_INT_MESSAGE(405, reply.code, path);
-    TEST_ASSERT_EQUAL_STRING_MESSAGE("GET", reply.allow, path);
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("GET", headerOf(reply, "Allow"), path);
   }
 }
 
@@ -2058,7 +2077,7 @@ void test_what_changes_the_network_is_asked_for_with_a_post(void) {
     const Reply reply = get(path);
 
     TEST_ASSERT_EQUAL_INT_MESSAGE(405, reply.code, path);
-    TEST_ASSERT_EQUAL_STRING_MESSAGE("POST", reply.allow, path);
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("POST", headerOf(reply, "Allow"), path);
   }
   TEST_ASSERT_FALSE(supervisor->nearby().listening);
 }
