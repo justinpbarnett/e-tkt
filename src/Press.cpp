@@ -21,8 +21,6 @@ Press::~Press() {
 }
 
 void Press::initialize() {
-  // set  servo
-  this->servo->attach(this->pin);
   this->rest();
   delay(100);
 }
@@ -75,6 +73,7 @@ void Press::press(bool strong, int force, bool slow) {
 
   this->logger->log("Pressing...");
 
+  this->engage();
   const int stepMs = rampStepMs(strong, slow);
 
   // The press runs from REST_ANGLE to STAMP_ANGLE -- the measured
@@ -101,6 +100,10 @@ void Press::press(bool strong, int force, bool slow) {
 
   this->sweep(peakAngle, REST_ANGLE, stepMs);
   this->settle(REST_ANGLE, PRESS_DWELL_MS);
+  // Back at rest, so nothing needs the servo until the next press. Driven,
+  // it would go on drawing current all the while the wheel turns and the
+  // tape feeds, which is most of a label.
+  this->release();
 
   this->pressLed->on(LIGHT_DIM);  // dims the char led
 }
@@ -114,10 +117,35 @@ unsigned long Press::pressUs(bool strong, int force) const {
          sweepUs(peakAngle, REST_ANGLE, stepMs) + settleUs(PRESS_DWELL_MS);
 }
 
-void Press::rest() { this->servo->write(REST_ANGLE); }
+void Press::rest() {
+  this->engage();
+  this->servo->write(REST_ANGLE);
+}
 
-void Press::hold(int angle) { this->servo->write(angle); }
+void Press::park() {
+  if (this->engaged) {
+    this->settle(REST_ANGLE, PRESS_DWELL_MS);
+  }
+  this->release();
+}
 
-void Press::release() { this->servo->detach(); }
+void Press::hold(int angle) {
+  this->engage();
+  this->servo->write(angle);
+}
 
-void Press::engage() { this->servo->attach(this->pin); }
+void Press::release() {
+  if (!this->engaged) {
+    return;
+  }
+  this->servo->detach();
+  this->engaged = false;
+}
+
+void Press::engage() {
+  if (this->engaged) {
+    return;
+  }
+  this->servo->attach(this->pin);
+  this->engaged = true;
+}

@@ -117,6 +117,7 @@ void test_a_parked_wheel_turned_by_hand_still_prints_in_the_right_slot(void) {
 
   TEST_ASSERT_FALSE(charStepper->energized);
   TEST_ASSERT_EQUAL_INT(REST_ANGLE, pressServo->angles().back());
+  TEST_ASSERT_FALSE(pressServo->attached);
   charStepper->shaft += 500;
   printhead->stamp("A", calibration);
   TEST_ASSERT_EQUAL_INT32(slotOfA, strokes->strokes.back().bearing);

@@ -147,8 +147,8 @@ class Printhead {
   void rest();
 
   /**
-   * @brief Puts the printhead away at the end of a job: the press up, and
-   * the wheel's coils off.
+   * @brief Puts the printhead away at the end of a job: the press up and its
+   * servo let go, and the wheel's coils off.
    *
    * A wheel let go can be turned by hand, so the next character homes
    * before it counts from anywhere.

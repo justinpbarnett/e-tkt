@@ -30,6 +30,7 @@ A run homes once more before its first label, so a lost wheel stops it before an
 **Press** - the servo-driven arm that drives the tape into the daisy wheel.
 `Press`.
 Its angles are geometry rather than policy, so the arithmetic lives apart from the driver in `PressGeometry.h`.
+It drives its servo only while it moves, and lets it go once it is back at rest, because a servo held at an angle goes on drawing current and heats up.
 
 **Rest angle / stamp angle** - where the press sits between characters, and where it would sit at full force.
 A LOW angle drives the press *into* the wheel, which is the opposite of what the numbers suggest at a glance.

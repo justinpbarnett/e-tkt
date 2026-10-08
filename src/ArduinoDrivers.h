@@ -19,6 +19,7 @@
 class ArduinoServo : public ServoDriver {
  private:
   Servo servo;
+  int pin = -1;
 
  public:
   void attach(int pin) override;

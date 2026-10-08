@@ -63,6 +63,10 @@ class Press {
   // outlives every module, so nothing here deletes it.
   ServoDriver* servo;
   Light* pressLed;
+  // Whether the servo is being driven. Attaching a servo that is already
+  // driven sets its PWM timer up again under the running pulse, so engage()
+  // and release() only act on a change.
+  bool engaged = false;
 
   /**
    * @brief Drives the servo from one angle to another one degree at a time,
@@ -87,7 +91,8 @@ class Press {
   void initialize();
 
   /**
-   * @brief Drives the press into the daisy wheel and back out to rest.
+   * @brief Drives the press into the daisy wheel and back out to rest, then
+   * lets go of the servo.
    *
    * force (1-9, clamped) is the only argument that changes how far in the
    * press travels: PRESS_BITE_AT_MAX_FORCE degrees past STAMP_ANGLE at 9,
@@ -110,9 +115,20 @@ class Press {
   unsigned long pressUs(bool strong, int force) const;
 
   /**
-   * @brief Moves the press to the rest position, away from the daisy wheel
+   * @brief Moves the press to the rest position, away from the daisy wheel,
+   * and keeps driving it there until the next press or park().
    */
   void rest();
+
+  /**
+   * @brief Holds the press at rest long enough to get there, if the servo is
+   * being driven, then lets go of it. The end of a job.
+   *
+   * A servo held at rest is still a servo working: an MG996R hunts round the
+   * angle it is told, and that current is heat it does not need. Let go, it
+   * draws nothing, and its gears hold the light press arm where it is.
+   */
+  void park();
 
   /**
    * @brief Bench calibration only: drives the servo to an arbitrary angle and
@@ -124,18 +140,20 @@ class Press {
   void hold(int angle);
 
   /**
-   * @brief Bench calibration only: stops driving the servo so the horn can be
-   * back-driven by hand. A hobby servo has no position feedback, so nothing
-   * can be read back from a horn posed this way -- it is for deciding the
-   * geometry, not for measuring it.
+   * @brief Stops driving the servo, wherever the horn is. press() and park()
+   * do this at rest.
    *
-   * Prefer this over forcing a live servo: back-driving one that is actively
-   * holding position strips its gears.
+   * On the bench it is also what lets the horn be back-driven by hand. A
+   * hobby servo has no position feedback, so nothing can be read back from a
+   * horn posed this way -- it is for deciding the geometry, not for measuring
+   * it. Prefer this over forcing a live servo: back-driving one that is
+   * actively holding position strips its gears.
    */
   void release();
 
   /**
-   * @brief Resumes driving the servo after release().
+   * @brief Drives the servo again after release(). It is then told nothing
+   * until the next write, which press() and rest() make at once.
    */
   void engage();
 };

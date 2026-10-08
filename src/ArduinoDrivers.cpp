@@ -2,10 +2,49 @@
 
 #include <AccelStepper.h>
 #include <ESP32Servo.h>
+#include <soc/ledc_struct.h>
 
-void ArduinoServo::attach(int pin) { this->servo.attach(pin); }
+void ArduinoServo::attach(int pin) {
+  this->pin = pin;
+  this->servo.attach(pin);
+}
 
-void ArduinoServo::detach() { this->servo.detach(); }
+// The LEDC channel driving `pin`, or -1 if none is.
+static int channelOn(int pin) {
+  for (int chan = 0; chan < NUM_PWM; chan++) {
+    ESP32PWM* pwm = ESP32PWM::ChannelUsed[chan];
+    if (pwm != NULL && pwm->attached() && pwm->getPin() == pin) {
+      return chan;
+    }
+  }
+  return -1;
+}
+
+// Waits for the pulse going out on `chan`, if one is, to end. Cut off part
+// way, a pulse is a shorter one, and a shorter pulse is an angle further in,
+// toward the tape, which the servo would go to as it was let go. A pulse is at
+// most 2.5 ms of every 20, so this waits no longer than that, and the next one
+// is more than 17 ms away when it returns. The channel and its timer are
+// mapped as esp32-hal-ledc.c maps them, and the output is high from 0 to the
+// duty.
+static void waitForThePulseToEnd(int chan) {
+  const int group = chan / 8;
+  const int timer = (chan / 2) % 4;
+  const uint32_t duty =
+      LEDC.channel_group[group].channel[chan % 8].duty_rd.duty_read >> 4;
+  const unsigned long start = micros();
+  while (LEDC.timer_group[group].timer[timer].value.timer_cnt < duty &&
+         micros() - start < 3000) {
+  }
+}
+
+void ArduinoServo::detach() {
+  const int chan = channelOn(this->pin);
+  if (chan >= 0) {
+    waitForThePulseToEnd(chan);
+  }
+  this->servo.detach();
+}
 
 void ArduinoServo::write(int angle) { this->servo.write(angle); }
 

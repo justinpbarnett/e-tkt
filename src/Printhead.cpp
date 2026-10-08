@@ -23,7 +23,7 @@ void Printhead::initialize(const Calibration& calibration) {
   this->press->initialize();
   this->daisywheel->initialize();
   this->daisywheel->home(calibration.align);
-  this->daisywheel->deenergize();
+  this->park();
 }
 
 Turn Printhead::stopIfLost(Turn turn) {
@@ -122,7 +122,7 @@ void Printhead::rest() { this->press->rest(); }
 
 void Printhead::park() {
   this->daisywheel->deenergize();
-  this->press->rest();
+  this->press->park();
 }
 
 unsigned long Printhead::homeUs(const Calibration& calibration) const {

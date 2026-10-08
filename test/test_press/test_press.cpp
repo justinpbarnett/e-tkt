@@ -262,6 +262,71 @@ void test_the_char_led_goes_bright_for_the_press_and_dim_after(void) {
                            "the LED must be lit before the press, not after");
 }
 
+// --- letting go ----------------------------------------------------------
+// A servo that is driven at rest still draws current, hunting round the angle
+// it is told, so the press drives it only while it moves.
+
+void test_a_press_lets_go_of_the_servo_once_it_is_back_at_rest(void) {
+  initializeAndClear();
+  press->press(false, 5, false);
+  TEST_ASSERT_FALSE(servo->attached);
+  TEST_ASSERT_EQUAL_INT(ServoCall::DETACH, servo->calls.back().kind);
+  TEST_ASSERT_EQUAL_INT(REST_ANGLE, servo->angles().back());
+  // Let go only once it has had the time to get there.
+  TEST_ASSERT_EQUAL_UINT32(PRESS_DWELL_MS, servo->longestHoldAt(REST_ANGLE));
+}
+
+void test_a_press_drives_a_let_go_servo_before_it_writes(void) {
+  initializeAndClear();
+  press->press(false, 5, false);
+  servo->clear();
+  press->press(false, 5, false);
+  TEST_ASSERT_EQUAL_INT(ServoCall::ATTACH, servo->calls[0].kind);
+  TEST_ASSERT_EQUAL_INT(SERVO_PIN, servo->calls[0].value);
+}
+
+void test_rest_drives_a_let_go_servo_again(void) {
+  initializeAndClear();
+  press->press(false, 5, false);
+  servo->clear();
+  press->rest();
+  TEST_ASSERT_EQUAL_INT(2, (int)servo->calls.size());
+  TEST_ASSERT_EQUAL_INT(ServoCall::ATTACH, servo->calls[0].kind);
+  TEST_ASSERT_EQUAL_INT(REST_ANGLE, servo->calls[1].value);
+  TEST_ASSERT_TRUE(servo->attached);
+}
+
+void test_park_brings_a_driven_press_to_rest_before_letting_go(void) {
+  initializeAndClear();
+  press->hold(STAMP_ANGLE);
+  press->park();
+  TEST_ASSERT_FALSE(servo->attached);
+  TEST_ASSERT_EQUAL_INT(ServoCall::DETACH, servo->calls.back().kind);
+  TEST_ASSERT_EQUAL_INT(REST_ANGLE, servo->angles().back());
+  TEST_ASSERT_EQUAL_UINT32(PRESS_DWELL_MS, servo->longestHoldAt(REST_ANGLE));
+}
+
+void test_park_after_a_press_neither_moves_nor_waits(void) {
+  initializeAndClear();
+  press->press(false, 5, false);
+  servo->clear();
+  const unsigned long start = millis();
+  press->park();
+  TEST_ASSERT_EQUAL_INT(0, (int)servo->calls.size());
+  TEST_ASSERT_EQUAL_UINT32(start, millis());
+}
+
+// Attaching a servo that is already driven sets its PWM timer up again under
+// the running pulse.
+void test_engage_and_release_act_only_on_a_change(void) {
+  initializeAndClear();
+  press->engage();
+  TEST_ASSERT_EQUAL_INT(0, (int)servo->calls.size());
+  press->release();
+  press->release();
+  TEST_ASSERT_EQUAL_INT(1, (int)servo->calls.size());
+}
+
 // --- the bench paths -----------------------------------------------------
 
 void test_hold_writes_a_raw_angle_the_geometry_would_refuse(void) {
@@ -276,6 +341,15 @@ void test_release_stops_driving_the_servo(void) {
   press->release();
   TEST_ASSERT_FALSE(servo->attached);
   TEST_ASSERT_EQUAL_INT(ServoCall::DETACH, servo->calls[0].kind);
+}
+
+void test_hold_drives_a_let_go_servo_first(void) {
+  initializeAndClear();
+  press->release();
+  servo->clear();
+  press->hold(120);
+  TEST_ASSERT_EQUAL_INT(ServoCall::ATTACH, servo->calls[0].kind);
+  TEST_ASSERT_EQUAL_INT(120, servo->calls[1].value);
 }
 
 void test_engage_drives_the_same_pin_again(void) {
@@ -314,7 +388,14 @@ int main(int, char**) {
   RUN_TEST(test_the_estimate_of_a_press_is_how_long_it_takes);
   RUN_TEST(test_a_quick_press_takes_half_a_second_and_a_strong_one_longer);
   RUN_TEST(test_the_char_led_goes_bright_for_the_press_and_dim_after);
+  RUN_TEST(test_a_press_lets_go_of_the_servo_once_it_is_back_at_rest);
+  RUN_TEST(test_a_press_drives_a_let_go_servo_before_it_writes);
+  RUN_TEST(test_rest_drives_a_let_go_servo_again);
+  RUN_TEST(test_park_brings_a_driven_press_to_rest_before_letting_go);
+  RUN_TEST(test_park_after_a_press_neither_moves_nor_waits);
+  RUN_TEST(test_engage_and_release_act_only_on_a_change);
   RUN_TEST(test_hold_writes_a_raw_angle_the_geometry_would_refuse);
+  RUN_TEST(test_hold_drives_a_let_go_servo_first);
   RUN_TEST(test_release_stops_driving_the_servo);
   RUN_TEST(test_engage_drives_the_same_pin_again);
   RUN_TEST(test_rest_is_a_single_write_and_does_not_ramp);

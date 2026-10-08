@@ -26,7 +26,8 @@
  * against its stop. Reaching an angle takes real time, which is why Press
  * writes the same angle repeatedly rather than writing it once and moving on.
  *
- * detach() stops driving the horn so it can be back-driven by hand. A servo
+ * detach() stops driving the horn. It then draws no current, which is why
+ * the press lets go of it at rest, and it can be back-driven by hand. A servo
  * that is still driving will strip its own gears if forced.
  */
 class ServoDriver {
