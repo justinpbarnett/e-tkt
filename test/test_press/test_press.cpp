@@ -171,10 +171,10 @@ void test_a_strong_press_holds_two_ramp_steps_longer_than_the_dwell(void) {
                            servo->longestHoldAt(peak));
 }
 
-void test_the_long_dwell_is_more_than_ten_times_the_short_one(void) {
+void test_the_long_dwell_is_eight_times_the_short_one(void) {
   // Press.h's warning depends on this ratio. If someone raises PRESS_PEAK_MS
   // without looking at PRESS_TEST_DWELL_MS, the comment stops being true.
-  TEST_ASSERT_TRUE(PRESS_TEST_DWELL_MS > 10 * PRESS_PEAK_MS);
+  TEST_ASSERT_EQUAL_INT(8 * PRESS_PEAK_MS, PRESS_TEST_DWELL_MS);
 }
 
 // --- what force does and does not change ---------------------------------
@@ -238,13 +238,12 @@ void test_the_estimate_of_a_press_is_how_long_it_takes(void) {
   }
 }
 
-void test_a_quick_press_takes_under_half_a_second_and_a_strong_one_longer(
-    void) {
+void test_a_quick_press_takes_half_a_second_and_a_strong_one_longer(void) {
   // By hand, at force 5 on these angles: the peak is 11 degrees, 39 from
-  // rest. Quick is the hold at the peak, 150ms, and the hold at rest, 250ms.
+  // rest. Quick is the hold at the peak and the hold at rest, 250ms each.
   // Strong adds both ramps, 40 writes each 4ms apart.
-  TEST_ASSERT_EQUAL_UINT32(400000UL, press->pressUs(false, 5));
-  TEST_ASSERT_EQUAL_UINT32(720000UL, press->pressUs(true, 5));
+  TEST_ASSERT_EQUAL_UINT32(500000UL, press->pressUs(false, 5));
+  TEST_ASSERT_EQUAL_UINT32(820000UL, press->pressUs(true, 5));
 }
 
 // --- the character LED ---------------------------------------------------
@@ -416,12 +415,11 @@ int main(int, char**) {
   RUN_TEST(test_a_printing_press_holds_at_peak_for_the_normal_dwell);
   RUN_TEST(test_the_calibration_press_holds_for_the_long_dwell);
   RUN_TEST(test_a_strong_press_holds_two_ramp_steps_longer_than_the_dwell);
-  RUN_TEST(test_the_long_dwell_is_more_than_ten_times_the_short_one);
+  RUN_TEST(test_the_long_dwell_is_eight_times_the_short_one);
   RUN_TEST(test_slow_and_strong_change_timing_not_travel);
   RUN_TEST(test_a_strong_press_eases_through_each_degree);
   RUN_TEST(test_the_estimate_of_a_press_is_how_long_it_takes);
-  RUN_TEST(
-      test_a_quick_press_takes_under_half_a_second_and_a_strong_one_longer);
+  RUN_TEST(test_a_quick_press_takes_half_a_second_and_a_strong_one_longer);
   RUN_TEST(test_the_char_led_goes_bright_for_the_press_and_dim_after);
   RUN_TEST(test_a_press_goes_on_driving_the_servo_at_rest);
   RUN_TEST(test_a_press_drives_a_let_go_servo_at_rest_before_it_moves_it);

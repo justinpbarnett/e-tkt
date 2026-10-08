@@ -24,7 +24,7 @@
 // pad -- which is impossible to judge on a moving arm, so the useful test is
 // a still one.
 //
-// This is more than ten times the normal hold, and holding the press against
+// This is eight times the normal hold, and holding the press against
 // the wheel means the servo is drawing stall current the whole time, which is
 // the load that wears an MG996R's nylon gears and reams the printed P_press
 // splines. It is only safe because the one caller that passes slow=true
@@ -34,11 +34,11 @@
 
 // How long a printing press holds at the peak. For most of it the servo is
 // pressing the tape into the wheel at stall current, which is what heats it
-// and wears its gears, so the hold is kept short: 150ms rather than the 250
-// the upstream firmware held for. Unloaded at 6V, an MG996R takes about 90ms
-// of it to turn the 39 degrees from rest to a force 5 peak, which leaves about
-// 60ms pressing.
-#define PRESS_PEAK_MS 150
+// and wears its gears, but the tape needs it: at 150ms, machine #1 left only
+// a shadow of each letter. Unloaded at 6V, an MG996R takes about 90ms of the
+// hold to turn the 39 degrees from rest to a force 5 peak, and slows as it
+// meets the tape.
+#define PRESS_PEAK_MS 250
 // How long the press is held at rest after a press, so it is all the way back
 // up before its servo is let go and the wheel turns.
 #define PRESS_REST_MS 250
