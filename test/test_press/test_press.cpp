@@ -265,30 +265,51 @@ void test_the_char_led_goes_bright_for_the_press_and_dim_after(void) {
 
 // --- letting go ----------------------------------------------------------
 // A servo that is driven at rest still draws current, hunting round the angle
-// it is told, so the press drives it only while it moves.
+// it is told, so the press lets it go between jobs. Not between presses: for
+// a while after its pulses come back, an MG996R moves only a little.
 
-void test_a_press_lets_go_of_the_servo_once_it_is_back_at_rest(void) {
+void test_a_press_goes_on_driving_the_servo_at_rest(void) {
   initializeAndClear();
   press->press(false, 5, false);
-  TEST_ASSERT_FALSE(servo->attached);
-  TEST_ASSERT_EQUAL_INT(ServoCall::DETACH, servo->calls.back().kind);
-  TEST_ASSERT_EQUAL_INT(REST_ANGLE, servo->angles().back());
-  // Let go only once it has had the time to get there.
-  TEST_ASSERT_EQUAL_UINT32(PRESS_REST_MS, servo->longestHoldAt(REST_ANGLE));
+  TEST_ASSERT_TRUE(servo->attached);
+  TEST_ASSERT_EQUAL_INT(ServoCall::WRITE, servo->calls.back().kind);
+  TEST_ASSERT_EQUAL_INT(REST_ANGLE, servo->calls.back().value);
 }
 
-void test_a_press_drives_a_let_go_servo_before_it_writes(void) {
+void test_a_press_drives_a_let_go_servo_at_rest_before_it_moves_it(void) {
   initializeAndClear();
-  press->press(false, 5, false);
+  press->release();
   servo->clear();
   press->press(false, 5, false);
   TEST_ASSERT_EQUAL_INT(ServoCall::ATTACH, servo->calls[0].kind);
   TEST_ASSERT_EQUAL_INT(SERVO_PIN, servo->calls[0].value);
+  TEST_ASSERT_EQUAL_INT(REST_ANGLE, servo->calls[1].value);
+  // The wake and the first degree of the ramp, which writes rest again.
+  unsigned long firstMove = 0;
+  for (size_t i = 0; i < servo->calls.size(); i++) {
+    if (servo->calls[i].kind == ServoCall::WRITE &&
+        servo->calls[i].value != REST_ANGLE) {
+      firstMove = servo->calls[i].atMs;
+      break;
+    }
+  }
+  TEST_ASSERT_EQUAL_UINT32(PRESS_WAKE_MS + PRESS_STEP_QUICK_MS,
+                           firstMove - servo->calls[1].atMs);
+}
+
+void test_a_press_of_a_driven_servo_does_not_wait_to_wake_it(void) {
+  initializeAndClear();
+  press->press(false, 5, false);
+  servo->clear();
+  const unsigned long start = millis();
+  press->press(false, 5, false);
+  TEST_ASSERT_EQUAL_UINT32(press->pressUs(false, 5) / 1000, millis() - start);
+  TEST_ASSERT_EQUAL_INT(ServoCall::WRITE, servo->calls[0].kind);
 }
 
 void test_rest_drives_a_let_go_servo_again(void) {
   initializeAndClear();
-  press->press(false, 5, false);
+  press->release();
   servo->clear();
   press->rest();
   TEST_ASSERT_EQUAL_INT(2, (int)servo->calls.size());
@@ -307,9 +328,21 @@ void test_park_brings_a_driven_press_to_rest_before_letting_go(void) {
   TEST_ASSERT_EQUAL_UINT32(PRESS_REST_MS, servo->longestHoldAt(REST_ANGLE));
 }
 
-void test_park_after_a_press_neither_moves_nor_waits(void) {
+// A press ends settled at rest, so the end of a job need not wait again.
+void test_park_after_a_press_lets_go_at_once(void) {
   initializeAndClear();
   press->press(false, 5, false);
+  servo->clear();
+  const unsigned long start = millis();
+  press->park();
+  TEST_ASSERT_EQUAL_INT(1, (int)servo->calls.size());
+  TEST_ASSERT_EQUAL_INT(ServoCall::DETACH, servo->calls[0].kind);
+  TEST_ASSERT_EQUAL_UINT32(start, millis());
+}
+
+void test_park_of_a_let_go_press_neither_moves_nor_waits(void) {
+  initializeAndClear();
+  press->release();
   servo->clear();
   const unsigned long start = millis();
   press->park();
@@ -390,11 +423,13 @@ int main(int, char**) {
   RUN_TEST(
       test_a_quick_press_takes_under_half_a_second_and_a_strong_one_longer);
   RUN_TEST(test_the_char_led_goes_bright_for_the_press_and_dim_after);
-  RUN_TEST(test_a_press_lets_go_of_the_servo_once_it_is_back_at_rest);
-  RUN_TEST(test_a_press_drives_a_let_go_servo_before_it_writes);
+  RUN_TEST(test_a_press_goes_on_driving_the_servo_at_rest);
+  RUN_TEST(test_a_press_drives_a_let_go_servo_at_rest_before_it_moves_it);
+  RUN_TEST(test_a_press_of_a_driven_servo_does_not_wait_to_wake_it);
   RUN_TEST(test_rest_drives_a_let_go_servo_again);
   RUN_TEST(test_park_brings_a_driven_press_to_rest_before_letting_go);
-  RUN_TEST(test_park_after_a_press_neither_moves_nor_waits);
+  RUN_TEST(test_park_after_a_press_lets_go_at_once);
+  RUN_TEST(test_park_of_a_let_go_press_neither_moves_nor_waits);
   RUN_TEST(test_engage_and_release_act_only_on_a_change);
   RUN_TEST(test_hold_writes_a_raw_angle_the_geometry_would_refuse);
   RUN_TEST(test_hold_drives_a_let_go_servo_first);

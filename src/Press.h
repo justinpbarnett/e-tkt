@@ -42,6 +42,11 @@
 // How long the press is held at rest after a press, so it is all the way back
 // up before its servo is let go and the wheel turns.
 #define PRESS_REST_MS 250
+// How long a press drives a servo that was let go at rest before it moves it.
+// For a while after its pulses come back, an MG996R moves only a little: on
+// machine #1, a press straight after one was a twitch. A job's rest() and
+// REST_SETTLE_MS give it this long already.
+#define PRESS_WAKE_MS 500
 #define PRESS_SETTLE_STEP_MS 50
 
 // How long the ramp waits between one degree and the next.
@@ -75,6 +80,13 @@ class Press {
   // driven sets its PWM timer up again under the running pulse, so engage()
   // and release() only act on a change.
   bool engaged = false;
+  // The angle the servo was last told, or -1 before the first.
+  int toldAngle = -1;
+
+  /**
+   * @brief Tells the servo an angle, and notes it in toldAngle.
+   */
+  void write(int angle);
 
   /**
    * @brief Drives the servo from one angle to another one degree at a time,
@@ -99,8 +111,9 @@ class Press {
   void initialize();
 
   /**
-   * @brief Drives the press into the daisy wheel and back out to rest, then
-   * lets go of the servo.
+   * @brief Drives the press into the daisy wheel and back out to rest, and
+   * keeps driving it there. A servo that was let go is driven at rest for
+   * PRESS_WAKE_MS first.
    *
    * force (1-9, clamped) is the only argument that changes how far in the
    * press travels: PRESS_BITE_AT_MAX_FORCE degrees past STAMP_ANGLE at 9,
@@ -129,8 +142,9 @@ class Press {
   void rest();
 
   /**
-   * @brief Holds the press at rest long enough to get there, if the servo is
-   * being driven, then lets go of it. The end of a job.
+   * @brief Brings the press back to rest, if the servo is being driven
+   * anywhere else, then lets go of it. The end of a job, by when a press or
+   * the job's rest() has normally left it at rest already.
    *
    * A servo held at rest is still a servo working: an MG996R hunts round the
    * angle it is told, and that current is heat it does not need. Let go, it
@@ -148,8 +162,8 @@ class Press {
   void hold(int angle);
 
   /**
-   * @brief Stops driving the servo, wherever the horn is. press() and park()
-   * do this at rest.
+   * @brief Stops driving the servo, wherever the horn is. park() does this at
+   * rest, between jobs.
    *
    * On the bench it is also what lets the horn be back-driven by hand. A
    * hobby servo has no position feedback, so nothing can be read back from a

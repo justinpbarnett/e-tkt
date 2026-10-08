@@ -552,6 +552,8 @@ static unsigned long estimateOf(const Stamping& stamping, unsigned long tapeUs,
 // And how long it takes, from the wheel at rest at `from`.
 static unsigned long timeOf(const Stamping& stamping,
                             const Calibration& calibration) {
+  // As a job does: its rest() drives the press before anything it times.
+  printhead->rest();
   printhead->turnTo(stamping.from, calibration);
   return stamping.cutting()
              ? timeCut(stamping.feeds, stamping.presses, calibration)

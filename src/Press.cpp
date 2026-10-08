@@ -35,18 +35,18 @@ void Press::sweep(int fromAngle, int toAngle, int stepMs) {
   // path can leave it somewhere else, and it keeps the ramp's total duration
   // at (steps + 1) * stepMs.
   int pos = fromAngle;
-  this->servo->write(pos);
+  this->write(pos);
   delay(stepMs);
   for (int i = 0; i < steps; i++) {
     pos += dir;
-    this->servo->write(pos);
+    this->write(pos);
     delay(stepMs);
   }
 }
 
 void Press::settle(int angle, int holdMs) {
   for (int elapsed = 0; elapsed < holdMs; elapsed += PRESS_SETTLE_STEP_MS) {
-    this->servo->write(angle);
+    this->write(angle);
     delay(PRESS_SETTLE_STEP_MS);
   }
 }
@@ -73,7 +73,10 @@ void Press::press(bool strong, int force, bool slow) {
 
   this->logger->log("Pressing...");
 
-  this->engage();
+  if (!this->engaged) {
+    this->engage();
+    this->settle(REST_ANGLE, PRESS_WAKE_MS);
+  }
   const int stepMs = rampStepMs(strong, slow);
 
   // The press runs from REST_ANGLE to STAMP_ANGLE -- the measured
@@ -100,10 +103,6 @@ void Press::press(bool strong, int force, bool slow) {
 
   this->sweep(peakAngle, REST_ANGLE, stepMs);
   this->settle(REST_ANGLE, PRESS_REST_MS);
-  // Back at rest, so nothing needs the servo until the next press. Driven,
-  // it would go on drawing current all the while the wheel turns and the
-  // tape feeds, which is most of a label.
-  this->release();
 
   this->pressLed->on(LIGHT_DIM);  // dims the char led
 }
@@ -117,13 +116,18 @@ unsigned long Press::pressUs(bool strong, int force) const {
          sweepUs(peakAngle, REST_ANGLE, stepMs) + settleUs(PRESS_REST_MS);
 }
 
+void Press::write(int angle) {
+  this->servo->write(angle);
+  this->toldAngle = angle;
+}
+
 void Press::rest() {
   this->engage();
-  this->servo->write(REST_ANGLE);
+  this->write(REST_ANGLE);
 }
 
 void Press::park() {
-  if (this->engaged) {
+  if (this->engaged && this->toldAngle != REST_ANGLE) {
     this->settle(REST_ANGLE, PRESS_REST_MS);
   }
   this->release();
@@ -131,7 +135,7 @@ void Press::park() {
 
 void Press::hold(int angle) {
   this->engage();
-  this->servo->write(angle);
+  this->write(angle);
 }
 
 void Press::release() {
