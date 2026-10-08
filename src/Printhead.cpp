@@ -110,7 +110,7 @@ void Printhead::testPress(const Calibration& calibration) {
   //
   // It must stay at minimum force. This is the only path that passes
   // slow=true, so it is the only press that holds at peak for
-  // PRESS_TEST_DWELL_MS rather than PRESS_DWELL_MS -- and the calibration doc
+  // PRESS_TEST_DWELL_MS rather than PRESS_PEAK_MS -- and the calibration doc
   // sends the user here while the force field is wound up to 9 ("take the
   // opportunity to see if the alignment is correct"). A full-bite peak held
   // for seconds is a stalled servo, which is what wears an MG996R's gears and

@@ -18,22 +18,30 @@
 // between are not -- those are in Machine.h.
 //
 // The alignment test (press(..., slow=true), the SETUP "test" button) parks at
-// the peak this long instead of PRESS_DWELL_MS, so the gap between press and
+// the peak this long instead of PRESS_PEAK_MS, so the gap between press and
 // daisy wheel can actually be looked at. Force 1 to 9 is only
 // PRESS_BITE_AT_MAX_FORCE degrees of rotation -- a millimetre or two at the
 // pad -- which is impossible to judge on a moving arm, so the useful test is
 // a still one.
 //
-// This is eight times the normal dwell, and holding the press against the
-// wheel means the servo is drawing stall current the whole time, which is the
-// load that wears an MG996R's nylon gears and reams the printed P_press
+// This is more than ten times the normal hold, and holding the press against
+// the wheel means the servo is drawing stall current the whole time, which is
+// the load that wears an MG996R's nylon gears and reams the printed P_press
 // splines. It is only safe because the one caller that passes slow=true
 // presses at CALIBRATION_VALUE_MIN, where the press barely touches. Anything
 // that starts holding a real force here needs this number back down.
 #define PRESS_TEST_DWELL_MS 2000
 
-// Settle time at the peak and at rest on the normal printing path.
-#define PRESS_DWELL_MS 250
+// How long a printing press holds at the peak. For most of it the servo is
+// pressing the tape into the wheel at stall current, which is what heats it
+// and wears its gears, so the hold is kept short: 150ms rather than the 250
+// the upstream firmware held for. Unloaded at 6V, an MG996R takes about 90ms
+// of it to turn the 39 degrees from rest to a force 5 peak, which leaves about
+// 60ms pressing.
+#define PRESS_PEAK_MS 150
+// How long the press is held at rest after a press, so it is all the way back
+// up before its servo is let go and the wheel turns.
+#define PRESS_REST_MS 250
 #define PRESS_SETTLE_STEP_MS 50
 
 // How long the ramp waits between one degree and the next.
@@ -43,10 +51,10 @@
 // presses with. SLOW is the calibration crawl.
 //
 // These also decide the real time spent at the peak, which is longer than the
-// dwell above: the ramp in writes the peak and then waits a step before
+// hold above: the ramp in writes the peak and then waits a step before
 // returning, and the ramp out writes the peak again before its first step, so
-// the servo is commanded to hold for dwell + 2 * step. At QUICK that is
-// exactly PRESS_DWELL_MS. At SLOW it is PRESS_TEST_DWELL_MS + 200.
+// the servo is told to stay there for the hold + 2 * step. At QUICK that is
+// exactly PRESS_PEAK_MS. At SLOW it is PRESS_TEST_DWELL_MS + 200.
 // test/test_press pins both.
 #define PRESS_STEP_QUICK_MS 0
 #define PRESS_STEP_STRONG_MS 4

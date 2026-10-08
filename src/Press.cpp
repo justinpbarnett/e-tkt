@@ -91,7 +91,7 @@ void Press::press(bool strong, int force, bool slow) {
 
   this->sweep(REST_ANGLE, peakAngle, stepMs);
 
-  const int dwellMs = slow ? PRESS_TEST_DWELL_MS : PRESS_DWELL_MS;
+  const int dwellMs = slow ? PRESS_TEST_DWELL_MS : PRESS_PEAK_MS;
   if (slow) {
     this->logger->log(String("  HOLDING at ") + peakAngle + " deg for " +
                       dwellMs + "ms -- look at the gap now");
@@ -99,7 +99,7 @@ void Press::press(bool strong, int force, bool slow) {
   this->settle(peakAngle, dwellMs);
 
   this->sweep(peakAngle, REST_ANGLE, stepMs);
-  this->settle(REST_ANGLE, PRESS_DWELL_MS);
+  this->settle(REST_ANGLE, PRESS_REST_MS);
   // Back at rest, so nothing needs the servo until the next press. Driven,
   // it would go on drawing current all the while the wheel turns and the
   // tape feeds, which is most of a label.
@@ -112,9 +112,9 @@ unsigned long Press::pressUs(bool strong, int force) const {
   const int stepMs = rampStepMs(strong, false);
   const int peakAngle =
       pressPeakAngle(REST_ANGLE, STAMP_ANGLE, PRESS_BITE_AT_MAX_FORCE, force);
-  // In to the peak and the dwell there, then out to rest and the dwell there.
-  return sweepUs(REST_ANGLE, peakAngle, stepMs) + settleUs(PRESS_DWELL_MS) +
-         sweepUs(peakAngle, REST_ANGLE, stepMs) + settleUs(PRESS_DWELL_MS);
+  // In to the peak and the hold there, then out to rest and the hold there.
+  return sweepUs(REST_ANGLE, peakAngle, stepMs) + settleUs(PRESS_PEAK_MS) +
+         sweepUs(peakAngle, REST_ANGLE, stepMs) + settleUs(PRESS_REST_MS);
 }
 
 void Press::rest() {
@@ -124,7 +124,7 @@ void Press::rest() {
 
 void Press::park() {
   if (this->engaged) {
-    this->settle(REST_ANGLE, PRESS_DWELL_MS);
+    this->settle(REST_ANGLE, PRESS_REST_MS);
   }
   this->release();
 }
