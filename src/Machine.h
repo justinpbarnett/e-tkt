@@ -70,16 +70,21 @@
 
 #elif MACHINE == 2
 
-// Machine 2. UNTAUGHT -- these are machine 1's numbers, kept only so the
-// build works. Every one of them has to be read off machine 2's own bench
+// Machine 2. Protoboard, DevKit dd38, brought up 2026-10-08 to 2026-10-09.
+
+// The press is UNTAUGHT: these are machine 1's numbers, kept only so the
+// build works. They have to be read off machine 2's own bench, in its case,
 // before it prints anything; see the comments in the MACHINE == 1 block for
 // how each is taken.
 #define REST_ANGLE 50
 #define STAMP_ANGLE 15
 #define PRESS_BITE_AT_MAX_FORCE 8
+// Measured 2026-10-09: magnet present 0, clear 4095, as on machine 1.
 #define INVERT_HALL_SENSOR_LOGIC false
 #define HALL_SENSOR_THRESHOLD 128
+// Machine 1's. Not measured: it wants the machine in its case and a print.
 #define ASSEMBLY_CALIBRATION_ALIGN 0.5f
+// Checked 2026-10-09: bench-feeder pushes the tape out.
 #define REVERSE_FEED_STEPPER_DIRECTION false
 
 #elif MACHINE == 3
