@@ -624,7 +624,8 @@ void ETKT::tagCommandInternal() {
   const int first = this->command->firstCopy;
   int done = first - 1;
   // Kept as it begins, so the button has this run and no older one whatever
-  // becomes of it. How far it got is kept as it ends: see below.
+  // becomes of it. How far it got is kept after each label and as it ends:
+  // see below.
   this->lastRun->keep(asked, done);
 
   // At the calibration the run presses at, before anything moves.
@@ -686,6 +687,10 @@ void ETKT::tagCommandInternal() {
     if (copy == copies) {
       break;
     }
+    // Kept label by label, between labels while nothing moves, so a machine
+    // that restarts in the middle of a run, which nobody asked of it, still
+    // knows how far the run got, and the button carries it on from there.
+    this->lastRun->keep(asked, done);
 
     // Between one label's end and the next one's first feed, where both
     // kinds of stop can end a run without leaving anything unfinished on the

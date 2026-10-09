@@ -14,6 +14,7 @@
 #include <unity.h>
 
 #include <functional>
+#include <map>
 #include <utility>
 #include <vector>
 
@@ -1088,21 +1089,53 @@ void test_a_stored_run_that_cannot_be_read_is_not_printed(void) {
 }
 
 // The flash wears with every write, and the button is there to print the
-// same run over and over. A run that ends owing nothing, as it began, writes
-// nothing about itself.
-void test_printing_the_same_run_again_and_again_writes_nothing(void) {
-  submitTag("AB", 2);
+// same run over and over. A run keeps how far it has got once a label, which
+// is what a restart in the middle of it needs, and nothing more: as it
+// begins it is the run already kept, and its last label is followed by the
+// end of the run, which owes nothing.
+void test_printing_the_same_run_again_writes_once_a_label_and_no_more(void) {
+  submitTag("AB", 3);
   etkt->loop();
-  TEST_ASSERT_EQUAL_INT(1, stubNvsWrites()["lastrun"]);
+  const int firstRun = stubNvsWrites()["lastrun"];
 
   for (int press = 0; press < 3; press++) {
     TEST_ASSERT_TRUE(etkt->printLastRun());
     etkt->loop();
   }
-  submitTag("AB", 2);
+  submitTag("AB", 3);
   etkt->loop();
 
-  TEST_ASSERT_EQUAL_INT(1, stubNvsWrites()["lastrun"]);
+  // After the first label, after the second, and as the run ends.
+  TEST_ASSERT_EQUAL_INT(firstRun + 4 * 3, stubNvsWrites()["lastrun"]);
+}
+
+// Where the run had got to when the machine restarted in the middle of it,
+// as a crash, a watchdog or a dip in the supply restarts it. Nobody stopped
+// it, so the run never got to keep how far it got as it ended.
+static std::map<std::string, std::string> keptAsLabelThreeBegan;
+
+// The machine restarted as label 3 of a run of 4 was being pressed: the
+// first two are printed, and the button carries the run on from the third.
+void test_where_a_run_got_to_outlives_a_restart_in_the_middle_of_it(void) {
+  keptAsLabelThreeBegan.clear();
+  display->onCall = [](const DisplayCall& call) {
+    if (call.kind == DisplayCall::RENDER_PROGRESS && call.copy == 3 &&
+        keptAsLabelThreeBegan.empty()) {
+      keptAsLabelThreeBegan = stubNvsText()["lastrun"];
+    }
+  };
+  submitTag("AB", 4);
+  etkt->loop();
+  display->onCall = nullptr;
+  TEST_ASSERT_FALSE(keptAsLabelThreeBegan.empty());
+
+  // The flash as the restart left it.
+  stubNvsText()["lastrun"] = keptAsLabelThreeBegan;
+  reboot();
+
+  TEST_ASSERT_TRUE(etkt->printLastRun());
+  etkt->loop();
+  TEST_ASSERT_EQUAL_STRING("3 4", labelsBegun().c_str());
 }
 
 // --- carrying on a run that was cut short ----------------------------------
@@ -1291,18 +1324,21 @@ void test_a_stored_run_is_carried_on_where_it_says_how_far_it_got(void) {
   TEST_ASSERT_EQUAL_STRING("2 3", labelsBegun().c_str());
 }
 
-// Where a run stopped is written as it stops, and not label by label: once
-// for the stop, and once more when the labels it owed are done.
-void test_where_a_run_stopped_is_written_once_and_not_at_every_label(void) {
+// Where a run has got to is written after each label but its last, so a
+// stop has nothing more to write: the labels before the one it cut short are
+// already kept.
+void test_a_stop_writes_nothing_the_labels_before_it_did_not(void) {
   stopAsLabelBegins(4);
   submitTag("AB", 6);
   etkt->loop();
-  TEST_ASSERT_EQUAL_INT(2, stubNvsWrites()["lastrun"]);
+  // The run, and labels 1, 2 and 3.
+  TEST_ASSERT_EQUAL_INT(4, stubNvsWrites()["lastrun"]);
 
   TEST_ASSERT_TRUE(etkt->printLastRun());
   etkt->loop();
 
-  TEST_ASSERT_EQUAL_INT(3, stubNvsWrites()["lastrun"]);
+  // Labels 4 and 5, and the end of the run, which owes nothing.
+  TEST_ASSERT_EQUAL_INT(7, stubNvsWrites()["lastrun"]);
 }
 
 // --- changing the roll at the machine --------------------------------------
@@ -1737,7 +1773,8 @@ int main(int, char**) {
   RUN_TEST(test_the_last_run_is_refused_while_another_job_has_the_machine);
   RUN_TEST(test_a_new_run_takes_the_place_of_the_last_one);
   RUN_TEST(test_a_stored_run_that_cannot_be_read_is_not_printed);
-  RUN_TEST(test_printing_the_same_run_again_and_again_writes_nothing);
+  RUN_TEST(test_printing_the_same_run_again_writes_once_a_label_and_no_more);
+  RUN_TEST(test_where_a_run_got_to_outlives_a_restart_in_the_middle_of_it);
   RUN_TEST(test_a_run_cut_short_is_carried_on_from_where_it_stopped);
   RUN_TEST(test_a_run_ended_after_a_label_is_carried_on_too);
   RUN_TEST(test_a_run_carried_on_to_its_end_comes_whole_the_next_time);
@@ -1747,7 +1784,7 @@ int main(int, char**) {
   RUN_TEST(test_a_run_stopped_before_a_label_is_done_comes_whole);
   RUN_TEST(test_the_same_run_sent_from_the_panel_starts_at_its_first_label);
   RUN_TEST(test_a_stored_run_is_carried_on_where_it_says_how_far_it_got);
-  RUN_TEST(test_where_a_run_stopped_is_written_once_and_not_at_every_label);
+  RUN_TEST(test_a_stop_writes_nothing_the_labels_before_it_did_not);
   RUN_TEST(test_an_unloaded_roll_is_out_and_the_machine_asks_for_the_next);
   RUN_TEST(test_an_unload_stopped_partway_takes_the_roll_out_all_the_same);
   RUN_TEST(test_an_unload_stopped_before_the_tape_moves_leaves_the_roll_in);
