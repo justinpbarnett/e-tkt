@@ -28,6 +28,8 @@ static FakeRadio* radio;
 static FakeDisplay* display;
 static NetworkSettings* settings;
 static LinkSupervisor* supervisor;
+// Whether the job runner has a job, as the supervisor asks it.
+static bool jobRunning;
 
 static const char* CHURCH_KEY = "battery staple";
 static const char* BASEMENT_KEY = "correct horse";
@@ -52,6 +54,7 @@ void setUp(void) {
   display = new FakeDisplay();
   readSettings();
   supervisor = NULL;
+  jobRunning = false;
 }
 
 void tearDown(void) {
@@ -65,7 +68,8 @@ void tearDown(void) {
 // The supervisor as the board starts it: built, and stepped once before
 // anything else runs.
 static void start(void) {
-  supervisor = new LinkSupervisor(logger, radio, settings, display);
+  supervisor = new LinkSupervisor(logger, radio, settings, display,
+                                  [] { return jobRunning; });
   supervisor->step();
 }
 
@@ -1296,6 +1300,189 @@ void test_asking_again_while_it_listens_does_not_make_it_listen_twice(void) {
   TEST_ASSERT_EQUAL_INT(1, radio->surveys);
 }
 
+// --- while a job runs ------------------------------------------------------
+
+// The church's network, which the machine is on, goes out of reach, and is
+// there again only after a while: until then it turns every try away.
+static void loseChurchForAWhile(void) {
+  radio->find("Church")->refusals = 1000;
+  radio->lose(RADIO_REASON_BEACON_TIMEOUT);
+}
+
+void test_a_network_lost_during_a_job_is_the_only_one_tried_until_it_ends(
+    void) {
+  // The job came in over the church's network, and that is the way the
+  // panel will look for it again. Another network would put the machine
+  // somewhere the panel is not.
+  joinChurch();
+  settings->remember("Basement", BASEMENT_KEY);
+  radio->add("Basement", BASEMENT_KEY);
+  run(WIFI_SETTLE_MS + 500);
+
+  jobRunning = true;
+  run(WIFI_STEP_MS);
+  TEST_ASSERT_TRUE(logged("a job began: keeping to Church until it ends"));
+  loseChurchForAWhile();
+  const size_t before = radio->joins.size();
+  run(3 * 60000);
+
+  TEST_ASSERT_TRUE(radio->joins.size() >= before + 10);
+  for (size_t i = before; i < radio->joins.size(); i++) {
+    TEST_ASSERT_EQUAL_STRING("Church", radio->joins[i].ssid.c_str());
+  }
+  // As close together as ever, with its own network shut.
+  TEST_ASSERT_TRUE(gapBefore(radio->joins.size() - 1) <=
+                   radio->find("Church")->joinMs + WIFI_RETRY_MS +
+                       WIFI_STEP_MS);
+
+  // With the job done, the next network gets its turn.
+  jobRunning = false;
+  run(5 * WIFI_RETRY_BESIDE_OWN_MS);
+  TEST_ASSERT_TRUE(logged("the job has ended"));
+  const LinkStatus status = supervisor->status();
+  TEST_ASSERT_TRUE(StationLink::JOINED == status.station);
+  TEST_ASSERT_EQUAL_STRING("Basement", status.network.c_str());
+}
+
+void test_a_network_tried_as_a_job_begins_is_the_only_one_tried_until_it_ends(
+    void) {
+  // A run started at the button with the machine on no network: there is
+  // no way it was reached, and the one it was trying is kept to.
+  settings->remember("Church", CHURCH_KEY);
+  settings->remember("Basement", BASEMENT_KEY);
+  start();
+  run(WIFI_STEP_MS);
+  const String first = radio->joins[0].ssid;
+
+  jobRunning = true;
+  run(3 * WIFI_OWN_AFTER_MS);
+
+  TEST_ASSERT_TRUE(
+      logged((String("a job began: trying only ") + first + " until it ends")
+                 .c_str()));
+  TEST_ASSERT_TRUE(radio->joins.size() >= 10);
+  for (size_t i = 0; i < radio->joins.size(); i++) {
+    TEST_ASSERT_EQUAL_STRING(first.c_str(), radio->joins[i].ssid.c_str());
+  }
+}
+
+void test_its_own_network_does_not_open_during_a_job(void) {
+  // Opening it changes what the radio does, and nobody can be waiting on it:
+  // the job is running, and the panel that sent it is on the lost network.
+  joinChurch();
+  jobRunning = true;
+  run(WIFI_STEP_MS);
+  loseChurchForAWhile();
+  run(3 * WIFI_OWN_AFTER_MS);
+
+  TEST_ASSERT_EQUAL_INT(0, (int)radio->openings.size());
+  TEST_ASSERT_FALSE(supervisor->status().ownOpen);
+  TEST_ASSERT_TRUE(StationLink::JOINING == supervisor->status().station);
+
+  // The minute without a network has long gone by.
+  jobRunning = false;
+  run(WIFI_STEP_MS);
+  TEST_ASSERT_TRUE(radio->accessPointOpen);
+}
+
+void test_its_own_network_does_not_close_during_a_job(void) {
+  // Whoever sent the job over it may come back on it to see how it went.
+  settings->remember("Church", CHURCH_KEY);
+  start();
+  run(WIFI_OWN_AFTER_MS + 1000);
+  TEST_ASSERT_TRUE(radio->accessPointOpen);
+  radio->add("Church", CHURCH_KEY);
+  run(WIFI_RETRY_BESIDE_OWN_MS + 5000);
+  TEST_ASSERT_TRUE(StationLink::JOINED == supervisor->status().station);
+
+  jobRunning = true;
+  run(2 * WIFI_OWN_LINGER_MS);
+  TEST_ASSERT_EQUAL_INT(0, radio->closings);
+  TEST_ASSERT_TRUE(radio->accessPointOpen);
+
+  jobRunning = false;
+  run(WIFI_STEP_MS);
+  TEST_ASSERT_EQUAL_INT(1, radio->closings);
+}
+
+void test_no_network_is_tried_during_a_job_while_a_phone_is_on_its_own(void) {
+  // The phone most likely sent the job. Every try takes the radio off the
+  // phone's channel, and the phone off the machine.
+  putAPhoneOnItsOwnNetwork();
+  jobRunning = true;
+  run(WIFI_STEP_MS);
+  TEST_ASSERT_TRUE(
+      logged("a job began: keeping to its own network E-TKT-9C4F until it "
+             "ends"));
+  const size_t tries = radio->joins.size();
+  run(3 * WIFI_RETRY_WHILE_CLIENT_MS);
+  TEST_ASSERT_EQUAL_INT((int)tries, (int)radio->joins.size());
+  TEST_ASSERT_TRUE(supervisor->status().ownOpen);
+
+  // The wait between tries ran out during the job.
+  jobRunning = false;
+  run(WIFI_STEP_MS);
+  TEST_ASSERT_EQUAL_INT((int)tries + 1, (int)radio->joins.size());
+}
+
+void test_a_change_made_on_the_panel_during_a_job_is_followed_at_once(void) {
+  // Somebody asked for it, and is waiting to see it work.
+  joinChurch();
+  jobRunning = true;
+  run(WIFI_STEP_MS);
+  settings->forget("Church");
+  run(WIFI_SETTLE_MS + 500);
+
+  TEST_ASSERT_EQUAL_INT(1, radio->leaves);
+  TEST_ASSERT_TRUE(logged("left Church"));
+}
+
+void test_a_network_typed_in_on_a_phone_during_a_job_is_tried_at_once(void) {
+  // The phone is on its own network, and asks for the try.
+  putAPhoneOnItsOwnNetwork();
+  jobRunning = true;
+  run(WIFI_STEP_MS);
+  radio->add("Basement", BASEMENT_KEY);
+  settings->remember("Basement", BASEMENT_KEY);
+  run(WIFI_SETTLE_MS + WIFI_RETRY_MS + 4000);
+
+  const LinkStatus status = supervisor->status();
+  TEST_ASSERT_TRUE(StationLink::JOINED == status.station);
+  TEST_ASSERT_EQUAL_STRING("Basement", status.network.c_str());
+  // The phone reads where to go next on its own network, which stays open.
+  TEST_ASSERT_TRUE(status.ownOpen);
+}
+
+void test_the_panel_can_still_ask_what_is_in_reach_during_a_job(void) {
+  // Listening changes nothing about how the machine is reached, and
+  // somebody is waiting on the list.
+  joinChurch();
+  jobRunning = true;
+  run(WIFI_STEP_MS);
+  supervisor->listen();
+  run(WIFI_STEP_MS);
+
+  TEST_ASSERT_EQUAL_UINT32(1, supervisor->nearby().listens);
+  TEST_ASSERT_TRUE(StationLink::JOINED == supervisor->status().station);
+}
+
+void test_a_job_on_the_network_it_is_on_changes_nothing(void) {
+  // The everyday case: the link is fine throughout, and the log says no
+  // more than when the job began and ended.
+  joinChurch();
+  const size_t tries = radio->joins.size();
+  jobRunning = true;
+  run(60000);
+  jobRunning = false;
+  run(60000);
+
+  TEST_ASSERT_EQUAL_INT((int)tries, (int)radio->joins.size());
+  TEST_ASSERT_EQUAL_INT(0, radio->leaves);
+  TEST_ASSERT_EQUAL_INT(0, (int)radio->openings.size());
+  TEST_ASSERT_EQUAL_INT(1, count("a job began"));
+  TEST_ASSERT_EQUAL_INT(1, count("the job has ended"));
+}
+
 // --- the firmware before this one ------------------------------------------
 
 void test_a_machine_updated_from_the_firmware_before_keeps_its_network(void) {
@@ -1339,7 +1526,8 @@ void test_a_network_forgotten_on_purpose_does_not_come_back(void) {
 // The supervisor as the board builds it, with the button held from the
 // splash on: resetWifi() comes before the first step.
 static void holdTheButtonThroughTheStart(void) {
-  supervisor = new LinkSupervisor(logger, radio, settings, display);
+  supervisor = new LinkSupervisor(logger, radio, settings, display,
+                                  [] { return jobRunning; });
   supervisor->resetWifi();
 }
 
@@ -1468,6 +1656,17 @@ int main(int, char**) {
   RUN_TEST(test_the_list_is_the_loudest_networks_and_no_more);
   RUN_TEST(test_a_radio_that_could_not_listen_still_ends_the_wait);
   RUN_TEST(test_asking_again_while_it_listens_does_not_make_it_listen_twice);
+  RUN_TEST(
+      test_a_network_lost_during_a_job_is_the_only_one_tried_until_it_ends);
+  RUN_TEST(
+      test_a_network_tried_as_a_job_begins_is_the_only_one_tried_until_it_ends);
+  RUN_TEST(test_its_own_network_does_not_open_during_a_job);
+  RUN_TEST(test_its_own_network_does_not_close_during_a_job);
+  RUN_TEST(test_no_network_is_tried_during_a_job_while_a_phone_is_on_its_own);
+  RUN_TEST(test_a_change_made_on_the_panel_during_a_job_is_followed_at_once);
+  RUN_TEST(test_a_network_typed_in_on_a_phone_during_a_job_is_tried_at_once);
+  RUN_TEST(test_the_panel_can_still_ask_what_is_in_reach_during_a_job);
+  RUN_TEST(test_a_job_on_the_network_it_is_on_changes_nothing);
   RUN_TEST(test_a_machine_updated_from_the_firmware_before_keeps_its_network);
   RUN_TEST(test_a_network_forgotten_on_purpose_does_not_come_back);
   RUN_TEST(test_the_button_held_through_the_start_forgets_every_network);

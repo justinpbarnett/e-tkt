@@ -120,8 +120,8 @@ ETKT* etkt = new ETKT(logger, settings, display, printhead, feeder, roll,
 // radio is the chip's.
 NetworkSettings* networkSettings = new NetworkSettings(logger);
 Esp32Radio* radio = new Esp32Radio(logger);
-LinkSupervisor* linkSupervisor =
-    new LinkSupervisor(logger, radio, networkSettings, display);
+LinkSupervisor* linkSupervisor = new LinkSupervisor(
+    logger, radio, networkSettings, display, [] { return etkt->busy(); });
 // Everything the device answers under /api/, which the webserver hands every
 // such request to: what the job runner does, and how the machine is reached.
 Api* api = new Api(etkt, linkSupervisor, networkSettings, logger);

@@ -130,11 +130,13 @@ bool sameNetworks(const std::vector<RememberedNetwork>& a,
 }  // namespace
 
 LinkSupervisor::LinkSupervisor(Logger* logger, Radio* radio,
-                               NetworkSettings* settings, Display* display) {
+                               NetworkSettings* settings, Display* display,
+                               std::function<bool()> jobRunning) {
   this->logger = logger;
   this->radio = radio;
   this->settings = settings;
   this->display = display;
+  this->jobRunning = jobRunning;
 }
 
 void LinkSupervisor::step() {
@@ -142,11 +144,14 @@ void LinkSupervisor::step() {
   if (!this->started) {
     this->started = true;
     this->start(nowMs);
-  } else if (!this->followSettings(nowMs) && !this->listenIfAsked(nowMs)) {
-    if (this->mode == NetworkMode::OWN) {
-      this->keepOwn(nowMs);
-    } else {
-      this->keepJoining(nowMs);
+  } else {
+    this->holdForJob();
+    if (!this->followSettings(nowMs) && !this->listenIfAsked(nowMs)) {
+      if (this->mode == NetworkMode::OWN) {
+        this->keepOwn(nowMs);
+      } else {
+        this->keepJoining(nowMs);
+      }
     }
   }
   this->publish();
@@ -216,6 +221,28 @@ void LinkSupervisor::start(uint32_t nowMs) {
   this->ownName = this->settings->ownName();
   this->seenDrops = this->radio->station().drops;
   this->beginOutage(nowMs);
+}
+
+void LinkSupervisor::holdForJob() {
+  const bool running = this->jobRunning();
+  if (running == this->held) {
+    return;
+  }
+  this->held = running;
+  if (!running) {
+    this->logger->log("the job has ended");
+    return;
+  }
+  String kept = "leaving the link as it is";
+  if (this->mode == NetworkMode::JOIN && this->wasOnline) {
+    kept = String("keeping to ") + this->joinedSsid;
+  } else if (this->ownOpen) {
+    kept = String("keeping to its own network ") + this->ownName;
+  } else if (this->mode == NetworkMode::JOIN && !this->networks.empty()) {
+    kept = String("trying only ") +
+           this->networks[this->nextNetwork % this->networks.size()].ssid;
+  }
+  this->logger->log(String("a job began: ") + kept + " until it ends");
 }
 
 // --- following the settings ---
@@ -419,6 +446,13 @@ void LinkSupervisor::keepJoining(uint32_t nowMs) {
     this->noteOffline(nowMs);
     return;
   }
+  if (this->held && this->clients > 0 && !this->startedOver.isSet()) {
+    // The phone on its own network most likely sent the job, and a try
+    // would take the radio off the phone's channel. Not when the phone has
+    // just asked for one.
+    this->noteOffline(nowMs);
+    return;
+  }
   this->startTry(nowMs);
 }
 
@@ -529,7 +563,11 @@ void LinkSupervisor::startOver(uint32_t nowMs) {
 }
 
 void LinkSupervisor::moveOn() {
-  this->nextNetwork++;
+  // During a job, the network it was on or trying as the job began is the
+  // one it keeps to.
+  if (!this->held) {
+    this->nextNetwork++;
+  }
   this->triesHere = 0;
 }
 
@@ -566,8 +604,10 @@ void LinkSupervisor::endTry() {
 // --- its own network ---
 
 void LinkSupervisor::keepFallback(uint32_t nowMs) {
+  // During a job it stays open or shut, as the job found it.
   if (!this->ownOpen) {
-    if (!this->wasOnline && nowMs - this->outageBeganMs >= WIFI_OWN_AFTER_MS) {
+    if (!this->held && !this->wasOnline &&
+        nowMs - this->outageBeganMs >= WIFI_OWN_AFTER_MS) {
       this->openOwn(nowMs, false);
     }
     return;
@@ -575,13 +615,20 @@ void LinkSupervisor::keepFallback(uint32_t nowMs) {
   this->countClients(nowMs);
   // Open for as long as no network is joined. Once one is, whoever typed it
   // in is still on this one, reading where to go next.
-  if (this->wasOnline && this->clients == 0 &&
+  if (!this->held && this->wasOnline && this->clients == 0 &&
       nowMs - this->lingerFromMs >= WIFI_OWN_LINGER_MS) {
     this->closeOwn();
   }
 }
 
 void LinkSupervisor::keepOwn(uint32_t nowMs) {
+  if (this->held) {
+    // It stays open or shut, and on its channel, as the job found it.
+    if (this->ownOpen) {
+      this->countClients(nowMs);
+    }
+    return;
+  }
   if (this->ownOpen && !this->ownAlone) {
     // It was open beside the tries, on whatever channel they had it on.
     // Opened again, it is on the one chosen for it.

@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 
+#include <functional>
 #include <mutex>
 #include <vector>
 
@@ -107,6 +108,14 @@ struct NearbyNetworks {
  * is a few seconds: once for a quiet channel to put its own network on, and
  * whenever the panel asks which networks are in reach.
  *
+ * While a job runs, the link stays the way the machine was reached as the
+ * job began, and the job is left to finish undisturbed. The network it was
+ * on, or trying, is the only one tried, and its own network stays open or
+ * shut. With a phone on its own network and no other joined, nothing is
+ * tried at all: the phone most likely sent the job. A change made on the
+ * panel is still followed at once, since somebody asked for it, and a
+ * network typed in is the first, so the one kept to from then on.
+ *
  * The idle screen is told how the machine is reached whenever that changes,
  * and status() says it to the panel.
  */
@@ -116,6 +125,8 @@ class LinkSupervisor {
   Radio* radio;
   NetworkSettings* settings;
   Display* display;
+  // Whether the job runner has a job. Asked at every step.
+  std::function<bool()> jobRunning;
 
   // Covers `published` and `nearbyNetworks`, which the webserver's task
   // reads, and asks a listen of. Everything else here is step()'s alone.
@@ -124,6 +135,8 @@ class LinkSupervisor {
   NearbyNetworks nearbyNetworks;
 
   bool started = false;
+  // A job is running, and the link is kept as the job found it.
+  bool held = false;
 
   // --- the settings, as last followed ---
   uint32_t seenRevision = 0;
@@ -189,6 +202,7 @@ class LinkSupervisor {
   ConnectionInfo lastShown;
 
   void start(uint32_t nowMs);
+  void holdForJob();
   bool followSettings(uint32_t nowMs);
   void switchMode(NetworkMode mode, uint32_t nowMs);
   void followNetworks(uint32_t nowMs);
@@ -217,8 +231,12 @@ class LinkSupervisor {
   void publish();
 
  public:
+  /**
+   * @param jobRunning whether the job runner has a job. Called from the
+   *        link's task.
+   */
   LinkSupervisor(Logger* logger, Radio* radio, NetworkSettings* settings,
-                 Display* display);
+                 Display* display, std::function<bool()> jobRunning);
 
   /**
    * @brief Looks at the link and does the next thing.

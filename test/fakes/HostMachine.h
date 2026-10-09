@@ -94,7 +94,8 @@ class HostMachine {
         etkt(&logger, &settings, &display, &printhead, &feeder, &roll, &lastRun,
              &sound, &ledFinish, &ledChar, &stopSignal),
         networkSettings(&logger),
-        linkSupervisor(&logger, &radio, &networkSettings, &display),
+        linkSupervisor(&logger, &radio, &networkSettings, &display,
+                       [this] { return this->etkt.busy(); }),
         api(&etkt, &linkSupervisor, &networkSettings, &logger) {
     this->magnet.install();
     this->etkt.initialize();
