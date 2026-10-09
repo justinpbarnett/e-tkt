@@ -785,6 +785,7 @@ void test_the_longest_status_has_every_field(void) {
   const char* id = "123e4567-e89b-12d3-a456-426614174000";
   postUnder(id, "/api/tag", body.c_str());
   machine->etkt.stopAfterLabel();
+  machine->logger.startedAfter("interrupt watchdog");
 
   const Reply reply = get("/api/status");
 
@@ -796,6 +797,8 @@ void test_the_longest_status_has_every_field(void) {
   TEST_ASSERT_EQUAL_STRING("after_label", status["stop"].as<const char*>());
   TEST_ASSERT_TRUE(status["roll"]["remaining_mm"].is<long>());
   TEST_ASSERT_TRUE(status["uptime_ms"].is<unsigned long>());
+  TEST_ASSERT_EQUAL_STRING("interrupt watchdog",
+                           status["started_after"].as<const char*>());
 }
 
 // A reply that ran out of room is not sent with its last fields missing, the
@@ -1410,6 +1413,54 @@ void test_the_log_is_what_the_machine_logged_as_plain_text(void) {
   const std::string body = reply.body.str();
   TEST_ASSERT_TRUE(body.find("WARN  tape may be out\n") != std::string::npos);
   TEST_ASSERT_TRUE(endsWith(body, " INFO  print HELLO"));
+}
+
+// A machine that restarted in the middle of a job, and kept the power on
+// through it: the log starts with the last lines before the restart, and
+// says what the restart was.
+void test_the_log_after_a_restart_starts_with_the_lines_before_it(void) {
+  LogTrail trail;
+  Logger* before = new Logger(&trail);
+  before->log("print HOLY x 80");
+  before->log("lost Church (BEACON_TIMEOUT), joining it again");
+  delete before;
+  Logger after(&trail);
+  after.startedAfter("task watchdog");
+  after.log("homing");
+  Api restarted(&machine->etkt, &machine->linkSupervisor,
+                &machine->networkSettings, &after);
+
+  Request request;
+  request.method = Method::GET;
+  request.path = "/api/log";
+  const std::string body = restarted.handle(request).body.str();
+
+  TEST_ASSERT_EQUAL_INT(0, (int)body.find("--- before the restart ---\n"));
+  const size_t lost = body.find("lost Church");
+  const size_t marker =
+      body.find("--- after the restart (task watchdog) ---\n");
+  TEST_ASSERT_TRUE(lost != std::string::npos);
+  TEST_ASSERT_TRUE(marker != std::string::npos);
+  TEST_ASSERT_TRUE(lost < marker);
+  TEST_ASSERT_TRUE(endsWith(body, " INFO  homing"));
+}
+
+// A machine that has not restarted since the power came on has nothing
+// before its own lines.
+void test_the_log_after_a_power_on_is_this_start_alone(void) {
+  machine->logger.log("print HELLO");
+  const std::string body = get("/api/log").body.str();
+  TEST_ASSERT_TRUE(body.find("restart") == std::string::npos);
+}
+
+// Why the machine last started, which tells a crash or a dip in the supply
+// in the middle of a job from somebody switching it on.
+void test_the_status_says_why_the_machine_started(void) {
+  TEST_ASSERT_FALSE(
+      json(get("/api/status"))["started_after"].is<const char*>());
+  machine->logger.startedAfter("power dip");
+  TEST_ASSERT_EQUAL_STRING(
+      "power dip", json(get("/api/status"))["started_after"].as<const char*>());
 }
 
 // --- estimates --------------------------------------------------------------
@@ -2325,6 +2376,9 @@ int main(int, char**) {
   RUN_TEST(test_a_second_stop_for_a_command_that_never_arrived_says_the_same);
   RUN_TEST(test_a_stop_for_an_id_too_long_to_keep_is_refused);
   RUN_TEST(test_the_log_is_what_the_machine_logged_as_plain_text);
+  RUN_TEST(test_the_log_after_a_restart_starts_with_the_lines_before_it);
+  RUN_TEST(test_the_log_after_a_power_on_is_this_start_alone);
+  RUN_TEST(test_the_status_says_why_the_machine_started);
   RUN_TEST(test_the_log_posted_to_is_told_to_get);
   RUN_TEST(test_a_run_is_estimated_from_the_body_that_would_send_it);
   RUN_TEST(test_a_run_can_be_estimated_while_another_prints);

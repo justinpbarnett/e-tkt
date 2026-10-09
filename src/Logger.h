@@ -14,6 +14,32 @@
 #define LOG_HISTORY_LINES 32
 
 /**
+ * How long a kept line can be, with the NUL at its end. A longer one is cut
+ * short in recent(), never on serial.
+ */
+#define LOG_LINE_BYTES 128
+
+/**
+ * @brief The lines recent() serves, in memory a restart can leave alone.
+ *
+ * A machine that restarts in the middle of a job used to take the lines that
+ * said why with it, and those are the ones anybody needs. On the board this
+ * lives where the chip keeps what it holds through every restart that leaves
+ * the power on: a crash, a watchdog, a dip in the supply that does not take
+ * it all the way down. The next start reads what is there before it logs a
+ * line of its own. A power cut leaves noise, which `mark` tells from lines.
+ */
+struct LogTrail {
+  uint32_t mark;
+  // Where the next line goes, and how many slots are filled. Once stored
+  // reaches LOG_HISTORY_LINES the write index wraps and the oldest line is
+  // the one it is about to overwrite.
+  uint32_t next;
+  uint32_t stored;
+  char lines[LOG_HISTORY_LINES][LOG_LINE_BYTES];
+};
+
+/**
  * @brief Logs messages to the serial port, and keeps the last few in RAM.
  *
  * Two jobs, and the second is the one worth having. A machine on a bench with
@@ -34,12 +60,12 @@
 class Logger {
  private:
   std::mutex lock;
-  String history[LOG_HISTORY_LINES];
-  // Where the next line goes, and how many slots are filled. Once stored
-  // reaches LOG_HISTORY_LINES the write index wraps and the oldest line is
-  // the one it is about to overwrite.
-  size_t next = 0;
-  size_t stored = 0;
+  LogTrail* trail;
+  bool ownsTrail;
+  // What the trail held as this start began, as recent() would have said it,
+  // and why the machine started.
+  String before = "";
+  String startCause = "";
 
   /** @brief Timestamps the line, files it, and prints it if anyone is
    * listening. serialPrefix is what serial sees ahead of the message; the
@@ -48,6 +74,18 @@ class Logger {
               const String& message);
 
  public:
+  /** @brief Keeps its lines in memory of its own, which starts empty. */
+  Logger();
+
+  /**
+   * @brief Keeps its lines in `trail`, which may hold the lines of the start
+   * before this one. Those are read before anything else is written there,
+   * and beforeRestart() has them from then on.
+   */
+  explicit Logger(LogTrail* trail);
+
+  ~Logger();
+
   void initialize();
 
   /** @brief Ordinary progress. Reaches serial with no decoration. */
@@ -65,4 +103,20 @@ class Logger {
    * logged, and never ends in a trailing newline.
    */
   String recent();
+
+  /**
+   * @brief The last lines of the start before this one, as recent() said
+   * them, which is what was going on as the machine restarted. Empty when
+   * the power was off in between, and when nothing was logged.
+   */
+  String beforeRestart();
+
+  /**
+   * @brief Notes why the machine started: "power on", "crash", "task
+   * watchdog". Said once, as the start begins, and logged.
+   */
+  void startedAfter(const String& cause);
+
+  /** @brief What startedAfter() was told. Empty until then. */
+  String startedAfter();
 };

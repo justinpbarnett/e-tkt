@@ -8,6 +8,7 @@
 // Run with:  pio test -e native
 #include <unity.h>
 
+#include <cstring>
 #include <string>
 
 #include "Arduino.h"
@@ -135,6 +136,74 @@ void test_the_buffer_fills_whether_or_not_anyone_is_watching_serial(void) {
   TEST_ASSERT_TRUE(contains(recent(), "happened anyway"));
 }
 
+// --- across a restart ----------------------------------------------------
+// The lines that say why a machine restarted in the middle of a job are the
+// ones it used to lose. The board keeps them in memory a restart leaves
+// alone, and the next start hands them on.
+
+void test_the_lines_before_a_restart_are_there_after_it(void) {
+  LogTrail* trail = new LogTrail();
+  Logger* first = new Logger(trail);
+  first->log("print HOLY x 80");
+  first->log("lost Church (BEACON_TIMEOUT), joining it again");
+  delete first;
+
+  Logger* next = new Logger(trail);
+  const std::string before = next->beforeRestart().str();
+  TEST_ASSERT_TRUE(contains(before, "print HOLY x 80"));
+  TEST_ASSERT_TRUE(before.find("print HOLY") < before.find("lost Church"));
+  // The new start's lines are its own.
+  TEST_ASSERT_EQUAL_INT(0, lineCount(next->recent().str()));
+  next->log("started after crash");
+  TEST_ASSERT_FALSE(contains(next->recent().str(), "print HOLY"));
+  delete next;
+  delete trail;
+}
+
+void test_a_restart_after_one_says_only_the_start_between(void) {
+  LogTrail* trail = new LogTrail();
+  Logger* first = new Logger(trail);
+  first->log("from the first start");
+  delete first;
+  Logger* second = new Logger(trail);
+  second->log("from the second start");
+  delete second;
+
+  Logger* third = new Logger(trail);
+  const std::string before = third->beforeRestart().str();
+  TEST_ASSERT_TRUE(contains(before, "from the second start"));
+  TEST_ASSERT_FALSE(contains(before, "from the first start"));
+  delete third;
+  delete trail;
+}
+
+void test_memory_the_power_came_on_with_is_not_read_as_lines(void) {
+  LogTrail* trail = new LogTrail();
+  memset(trail, 0xA5, sizeof(LogTrail));
+  Logger* fresh = new Logger(trail);
+  TEST_ASSERT_EQUAL_INT(0, lineCount(fresh->beforeRestart().str()));
+  fresh->log("homing");
+  TEST_ASSERT_EQUAL_INT(1, lineCount(fresh->recent().str()));
+  delete fresh;
+  delete trail;
+}
+
+void test_a_line_too_long_to_keep_is_cut_short_and_ends(void) {
+  logger->log(String(std::string(LOG_LINE_BYTES * 2, 'x').c_str()));
+  logger->log("next");
+  const std::string text = recent();
+  TEST_ASSERT_EQUAL_INT(2, lineCount(text));
+  TEST_ASSERT_EQUAL_INT(LOG_LINE_BYTES - 1, (int)text.find('\n'));
+  TEST_ASSERT_TRUE(contains(text, "next"));
+}
+
+void test_why_the_machine_started_is_kept_and_logged(void) {
+  TEST_ASSERT_EQUAL_STRING("", logger->startedAfter().c_str());
+  logger->startedAfter("task watchdog");
+  TEST_ASSERT_EQUAL_STRING("task watchdog", logger->startedAfter().c_str());
+  TEST_ASSERT_TRUE(contains(recent(), "started after task watchdog"));
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_a_plain_log_line_reaches_serial_unchanged);
@@ -149,5 +218,10 @@ int main(int, char**) {
   RUN_TEST(test_the_buffer_drops_the_oldest_line_when_full);
   RUN_TEST(test_the_buffer_stays_in_order_after_it_wraps);
   RUN_TEST(test_the_buffer_fills_whether_or_not_anyone_is_watching_serial);
+  RUN_TEST(test_the_lines_before_a_restart_are_there_after_it);
+  RUN_TEST(test_a_restart_after_one_says_only_the_start_between);
+  RUN_TEST(test_memory_the_power_came_on_with_is_not_read_as_lines);
+  RUN_TEST(test_a_line_too_long_to_keep_is_cut_short_and_ends);
+  RUN_TEST(test_why_the_machine_started_is_kept_and_logged);
   return UNITY_END();
 }

@@ -58,6 +58,7 @@
 #include "StopSignal.h"
 #include "Utility.h"
 #include "esp_heap_caps.h"
+#include "esp_system.h"
 
 // ---------------------------------------------------------------------------
 // The composition root.
@@ -85,7 +86,11 @@ ArduinoStepper* feedStepper = new ArduinoStepper(
 U8G2_SSD1306_128X64_NONAME_F_HW_I2C* screen =
     new U8G2_SSD1306_128X64_NONAME_F_HW_I2C(U8G2_R0, U8X8_PIN_NONE);
 
-Logger* logger = new Logger();
+// The log's lines, where a restart that leaves the power on leaves them, so
+// that the start after one can say what was going on as it happened. See
+// LogTrail.
+static __NOINIT_ATTR LogTrail logTrail;
+Logger* logger = new Logger(&logTrail);
 // Raised by ETKT::stop() from the webserver's task, and obeyed by everything
 // that moves, sounds or blinks for a job, so they all share the one.
 StopSignal* stopSignal = new StopSignal();
@@ -135,9 +140,39 @@ static void buttonTask(void*) {
   }
 }
 
+// Why the chip last started, in the words the status and the log use.
+static const char* startCause() {
+  switch (esp_reset_reason()) {
+    case ESP_RST_POWERON:
+      return "power on";
+    case ESP_RST_SW:
+      return "restart";
+    case ESP_RST_PANIC:
+      return "crash";
+    case ESP_RST_INT_WDT:
+      return "interrupt watchdog";
+    case ESP_RST_TASK_WDT:
+      return "task watchdog";
+    case ESP_RST_WDT:
+      return "watchdog";
+    case ESP_RST_BROWNOUT:
+      return "power dip";
+    case ESP_RST_DEEPSLEEP:
+      return "deep sleep";
+    case ESP_RST_EXT:
+      return "reset pin";
+    case ESP_RST_SDIO:
+      return "sdio";
+    default:
+      return "unknown";
+  }
+}
+
 void setup() {
   // Initialize hardware
   etkt->initialize();
+  // After the serial port is up, so the line reaches it too.
+  logger->startedAfter(startCause());
 
   // Play the splash screen
   display->playSplashScreen();

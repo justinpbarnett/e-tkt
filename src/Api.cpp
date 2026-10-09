@@ -534,6 +534,13 @@ Reply Api::status(const Request& /*request*/) {
   doc["mem_heap_min_free_bytes"] =
       heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT);
   doc["uptime_ms"] = millis();
+  // Why the machine last started: "power on", or a crash, a watchdog or a dip
+  // in the supply that restarted it, perhaps in the middle of a job. The log
+  // has what was going on as it did. Left out until the start has said.
+  const String startedAfter = this->logger->startedAfter();
+  if (startedAfter.length() > 0) {
+    doc["started_after"] = startedAfter;
+  }
   return jsonReply(200, doc);
 }
 
@@ -706,9 +713,17 @@ Reply Api::capabilities(const Request& /*request*/) {
 // for a machine that is on a bench, on wifi, and printing a label wrong.
 // Plain text, because the only reader is somebody stood at the bench opening
 // /api/log at the machine's address in a phone browser to find out why the
-// last label came out wrong.
+// last label came out wrong, or why it restarted: after a restart that left
+// the power on, the last lines before it come first.
 Reply Api::log(const Request& /*request*/) {
-  Reply reply = {200, TEXT_TYPE, this->logger->recent(), {}};
+  String text = this->logger->recent();
+  const String before = this->logger->beforeRestart();
+  if (before.length() > 0) {
+    text = String("--- before the restart ---\n") + before +
+           "\n--- after the restart (" + this->logger->startedAfter() +
+           ") ---\n" + text;
+  }
+  Reply reply = {200, TEXT_TYPE, text, {}};
   return reply;
 }
 
