@@ -72,10 +72,12 @@
 
 // Machine 2. Protoboard, DevKit dd38, brought up 2026-10-08 to 2026-10-09.
 
-// The press is UNTAUGHT: these are machine 1's numbers, kept only so the
-// build works. They have to be read off machine 2's own bench, in its case,
-// before it prints anything; see the comments in the MACHINE == 1 block for
-// how each is taken.
+// The press is UNTAUGHT: these are machine 1's numbers, chosen to start with
+// on 2026-10-09 because the servo was checked before the press was in its
+// case. They hold only if the press goes on as on machine 1, at REST_ANGLE
+// with its lateral line vertical. If the press does not clear the wheel or
+// does not reach it, teach them with bench-servo in the case; see the
+// comments in the MACHINE == 1 block for how each is taken.
 #define REST_ANGLE 50
 #define STAMP_ANGLE 15
 #define PRESS_BITE_AT_MAX_FORCE 8
