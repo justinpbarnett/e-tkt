@@ -26,8 +26,8 @@ inline bool operator==(const Run& a, const Run& b) {
  * EEPROM, so the button on the machine can print it: after a reboot, and
  * with no phone and no network to ask it over.
  *
- * The command loop keeps a run as it starts one and as it ends, and the
- * button reads it from a task of its own, so every access is under one lock,
+ * The command loop keeps a run as it starts one, after every label and as it
+ * ends, and the button reads it from a task of its own, so every access is under one lock,
  * which also covers Preferences, as Roll's does.
  */
 class LastRun {
@@ -62,8 +62,8 @@ class LastRun {
    * that got no label done, and it is always less than the run's copies.
    *
    * Written only when the run or the count differs from what is already
-   * kept, so printing the same run again and again, which is what the button
-   * is for, writes nothing.
+   * kept. Each label of a run changes the count, so that is one write a
+   * label, and a run kept again as it stands writes nothing.
    */
   void keep(const Run& run, int printed);
 

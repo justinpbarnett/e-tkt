@@ -286,8 +286,8 @@ The run carried on keeps the numbers it was asked for, so it starts at 26 of 40 
 The same run sent from the panel is a new run, and starts at its first label.
 The machine cannot tell that the tape has run out, so the labels it pressed on no tape before somebody stopped it count as printed, and are not printed again.
 It is kept in EEPROM, so it is still there after a reboot.
-It is written only when it differs from what is kept: as a run begins, and as it ends for a run that ends short or that was carried on, never at every label.
-So printing the same run over and over writes nothing, and a machine that loses power in the middle of a run knows the run, but not how far it got since it began.
+It is written only when it differs from what is kept: as a run begins, after every label, and as it ends.
+So a machine that restarts or loses power in the middle of a run carries it on from the label it was pressing, and every label printed is one write.
 The tape left is not looked at, as it is not for a run sent any other way.
 A machine that has never started a run has none, and a press then does nothing.
 `LastRun`, and `ETKT::printLastRun()`.
@@ -351,6 +351,9 @@ After `WIFI_OWN_AFTER_MS` with no network joined, the machine's own network open
 The tries are then spaced out, and more so with a phone on the own network, because every try takes the radio away from that phone.
 A change made on the panel brings them close together again for `WIFI_OWN_AFTER_MS`, because somebody is waiting to see whether it worked, and a network that was lost does not.
 Once a network is joined and nobody is on the own network, it closes again, `WIFI_OWN_LINGER_MS` later.
+While a job runs, the link stays the way the job found it, so the job is left to finish.
+The network the machine was on, or trying, is the only one tried, the own network neither opens nor closes, and with a phone on the own network and no other network joined, nothing is tried.
+A change made on the panel is still followed at once, and whatever else waited happens as the job ends.
 Before there was a link the machine did nothing until it had joined a network, and opened a setup portal when it could not.
 `LinkSupervisor`, whose `step()` runs every `WIFI_STEP_MS`, and whose timings are in `Configuration.h`.
 
