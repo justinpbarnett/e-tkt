@@ -15,13 +15,12 @@
 // back.
 
 #include <Arduino.h>
-#include <U8g2lib.h>
 #include <Wire.h>
 
+#include "BenchScreen.h"
 #include "Configuration.h"
 #include "Light.h"
 #include "Logger.h"
-#include "OledDisplay.h"
 #include "Sound.h"
 #include "StopSignal.h"
 
@@ -32,28 +31,11 @@ StopSignal* stopSignal = new StopSignal();
 Sound* sound = new Sound(stopSignal);
 Light* ledChar = new Light(CHARACTER_LED_PIN, stopSignal);
 Light* ledFinish = new Light(FINISH_LED_PIN, stopSignal);
-// Built as LabelMaker.cpp builds it, and started by OledDisplay so that the
-// screen is set up as the label maker sets it up.
-U8G2_SSD1306_128X64_NONAME_F_HW_I2C* screen =
-    new U8G2_SSD1306_128X64_NONAME_F_HW_I2C(U8G2_R0, U8X8_PIN_NONE);
-OledDisplay* display = new OledDisplay(sound, screen);
+BenchScreen* screen = new BenchScreen();
 
 // The address an SSD1306 answers to with its address pin low, as on every
 // module this machine has used.
 const uint8_t SCREEN_ADDRESS = 0x3C;
-
-// Draws a frame on the outermost pixels and two lines inside it. A panel
-// that is not a 128x64 SSD1306 (a 1.3" SH1106 sits two columns off) shows a
-// missing edge or a stripe of noise down one side.
-void showStep(const String& line1, const String& line2) {
-  screen->clearBuffer();
-  screen->setDrawColor(1);
-  screen->drawFrame(0, 0, 128, 64);
-  screen->setFont(u8g2_font_6x13_te);
-  screen->drawStr(6, 26, line1.c_str());
-  screen->drawStr(6, 44, line2.c_str());
-  screen->sendBuffer();
-}
 
 // Asks every I2C address in turn and logs the ones that answer. Returns
 // whether the screen's address did.
@@ -83,16 +65,13 @@ void setup() {
               ") -- looking for it at 0x" + String(SCREEN_ADDRESS, HEX));
   if (findScreen()) {
     logger->log("SELFTEST: screen answers -- drawing on it");
-    display->initialize();
+    screen->begin();
     logger->log("SELFTEST: screen -- 3 s all lit: look for dark pixels");
-    screen->clearBuffer();
-    screen->setDrawColor(1);
-    screen->drawBox(0, 0, 128, 64);
-    screen->sendBuffer();
+    screen->fill();
     delay(3000);
     logger->log(
         "SELFTEST: screen -- 5 s frame: all 4 edges, no noise down a side");
-    showStep("E-TKT SELFTEST", "frame on 4 edges");
+    screen->show("E-TKT SELFTEST", "frame on 4 edges");
     delay(5000);
   } else {
     logger->log(
@@ -100,17 +79,17 @@ void setup() {
   }
 
   logger->log("SELFTEST: character LED (GPIO 17) -- 3 blinks");
-  showStep("CHARACTER LED", "GPIO 17: 3 blinks");
+  screen->show("CHARACTER LED", "GPIO 17: 3 blinks");
   ledChar->blink(3, LIGHT_FULL, 250, 250);
   ledChar->off();
 
   logger->log("SELFTEST: finish LED (GPIO 5) -- 3 blinks");
-  showStep("FINISH LED", "GPIO 5: 3 blinks");
+  screen->show("FINISH LED", "GPIO 5: 3 blinks");
   ledFinish->blink(3, LIGHT_FULL, 250, 250);
   ledFinish->off();
 
   logger->log("SELFTEST: both LEDs together -- 2 blinks");
-  showStep("BOTH LEDS", "together: 2 blinks");
+  screen->show("BOTH LEDS", "together: 2 blinks");
   // The one shape Light::blink cannot express: two LEDs lit and darkened
   // together. Blinking them one after the other would test the same two pins
   // twice over rather than testing that they can both be driven at once,
@@ -125,14 +104,14 @@ void setup() {
   }
 
   logger->log("SELFTEST: buzzer (GPIO 26) -- 2 beeps");
-  showStep("BUZZER", "GPIO 26: 2 beeps");
+  screen->show("BUZZER", "GPIO 26: 2 beeps");
   sound->play(1000, 300);
   delay(500);
   sound->play(2000, 300);
   delay(500);
 
   logger->log("SELFTEST: WiFi-reset button (GPIO 13) -- WAITING FOR HIGH");
-  showStep("BUTTON GPIO 13", "waiting for release");
+  screen->show("BUTTON GPIO 13", "waiting for release");
   logger->log("SELFTEST: the rig is paused here until GPIO13 reads HIGH.");
   logger->log("SELFTEST: take your time -- no deadline, no credential wipe.");
   logger->log(
@@ -171,7 +150,7 @@ void setup() {
   if (highRun >= 6) {
     logger->log(
         "SELFTEST: GPIO13 released -- now press the button a few times");
-    showStep("BUTTON GPIO 13", "press it: 0 so far");
+    screen->show("BUTTON GPIO 13", "press it: 0 so far");
     int presses = 0;
     int prev = HIGH;
     for (int i = 0; i < 1200; i++) {
@@ -186,8 +165,8 @@ void setup() {
           presses++;
           ledFinish->on(LIGHT_FULL);
           logger->log(String("SELFTEST: PRESS #") + presses);
-          showStep("BUTTON GPIO 13",
-                   String("press it: ") + presses + " so far");
+          screen->show("BUTTON GPIO 13",
+                       String("press it: ") + presses + " so far");
         } else {
           ledFinish->off();
           logger->log("SELFTEST: release");
@@ -210,7 +189,7 @@ void setup() {
 
   ledChar->off();
   ledFinish->off();
-  showStep("SELFTEST DONE", "see the serial log");
+  screen->show("SELFTEST DONE", "see the serial log");
   logger->log("SELFTEST: done");
 }
 

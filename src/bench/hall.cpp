@@ -19,6 +19,7 @@
 #include <Arduino.h>
 
 #include "ArduinoDrivers.h"
+#include "BenchScreen.h"
 #include "Configuration.h"
 #include "HallSwitch.h"
 #include "Light.h"
@@ -34,10 +35,13 @@ StopSignal* stopSignal = new StopSignal();
 Light* ledChar = new Light(CHARACTER_LED_PIN, stopSignal);
 Press* press = new Press(logger, SERVO_PIN, ledChar, pressServo);
 HallSwitch* hall = new HallSwitch(logger, HALL_PIN);
+BenchScreen* screen = new BenchScreen();
 
 void setup() {
   logger->initialize();
   ledChar->initialize();
+  screen->begin();
+  screen->show("HALL SENSOR", "starting");
   hall->initialize();
   press->initialize();
 
@@ -49,6 +53,7 @@ void setup() {
 
   const int stepsPerRev = CHAR_STEP_COUNT * CHAR_MICROSTEPS;
   const int total = stepsPerRev * 2;
+  screen->show("HALL SENSOR", "2 slow turns");
   logger->log("HALLSWEEP: 2 slow revolutions, ~20s. WATCH THE WHEEL.");
   int minRaw = 4095, maxRaw = 0, onAt = -1, hits = 0, firstOn = -1, lastOn = -1;
   bool wasOn = false;
@@ -75,6 +80,8 @@ void setup() {
       logger->log(String("HALLSWEEP: ") + s + "/" + total + " raw=" + raw);
     }
   }
+  screen->show(String("HALL: ") + hits + " TRIGGERS",
+               String("min ") + minRaw + " max " + maxRaw);
   logger->log(String("HALLSWEEP: done. triggers=") + hits + " min=" + minRaw +
               " max=" + maxRaw + " threshold=" + HALL_SENSOR_THRESHOLD +
               (INVERT_HALL_SENSOR_LOGIC ? " (inverted)" : ""));

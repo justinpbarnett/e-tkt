@@ -17,6 +17,7 @@
 #include <Arduino.h>
 
 #include "ArduinoDrivers.h"
+#include "BenchScreen.h"
 #include "Configuration.h"
 #include "Light.h"
 #include "Logger.h"
@@ -30,10 +31,13 @@ Logger* logger = new Logger();
 StopSignal* stopSignal = new StopSignal();
 Light* ledChar = new Light(CHARACTER_LED_PIN, stopSignal);
 Press* press = new Press(logger, SERVO_PIN, ledChar, pressServo);
+BenchScreen* screen = new BenchScreen();
 
 void setup() {
   logger->initialize();
   ledChar->initialize();
+  screen->begin();
+  screen->show("WHEEL MOTOR", "starting");
   press->initialize();
 
   pinMode(PIN_STEPPER_CHAR_STEP, OUTPUT);
@@ -44,6 +48,7 @@ void setup() {
   const int stepsPerRev = CHAR_STEP_COUNT * CHAR_MICROSTEPS;  // 200 * 16
   digitalWrite(PIN_STEPPER_CHAR_DIR, LOW);
 
+  screen->show("1 HOLDING 15 S", "try to turn wheel");
   logger->log("A4988TEST: HOLD 15s -- TRY TO TURN THE WHEEL BY HAND NOW");
   delay(15000);
   logger->log("A4988TEST: hold over");
@@ -51,6 +56,7 @@ void setup() {
   const int halfPeriods[] = {2000, 1000, 500};
   for (int p = 0; p < 3; p++) {
     int hp = halfPeriods[p];
+    screen->show(String(p + 2) + " ONE TURN", String(500000 / hp) + " steps/s");
     logger->log(String("A4988TEST: 1 rev at ") + (500000 / hp) + " steps/s");
     for (int s = 0; s < stepsPerRev; s++) {
       digitalWrite(PIN_STEPPER_CHAR_STEP, HIGH);
@@ -62,6 +68,7 @@ void setup() {
   }
 
   digitalWrite(PIN_STEPPER_CHAR_ENABLE, HIGH);  // release the motor
+  screen->show("WHEEL MOTOR DONE", "should spin free");
   logger->log("A4988TEST: done -- released, wheel should now spin freely");
 }
 

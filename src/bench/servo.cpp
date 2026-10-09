@@ -13,6 +13,8 @@
 // of its 50 Hz signal for the rest of the run -- which is indistinguishable at
 // the bench from "the servo is dead". Rounds are signalled on the LEDs
 // instead: character LED steady = round 1 (rest), both LEDs = round 2 (stamp).
+// The screen names each step too. It sits on I2C and takes no LEDC channel,
+// and it is drawn only between steps, so the sweep never waits on it.
 //
 // The angle is logged every 10 degrees so the sweep can be confirmed from the
 // capture even when nothing appears to move on the bench, and every GPIO13
@@ -23,6 +25,7 @@
 #include <Arduino.h>
 
 #include "ArduinoDrivers.h"
+#include "BenchScreen.h"
 #include "Configuration.h"
 #include "Light.h"
 #include "Logger.h"
@@ -37,11 +40,14 @@ StopSignal* stopSignal = new StopSignal();
 Light* ledChar = new Light(CHARACTER_LED_PIN, stopSignal);
 Light* ledFinish = new Light(FINISH_LED_PIN, stopSignal);
 Press* press = new Press(logger, SERVO_PIN, ledChar, pressServo);
+BenchScreen* screen = new BenchScreen();
 
 void setup() {
   logger->initialize();
   ledFinish->initialize();
   ledChar->initialize();
+  screen->begin();
+  screen->show("PRESS SERVO", "to rest");
   press->initialize();
 
   pinMode(WIFI_RESET_PIN, INPUT_PULLUP);
@@ -57,6 +63,7 @@ void setup() {
   // be: this phase exists so the geometry can be chosen by feel before the
   // horn is committed to a spline.
   press->release();
+  screen->show("1 LIMP", "push it, then tap");
   logger->log(
       "SERVOTEACH: LIMP phase -- servo released, push the press "
       "by hand and decide where it should sit. Tap when decided.");
@@ -91,6 +98,7 @@ void setup() {
   // for it.
   const int fitHold = 90;
   press->hold(fitHold);
+  screen->show("2 HOLDING 90 DEG", "fit arm, then tap");
   logger->log(String("SERVOTEACH: FIT phase -- holding ") + fitHold +
               " deg, dead still. Seat the horn so the press sits "
               "roughly mid-travel toward the wheel, then tap.");
@@ -119,6 +127,11 @@ void setup() {
   for (int round = 0; round < 2; round++) {
     ledChar->on(LIGHT_FULL);
     if (round == 1) ledFinish->on(LIGHT_FULL);
+    const String roundTitle =
+        round == 0 ? "3 REST: tap where" : "4 STAMP: tap where";
+    const String roundHint =
+        round == 0 ? "press clears wheel" : "press meets wheel";
+    screen->show(roundTitle, roundHint);
     logger->log(String("SERVOTEACH: round ") + (round + 1) +
                 "/2 -- stop the sweep where the press is " +
                 (round == 0 ? "FULLY CLEAR of the wheel (rest)"
@@ -153,6 +166,7 @@ void setup() {
         logger->log(String("SERVOTEACH: frozen at ") + angle +
                     " deg -- tap again within 6s to reject and resume");
         ledFinish->on(LIGHT_FULL);
+        screen->show(String("FROZEN AT ") + angle + " DEG", "tap in 6 s: undo");
         bool rejected = false;
         for (int t = 0; t < 600 && !rejected; t++) {
           if (digitalRead(WIFI_RESET_PIN) == LOW)
@@ -164,6 +178,7 @@ void setup() {
           while (digitalRead(WIFI_RESET_PIN) == LOW) delay(10);
           delay(40);
           logger->log("SERVOTEACH: rejected -- resuming sweep");
+          screen->show(roundTitle, roundHint);
           if (round == 0) ledFinish->off();
         } else {
           captured[round] = angle;
@@ -188,6 +203,8 @@ void setup() {
 
   ledChar->off();
   ledFinish->off();
+  screen->show(String("REST ") + captured[0] + "  STAMP " + captured[1],
+               "into Machine.h");
   logger->log(String("SERVOTEACH: RESULT rest=") + captured[0] +
               " stamp=" + captured[1]);
   logger->log(String("SERVOTEACH: SET  REST_ANGLE ") + captured[0] +

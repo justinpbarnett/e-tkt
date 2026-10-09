@@ -16,6 +16,7 @@
 #include <Arduino.h>
 
 #include "ArduinoDrivers.h"
+#include "BenchScreen.h"
 #include "Configuration.h"
 #include "Light.h"
 #include "Logger.h"
@@ -35,15 +36,19 @@ StopSignal* stopSignal = new StopSignal();
 Light* ledChar = new Light(CHARACTER_LED_PIN, stopSignal);
 Press* press = new Press(logger, SERVO_PIN, ledChar, pressServo);
 Feeder* feeder = new Feeder(logger, feedStepper, stopSignal);
+BenchScreen* screen = new BenchScreen();
 
 void setup() {
   logger->initialize();
   ledChar->initialize();
+  screen->begin();
+  screen->show("FEED MOTOR", "starting");
   press->initialize();
   feeder->initialize();
 
   logger->log("FEEDTEST: 6 rounds, each 8 feeds = one full revolution");
   for (int round = 1; round <= 6; round++) {
+    screen->show(String("FEED ROUND ") + round + "/6", "8 feeds = 1 turn");
     logger->log(String("FEEDTEST: round ") + round + "/6 starting");
     for (int i = 1; i <= 8; i++) {
       feeder->feed(1);
@@ -53,6 +58,7 @@ void setup() {
     logger->log(String("FEEDTEST: round ") + round + "/6 done");
     delay(2000);
   }
+  screen->show("FEED MOTOR DONE", "6 turns made");
   logger->log("FEEDTEST: all rounds done");
 }
 
